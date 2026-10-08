@@ -326,3 +326,179 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
 }
+/* =========================================================
+   MODALS & ASSIGNMENTS STYLES
+   ========================================================= */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(44, 42, 38, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s ease;
+}
+
+.modal-overlay.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.modal-content {
+  width: min(600px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border-radius: var(--r-xl);
+  box-shadow: var(--e3), 0 0 0 1px var(--line);
+  padding: 24px;
+  transform: scale(0.95);
+  transition: transform .2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.modal-overlay.active .modal-content {
+  transform: scale(1);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.modal-title {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.modal-close {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: var(--muted);
+  padding: 4px;
+  border-radius: var(--r-sm);
+  transition: color .15s, background .15s;
+}
+.modal-close:hover {
+  color: var(--danger);
+  background: var(--danger-tint);
+}
+.modal-close svg { width: 20px; height: 20px; }
+
+/* Assignment List Items */
+.assignment-item {
+  background: var(--parchment);
+  border-radius: var(--r-md);
+  padding: 16px;
+  margin-bottom: 12px;
+  box-shadow: var(--inset1);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.assignment-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.assignment-info h4 {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+.assignment-meta {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.assignment-desc {
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+.assignment-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* Submission Form */
+.submit-form textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.grade-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: var(--r-pill);
+  font-size: 12px;
+  font-weight: 700;
+}
+.grade-pending { background: var(--parchment-deep); color: var(--muted); }
+.grade-success { background: var(--ok-tint); color: var(--ok); }
+.grade-danger { background: var(--danger-tint); color: var(--danger); }
+
+/* Teacher View Table */
+.submissions-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-top: 10px;
+}
+.submissions-table th {
+  text-align: left;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.submissions-table td {
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.submissions-table tr:last-child td { border-bottom: 0; }
+
+.student-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.student-avatar-small {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: var(--teal-tint);
+  color: var(--teal-ink);
+  display: grid; place-items: center;
+  font-size: 10px; font-weight: 700;
+}
+
+.grading-input {
+  width: 60px;
+  padding: 4px 8px;
+  font-size: 13px;
+  text-align: center;
+}

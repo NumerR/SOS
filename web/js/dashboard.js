@@ -25,7 +25,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const canViewStudentsRoles = new Set(["teacher", "admin"]);
 
     let user = null;
-    let mySet = new Set(); // id курсов, на которые записан текущий пользователь
+    let mySet = new Set(); 
 
     function initialsFrom(u) {
         const source = (u.full_name || u.username || "?").trim();
@@ -40,6 +40,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         globalMsg._t = setTimeout(() => GS.hideMessage(globalMessage), 4000);
     }
 
+    // Expose refresh function globally for modals to trigger reload
+    window.refreshDashboardData = loadAll;
+
     // ---------- рендер каталога ----------
     function catalogCardActions(course) {
         const actions = [];
@@ -53,8 +56,15 @@ document.addEventListener("DOMContentLoaded", async () => {
             }
         }
 
+        // NEW: Assignments Button Logic
+        if (user.role === "student" && enrolled) {
+             actions.push(`<button class="btn btn-outline" data-action="view-assignments-student" data-course-id="${course.id}" data-course-title="${GS.escapeHtml(course.title)}">Задания</button>`);
+        }
+        
         if (canViewStudentsRoles.has(user.role) && (user.role === "admin" || course.created_by === user.id)) {
             actions.push(`<button class="btn btn-secondary" data-action="students" data-course-id="${course.id}" data-course-title="${GS.escapeHtml(course.title)}">Студенты</button>`);
+            // NEW: Manage Assignments for Owner/Admin
+            actions.push(`<button class="btn btn-outline" data-action="manage-assignments" data-course-id="${course.id}" data-course-title="${GS.escapeHtml(course.title)}">Управление заданиями</button>`);
         }
 
         if (!actions.length) return "";
@@ -119,7 +129,8 @@ document.addEventListener("DOMContentLoaded", async () => {
                 <h3 class="card-title">${GS.escapeHtml(c.title)}</h3>
                 <p class="card-text">${GS.escapeHtml(c.teacher || "—")}</p>
                 <div class="card-actions">
-                    <button class="btn btn-secondary" data-action="unenroll" data-course-id="${c.id}">Отписаться</button>
+                     <button class="btn btn-outline" data-action="view-assignments-student" data-course-id="${c.id}" data-course-title="${GS.escapeHtml(c.title)}">Мои задания</button>
+                     <button class="btn btn-secondary" data-action="unenroll" data-course-id="${c.id}">Отписаться</button>
                 </div>
             </article>
         `).join("");
@@ -211,16 +222,143 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
     }
 
+    // NEW: Handle Assignment Actions
+    async function handleAssignmentAction(actionType, courseId, courseTitle) {
+        if (actionType === "view-assignments-student") {
+            const content = await window.renderStudentAssignments(courseId, courseTitle);
+            ModalManager.open(`Задания: ${courseTitle}`, content);
+        } else if (actionType === "manage-assignments") {
+            // For teachers/admins: Show list of assignments with ability to check submissions
+            const content = await renderTeacherAssignmentsList(courseId, courseTitle);
+            ModalManager.open(`Управление заданиями: ${courseTitle}`, content);
+        }
+    }
+
+    // Helper for Teacher View inside Modal
+    async function renderTeacherAssignmentsList(courseId, courseTitle) {
+        try {
+            const res = await GS.fetchJSON(`/api/assignments?course_id=${courseId}`);
+            
+            if (!res.length) {
+                return `<div class="empty-state" style="border:0;box-shadow:none;background:transparent;">
+                            <span class="empty-text">Нет заданий</span>
+                            <button class="btn mt-4" onclick="openCreateAssignmentModal(${courseId})">Создать первое задание</button>
+                        </div>`;
+            }
+
+            const items = res.map(a => `
+                <div class="assignment-item">
+                    <div class="assignment-top">
+                        <div class="assignment-info">
+                            <h4>${GS.escapeHtml(a.title)}</h4>
+                            <span class="assignment-meta">${formatDate(a.due_date)}</span>
+                        </div>
+                        <span class="chip chip-outline">#${a.id}</span>
+                    </div>
+                    <div class="assignment-actions">
+                        <button class="btn btn-secondary" onclick="openCheckSubmissionsModal(${a.id}, '${GS.escapeHtml(a.title)}')">
+                            Проверить сдачи
+                        </button>
+                    </div>
+                </div>
+            `).join("");
+
+            return `
+                <div class="stack mb-4">
+                    <button class="btn" onclick="openCreateAssignmentModal(${courseId})">+ Новое задание</button>
+                </div>
+                ${items}
+            `;
+        } catch (err) {
+            return `<p class="message message-error">${GS.escapeHtml(err.message)}</p>`;
+        }
+    }
+
+    // Placeholder for Create Assignment Modal (to be implemented fully next)
+    window.openCreateAssignmentModal = function(courseId) {
+        const html = `
+            <form id="createAssForm" class="form stack">
+                <input type="hidden" name="course_id" value="${courseId}">
+                <label class="field">
+                    <span class="field-label">Название</span>
+                    <input class="control" type="text" name="title" required placeholder="HW 1">
+                </label>
+                <label class="field">
+                    <span class="field-label">Описание</span>
+                    <textarea class="control" name="description" rows="3" placeholder="Что нужно сделать..."></textarea>
+                </label>
+                <label class="field">
+                    <span class="field-label">Дедлайн (ISO Date)</span>
+                    <input class="control" type="datetime-local" name="due_date_raw">
+                    <span class="helper">Оставьте пустым, если дедлайна нет.</span>
+                </label>
+                <div class="form-actions">
+                    <button type="submit" class="btn">Создать</button>
+                </div>
+                <p id="createAssMsg" class="message hidden"></p>
+            </form>
+        `;
+        ModalManager.open("Новое задание", html);
+
+        const form = document.getElementById("createAssForm");
+        const msg = document.getElementById("createAssMsg");
+
+        form.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const fd = new FormData(form);
+            const dueRaw = fd.get("due_date_raw");
+            let dueIso = "";
+            if(dueRaw) {
+                // Convert local datetime string to ISO UTC roughly for backend parsing
+                const d = new Date(dueRaw);
+                if(!isNaN(d.getTime())) dueIso = d.toISOString();
+            }
+
+            const payload = {
+                course_id: Number(fd.get("course_id")),
+                title: String(fd.get("title")).trim(),
+                description: String(fd.get("description")).trim(),
+                due_date: dueIso
+            };
+
+            try {
+                await GS.fetchJSON("/api/assignments", {
+                    method: "POST",
+                    body: JSON.stringify(payload)
+                });
+                GS.showMessage(msg, "Задание создано", "success");
+                setTimeout(() => {
+                    ModalManager.close();
+                    // Re-open parent modal to show updated list
+                    handleAssignmentAction("manage-assignments", payload.course_id, ""); 
+                }, 800);
+            } catch (err) {
+                GS.showMessage(msg, err.message, "error");
+            }
+        });
+    };
+
+    window.openCheckSubmissionsModal = async function(assignmentId, assignmentTitle) {
+        const content = await window.renderTeacherSubmissions(assignmentId, assignmentTitle);
+        ModalManager.open(`Сдачи: ${assignmentTitle}`, content);
+    };
+
     function attachDelegation(el) {
         if (!el) return;
         el.addEventListener("click", (event) => {
             const btn = event.target.closest("[data-action]");
             if (!btn) return;
+            
             const action = btn.dataset.action;
             const courseId = btn.dataset.courseId;
+            const courseTitle = btn.dataset.courseTitle || "";
+
             if (action === "enroll") doEnroll(courseId, btn);
             else if (action === "unenroll") doUnenroll(courseId, btn);
-            else if (action === "students") doStudents(courseId, btn.dataset.courseTitle || "");
+            else if (action === "students") doStudents(courseId, courseTitle);
+            else if (action === "view-assignments-student" || action === "manage-assignments") {
+                handleAssignmentAction(action, courseId, courseTitle);
+            }
         });
     }
 
