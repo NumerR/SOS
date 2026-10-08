@@ -173,8 +173,27 @@ func (h *Handlers) GradeSubmission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.Submissions.Grade(r.Context(), req.SubmissionID, req.Score, strings.TrimSpace(req.Comment))
+	// 1. Находим сабмит, чтобы узнать, к какому заданию он относится.
+	sub, err := h.Submissions.GetByID(r.Context(), req.SubmissionID)
 	if err != nil {
+		writeError(w, http.StatusNotFound, "submission not found")
+		return
+	}
+
+	// 2. Находим задание и его владельца.
+	assignment, err := h.Assignments.GetByID(r.Context(), sub.AssignmentID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "assignment not found")
+		return
+	}
+
+	// 3. Проверяем право: оценить может только владелец курса-задания либо админ.
+	if user.Role != "admin" && assignment.CreatedBy != user.ID {
+		writeError(w, http.StatusForbidden, "you can only grade submissions for your own courses")
+		return
+	}
+
+	if err := h.Submissions.Grade(r.Context(), req.SubmissionID, req.Score, strings.TrimSpace(req.Comment)); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to grade submission")
 		return
 	}

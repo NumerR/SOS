@@ -16,11 +16,32 @@ func NewSubmissionStore(db *sql.DB) *SubmissionStore {
 	return &SubmissionStore{db: db}
 }
 
+// GetByID возвращает сабмит по его id (без join-полей).
+// Нужен для проверки прав при оценке.
+func (s *SubmissionStore) GetByID(ctx context.Context, id int64) (*models.Submission, error) {
+	var sub models.Submission
+	err := s.db.QueryRowContext(
+		ctx,
+		`SELECT id, assignment_id, user_id, content, score, comment, submitted_at, graded_at
+		 FROM submissions WHERE id = ?`,
+		id,
+	).Scan(
+		&sub.ID, &sub.AssignmentID, &sub.UserID, &sub.Content,
+		&sub.Score, &sub.Comment, &sub.SubmittedAt, &sub.GradedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &sub, nil
+}
+
 // Upsert creates or updates a submission for a user on an assignment.
 func (s *SubmissionStore) Upsert(ctx context.Context, userID, assignmentID int64, content string) (*models.Submission, error) {
 	now := time.Now().Unix()
 
-	// Try to update existing first
 	res, err := s.db.ExecContext(
 		ctx,
 		`UPDATE submissions SET content = ?, submitted_at = ?, score = -1, comment = '', graded_at = 0 WHERE user_id = ? AND assignment_id = ?`,
@@ -35,7 +56,6 @@ func (s *SubmissionStore) Upsert(ctx context.Context, userID, assignmentID int64
 		return s.GetByUserAndAssignment(ctx, userID, assignmentID)
 	}
 
-	// Insert new
 	_, err = s.db.ExecContext(
 		ctx,
 		`INSERT INTO submissions (assignment_id, user_id, content, submitted_at, score) VALUES (?, ?, ?, ?, -1)`,
