@@ -84,6 +84,36 @@ CREATE TABLE IF NOT EXISTS enrollments (
 
 CREATE INDEX IF NOT EXISTS idx_enrollments_user_id ON enrollments(user_id);
 CREATE INDEX IF NOT EXISTS idx_enrollments_course_id ON enrollments(course_id);
+
+CREATE TABLE IF NOT EXISTS assignments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    course_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    due_date INTEGER NOT NULL DEFAULT 0, -- unix timestamp, 0 = no deadline
+    created_by INTEGER NOT NULL,
+    FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE,
+    FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_assignments_course_id ON assignments(course_id);
+
+CREATE TABLE IF NOT EXISTS submissions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    assignment_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    content TEXT NOT NULL DEFAULT '',
+    score REAL NOT NULL DEFAULT -1, -- -1 means not graded yet
+    comment TEXT NOT NULL DEFAULT '',
+    submitted_at INTEGER NOT NULL,
+    graded_at INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(assignment_id, user_id), -- One submission per student per assignment
+    FOREIGN KEY(assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_submissions_assignment_id ON submissions(assignment_id);
+CREATE INDEX IF NOT EXISTS idx_submissions_user_id ON submissions(user_id);
 `
 
 	if _, err := db.Exec(schema); err != nil {

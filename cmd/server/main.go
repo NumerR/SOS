@@ -40,10 +40,19 @@ func main() {
 	sessionStore := store.NewSessionStore(db)
 	courseStore := store.NewCourseStore(db)
 	enrollmentStore := store.NewEnrollmentStore(db)
+	assignmentStore := store.NewAssignmentStore(db)
+	submissionStore := store.NewSubmissionStore(db)
 
 	seedAdmin(userStore)
 
-	h := handlers.New(userStore, sessionStore, courseStore, enrollmentStore)
+	h := handlers.New(
+		userStore,
+		sessionStore,
+		courseStore,
+		enrollmentStore,
+		assignmentStore,
+		submissionStore,
+	)
 
 	mux := http.NewServeMux()
 
@@ -69,7 +78,7 @@ func main() {
 	// Курсы.
 	mux.Handle("/api/courses", h.RequireAuth(http.HandlerFunc(h.CoursesAPI)))
 
-	// Записи на курсы (роли проверяются внутри обработчиков).
+	// Записи на курсы.
 	mux.Handle("/api/enrollments/mine", h.RequireAuth(http.HandlerFunc(h.MyEnrollments)))
 	mux.Handle("/api/enrollments", h.RequireAuth(http.HandlerFunc(h.Enroll)))
 	mux.Handle("/api/enrollments/cancel", h.RequireAuth(http.HandlerFunc(h.CancelEnrollment)))
@@ -77,6 +86,40 @@ func main() {
 
 	// Админ-контур.
 	mux.Handle("/api/admin/users", h.RequireRole("admin")(http.HandlerFunc(h.AdminUsers)))
+
+	// ЗАДАНИЯ И СДАЧИ РАБОТ
+
+	// Маршрут /api/assignments
+	// GET -> Список заданий курса (?course_id=N)
+	// POST -> Создать задание
+	mux.Handle("/api/assignments", h.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			h.ListAssignments(w, r)
+		case http.MethodPost:
+			h.CreateAssignment(w, r)
+		default:
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		}
+	})))
+
+	// Маршрут /api/submissions
+	// GET -> Список сдач по заданию (?assignment_id=N) - только для преподавателей
+	// POST -> Сдать работу
+	mux.Handle("/api/submissions", h.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			h.ListSubmissionsForAssignment(w, r)
+		case http.MethodPost:
+			h.SubmitWork(w, r)
+		default:
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		}
+	})))
+
+	// Специфичные маршруты submissions
+	mux.Handle("/api/submissions/mine", h.RequireAuth(http.HandlerFunc(h.MySubmissions)))
+	mux.Handle("/api/submissions/grade", h.RequireAuth(http.HandlerFunc(h.GradeSubmission)))
 
 	// Статика.
 	mux.Handle("/css/", http.StripPrefix("/css/", http.FileServer(http.Dir(filepath.Join("web", "css")))))

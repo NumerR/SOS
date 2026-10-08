@@ -20,6 +20,8 @@ type Handlers struct {
 	Sessions    *store.SessionStore
 	Courses     *store.CourseStore
 	Enrollments *store.EnrollmentStore
+	Assignments *store.AssignmentStore // НОВОЕ ПОЛЕ
+	Submissions *store.SubmissionStore // НОВОЕ ПОЛЕ
 }
 
 // New создаёт набор обработчиков.
@@ -28,12 +30,16 @@ func New(
 	sessions *store.SessionStore,
 	courses *store.CourseStore,
 	enrollments *store.EnrollmentStore,
+	assignments *store.AssignmentStore, // НОВЫЙ АРГУМЕНТ
+	submissions *store.SubmissionStore, // НОВЫЙ АРГУМЕНТ
 ) *Handlers {
 	return &Handlers{
 		Users:       users,
 		Sessions:    sessions,
 		Courses:     courses,
 		Enrollments: enrollments,
+		Assignments: assignments, // ПРИСВАИВАЕМ
+		Submissions: submissions, // ПРИСВАИВАЕМ
 	}
 }
 
