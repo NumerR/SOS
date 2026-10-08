@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Вход · SOS</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <header class="site-header">
+        <div class="container header-row">
+            <a href="/" class="brand">
+                <span class="brand-mark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+                </span>
+                <span class="brand-text">
+                    <span class="brand-title">SOS</span>
+                    <span class="brand-sub">Вход в систему</span>
+                </span>
+            </a>
+            <nav class="nav">
+                <a href="/register" class="btn btn-secondary">Регистрация</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="main auth-wrap">
+        <section class="panel auth-card">
+            <div class="auth-head">
+                <span class="section-index">01</span>
+                <h1 class="auth-title">С возвращением</h1>
+            </div>
+            <p class="auth-sub">Введите логин или email и пароль.</p>
+
+            <form id="authForm" class="form" data-endpoint="/api/auth/login" novalidate>
+                <label class="field">
+                    <span class="field-label">Логин или email</span>
+                    <input class="control" type="text" name="identifier" required
+                           autocomplete="username" placeholder="student или student@example.com">
+                    <span class="helper">Регистр не важен.</span>
+                </label>
+
+                <label class="field">
+                    <span class="field-label">Пароль</span>
+                    <input class="control" type="password" name="password" required
+                           autocomplete="current-password" placeholder="••••••••">
+                </label>
+
+                <div class="form-actions">
+                    <button type="submit" class="btn">
+                        Войти
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5M15 12H3"/></svg>
+                    </button>
+                </div>
+
+                <p id="message" class="message hidden" role="status"></p>
+            </form>
+
+            <p class="form-foot">Нет аккаунта? <a href="/register">Зарегистрироваться</a></p>
+        </section>
+    </main>
+
+    <script src="/js/common.js"></script>
+    <script src="/js/auth.js"></script>
+</body>
+</html>
