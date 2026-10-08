@@ -133,7 +133,5 @@ curl -i -X POST http://localhost:8080/api/auth/register \
 
 ## Что дальше (не реализовано)
 
-- задания, сдачи работ, оценки (`assignments` / `submissions` / grades);
 - CSRF-токены для mutate-запросов;
 - восстановление пароля, подтверждение email;
-- расписание и события (по позиционированию SOS).
