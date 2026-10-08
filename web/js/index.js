@@ -6,6 +6,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         if (authLinks && user) {
             authLinks.innerHTML = `
+                <a href="/schedule" class="btn btn-secondary">Расписание</a>
                 <a href="/dashboard" class="btn">Личный кабинет</a>
                 <button id="logoutTop" class="btn btn-secondary">Выйти</button>
             `;

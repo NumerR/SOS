@@ -42,6 +42,7 @@ func main() {
 	enrollmentStore := store.NewEnrollmentStore(db)
 	assignmentStore := store.NewAssignmentStore(db)
 	submissionStore := store.NewSubmissionStore(db)
+	scheduleStore := store.NewScheduleStore(db)
 
 	seedAdmin(userStore)
 
@@ -52,6 +53,7 @@ func main() {
 		enrollmentStore,
 		assignmentStore,
 		submissionStore,
+		scheduleStore,
 	)
 
 	mux := http.NewServeMux()
@@ -68,6 +70,7 @@ func main() {
 	mux.HandleFunc("/register", h.RegisterPage)
 	mux.HandleFunc("/dashboard", h.DashboardPage)
 	mux.HandleFunc("/admin", h.AdminPage)
+	mux.HandleFunc("/schedule", h.SchedulePage)
 
 	// API авторизации.
 	mux.HandleFunc("/api/auth/register", h.Register)
@@ -87,11 +90,7 @@ func main() {
 	// Админ-контур.
 	mux.Handle("/api/admin/users", h.RequireRole("admin")(http.HandlerFunc(h.AdminUsers)))
 
-	// ЗАДАНИЯ И СДАЧИ РАБОТ
-
-	// Маршрут /api/assignments
-	// GET -> Список заданий курса (?course_id=N)
-	// POST -> Создать задание
+	// Задания и сдачи работ.
 	mux.Handle("/api/assignments", h.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -103,9 +102,6 @@ func main() {
 		}
 	})))
 
-	// Маршрут /api/submissions
-	// GET -> Список сдач по заданию (?assignment_id=N) - только для преподавателей
-	// POST -> Сдать работу
 	mux.Handle("/api/submissions", h.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -117,9 +113,11 @@ func main() {
 		}
 	})))
 
-	// Специфичные маршруты submissions
 	mux.Handle("/api/submissions/mine", h.RequireAuth(http.HandlerFunc(h.MySubmissions)))
 	mux.Handle("/api/submissions/grade", h.RequireAuth(http.HandlerFunc(h.GradeSubmission)))
+
+	// Лента расписания (персональная, требует авторизации).
+	mux.Handle("/api/schedule", h.RequireAuth(http.HandlerFunc(h.ScheduleFeed)))
 
 	// Статика.
 	mux.Handle("/css/", http.StripPrefix("/css/", http.FileServer(http.Dir(filepath.Join("web", "css")))))

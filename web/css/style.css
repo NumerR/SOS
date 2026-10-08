@@ -513,3 +513,74 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
 
 .mt-4 { margin-top: 16px; }
 .mb-4 { margin-bottom: 16px; }
+/* ---------- schedule: embed frame + feed ---------- */
+.schedule-frame {
+  display: block;
+  width: 100%;
+  height: min(70vh, 720px);
+  border: 0;
+  background: var(--parchment);
+}
+
+.date-filter {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.feed-list { display: grid; gap: 10px; }
+
+.feed-item {
+  background: var(--parchment);
+  border-radius: var(--r-md);
+  box-shadow: var(--inset1);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-left: var(--bw-thick) solid var(--teal);
+}
+.feed-item.is-overdue { border-left-color: var(--danger); }
+
+.feed-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.feed-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.feed-info h4 { font-size: 14.5px; font-weight: 700; }
+.feed-course { font-size: 11.5px; color: var(--muted); }
+.feed-desc { font-size: 13px; color: var(--ink-soft); }
+.feed-meta { font-size: 11px; color: var(--muted); display: flex; gap: 8px; align-items: center; font-variant-numeric: tabular-nums; }
+.feed-due { font-weight: 600; color: var(--ink-soft); }
+
+.feed-state {
+  flex: none;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 4px 10px; border-radius: var(--r-pill);
+}
+.feed-state-none { background: var(--parchment-deep); color: var(--ink-soft); box-shadow: var(--inset1); }
+.feed-state-submitted { background: var(--teal-tint); color: var(--teal-ink); }
+.feed-state-graded { background: var(--ok-tint); color: var(--ok); }
+.feed-state-own { background: transparent; color: var(--teal-ink); box-shadow: inset 0 0 0 1.5px var(--teal); }
+.feed-score { font-size: 11px; font-weight: 800; }
+/* ---------- schedule: official-embed card (replaces blocked iframe) ---------- */
+.sched-embed-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+}
+.sched-embed-icon {
+  flex: none;
+  width: 52px; height: 52px;
+  border-radius: var(--r-lg);
+  display: grid; place-items: center;
+  background: var(--teal-tint); color: var(--teal-ink);
+  box-shadow: var(--inset1);
+}
+.sched-embed-icon svg { width: 26px; height: 26px; }
+.sched-embed-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.sched-embed-title { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+.sched-embed-note { font-size: 13.5px; color: var(--ink-soft); line-height: 1.5; }
+
+@media (max-width: 640px) {
+  .sched-embed-card { flex-direction: column; gap: 12px; }
+}

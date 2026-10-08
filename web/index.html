@@ -20,6 +20,7 @@
             </a>
 
             <nav id="authLinks" class="nav">
+                <a href="/schedule" class="btn btn-secondary">Расписание</a>
                 <a href="/login" class="btn btn-secondary">Войти</a>
                 <a href="/register" class="btn">Регистрация</a>
             </nav>
@@ -33,7 +34,8 @@
                 <h1 class="hero-title">Всё нужное студенту — <em>в одном месте</em></h1>
                 <p class="hero-text">
                     Минимальная, но честная платформа: регистрация с&nbsp;безопасным хэшем пароля,
-                    сессии в&nbsp;SQLite, роли, каталог курсов и&nbsp;запись на&nbsp;них.
+                    сессии в&nbsp;SQLite, роли, каталог курсов, запись на&nbsp;них, задания, оценки
+                    и&nbsp;лента дедлайнов. Официальное расписание ТКСУ — рядом.
                     Интерфейс&nbsp;— на&nbsp;чистых HTML, CSS и&nbsp;JavaScript. Backend&nbsp;— на&nbsp;Go.
                 </p>
                 <div class="hero-actions">
@@ -41,6 +43,7 @@
                         Создать аккаунт
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
                     </a>
+                    <a href="/schedule" class="btn btn-secondary">Расписание</a>
                     <a href="/login" class="btn btn-secondary">У меня есть аккаунт</a>
                 </div>
             </section>
@@ -76,17 +79,17 @@
                             <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>
                             <span class="chip chip-outline">Courses</span>
                         </div>
-                        <h3 class="card-title">Курсы и роли</h3>
-                        <p class="card-text">Каталог виден всем авторизованным, создание — только преподавателям. Роль проверяется на&nbsp;сервере.</p>
+                        <h3 class="card-title">Курсы, роли, задания</h3>
+                        <p class="card-text">Каталог виден всем авторизованным, создание курсов и&nbsp;заданий — только преподавателям. Право проверяется на&nbsp;сервере.</p>
                     </article>
 
                     <article class="card">
                         <div class="card-top">
-                            <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
-                            <span class="chip chip-outline">Enroll</span>
+                            <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></span>
+                            <span class="chip chip-outline">Schedule</span>
                         </div>
-                        <h3 class="card-title">Запись на курсы</h3>
-                        <p class="card-text">Студент записывается и&nbsp;видит «мои курсы», преподаватель смотрит список записавшихся на&nbsp;свой курс.</p>
+                        <h3 class="card-title">Расписание и дедлайны</h3>
+                        <p class="card-text">Официальное расписание ТКСУ встроено, а&nbsp;лента дедлайнов собирается из&nbsp;ваших курсов — видно, что сдавать на&nbsp;неделе.</p>
                     </article>
                 </div>
             </section>

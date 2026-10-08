@@ -20,8 +20,9 @@ type Handlers struct {
 	Sessions    *store.SessionStore
 	Courses     *store.CourseStore
 	Enrollments *store.EnrollmentStore
-	Assignments *store.AssignmentStore // НОВОЕ ПОЛЕ
-	Submissions *store.SubmissionStore // НОВОЕ ПОЛЕ
+	Assignments *store.AssignmentStore
+	Submissions *store.SubmissionStore
+	Schedule    *store.ScheduleStore
 }
 
 // New создаёт набор обработчиков.
@@ -30,16 +31,18 @@ func New(
 	sessions *store.SessionStore,
 	courses *store.CourseStore,
 	enrollments *store.EnrollmentStore,
-	assignments *store.AssignmentStore, // НОВЫЙ АРГУМЕНТ
-	submissions *store.SubmissionStore, // НОВЫЙ АРГУМЕНТ
+	assignments *store.AssignmentStore,
+	submissions *store.SubmissionStore,
+	schedule *store.ScheduleStore,
 ) *Handlers {
 	return &Handlers{
 		Users:       users,
 		Sessions:    sessions,
 		Courses:     courses,
 		Enrollments: enrollments,
-		Assignments: assignments, // ПРИСВАИВАЕМ
-		Submissions: submissions, // ПРИСВАИВАЕМ
+		Assignments: assignments,
+		Submissions: submissions,
+		Schedule:    schedule,
 	}
 }
 
@@ -89,8 +92,6 @@ func (h *Handlers) RequireAuth(next http.Handler) http.Handler {
 }
 
 // RequireRole — middleware: доступ только указанным ролям.
-// Подразумевает авторизацию: без валидной сессии вернёт 401,
-// с сессией, но чужой ролью — 403.
 func (h *Handlers) RequireRole(roles ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
