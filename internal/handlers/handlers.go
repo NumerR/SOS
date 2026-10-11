@@ -23,6 +23,8 @@ type Handlers struct {
 	Assignments *store.AssignmentStore
 	Submissions *store.SubmissionStore
 	Schedule    *store.ScheduleStore
+	Resources   *store.ResourceStore
+	Events      *store.EventStore
 }
 
 // New создаёт набор обработчиков.
@@ -34,6 +36,8 @@ func New(
 	assignments *store.AssignmentStore,
 	submissions *store.SubmissionStore,
 	schedule *store.ScheduleStore,
+	resources *store.ResourceStore,
+	events *store.EventStore,
 ) *Handlers {
 	return &Handlers{
 		Users:       users,
@@ -43,6 +47,8 @@ func New(
 		Assignments: assignments,
 		Submissions: submissions,
 		Schedule:    schedule,
+		Resources:   resources,
+		Events:      events,
 	}
 }
 
@@ -79,6 +85,7 @@ func (h *Handlers) authenticatedUser(r *http.Request) (*models.User, bool) {
 }
 
 // RequireAuth — middleware: доступ только авторизованным.
+// Попутно выпускает csrf-cookie, если её ещё нет (совместимость со старыми сессиями).
 func (h *Handlers) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, ok := h.authenticatedUser(r)
@@ -86,6 +93,9 @@ func (h *Handlers) RequireAuth(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
+
+		ensureCSRFCookie(w, r)
+
 		ctx := context.WithValue(r.Context(), userContextKey, user)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

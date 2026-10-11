@@ -3,13 +3,12 @@ package store
 import (
 	"context"
 	"database/sql"
+	"sort"
 
 	"github.com/NumerR/SOS/internal/models"
 )
 
-// ScheduleStore собирает ленту расписания из дедлайнов заданий,
-// отфильтрованных по правам пользователя. Таблицу не заводит:
-// источник данных — assignments/courses/enrollments/submissions.
+// ScheduleStore собирает ленту расписания из дедлайнов заданий и событий.
 type ScheduleStore struct {
 	db *sql.DB
 }
@@ -20,12 +19,55 @@ func NewScheduleStore(db *sql.DB) *ScheduleStore {
 }
 
 // Feed возвращает элементы ленты в диапазоне [from, to] (unix, включительно),
-// отсортированные по сроку. Поведение зависит от роли:
-//   - student: дедлайны заданий курсов, на которые записан пользователь,
-//     с состоянием сдачи (none/submitted/graded);
-//   - teacher: дедлайны заданий, созданных пользователем (state = own);
-//   - admin: дедлайны всех заданий (state = own).
+// отсортированные по дате. Дедлайны зависят от роли, события глобальны.
 func (s *ScheduleStore) Feed(ctx context.Context, user *models.User, from, to int64) ([]models.ScheduleFeedItem, error) {
+	deadlines, err := s.deadlinesFor(ctx, user, from, to)
+	if err != nil {
+		return nil, err
+	}
+
+	events, err := s.eventsFor(ctx, from, to)
+	if err != nil {
+		return nil, err
+	}
+
+	items := append(deadlines, events...)
+	sort.SliceStable(items, func(i, j int) bool {
+		return items[i].DueDate < items[j].DueDate
+	})
+	return items, nil
+}
+
+func (s *ScheduleStore) eventsFor(ctx context.Context, from, to int64) ([]models.ScheduleFeedItem, error) {
+	rows, err := s.db.QueryContext(
+		ctx,
+		`
+		SELECT id, title, description, event_date
+		FROM events
+		WHERE event_date > 0 AND event_date BETWEEN ? AND ?
+		ORDER BY event_date ASC
+		`,
+		from, to,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]models.ScheduleFeedItem, 0)
+	for rows.Next() {
+		var it models.ScheduleFeedItem
+		if err := rows.Scan(&it.EventID, &it.Title, &it.Description, &it.DueDate); err != nil {
+			return nil, err
+		}
+		it.Kind = "event"
+		it.Score = -1
+		items = append(items, it)
+	}
+	return items, rows.Err()
+}
+
+func (s *ScheduleStore) deadlinesFor(ctx context.Context, user *models.User, from, to int64) ([]models.ScheduleFeedItem, error) {
 	switch user.Role {
 	case "student":
 		return s.feedForStudent(ctx, user.ID, from, to)
@@ -118,6 +160,7 @@ func scanFeed(rows *sql.Rows) ([]models.ScheduleFeedItem, error) {
 		); err != nil {
 			return nil, err
 		}
+		it.Kind = "deadline"
 		items = append(items, it)
 	}
 	return items, rows.Err()

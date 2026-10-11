@@ -43,6 +43,8 @@ func main() {
 	assignmentStore := store.NewAssignmentStore(db)
 	submissionStore := store.NewSubmissionStore(db)
 	scheduleStore := store.NewScheduleStore(db)
+	resourceStore := store.NewResourceStore(db)
+	eventStore := store.NewEventStore(db)
 
 	seedAdmin(userStore)
 
@@ -54,6 +56,8 @@ func main() {
 		assignmentStore,
 		submissionStore,
 		scheduleStore,
+		resourceStore,
+		eventStore,
 	)
 
 	mux := http.NewServeMux()
@@ -72,26 +76,26 @@ func main() {
 	mux.HandleFunc("/admin", h.AdminPage)
 	mux.HandleFunc("/schedule", h.SchedulePage)
 
-	// API авторизации.
+	// API авторизации (публичные; login/register CSRF при Lax+HttpOnly снижен — known limitation).
 	mux.HandleFunc("/api/auth/register", h.Register)
 	mux.HandleFunc("/api/auth/login", h.Login)
 	mux.HandleFunc("/api/auth/logout", h.Logout)
-	mux.Handle("/api/auth/me", h.RequireAuth(http.HandlerFunc(h.Me)))
+	mux.Handle("/api/auth/me", h.RequireAuth(http.HandlerFunc(h.Me))) // только GET -> без RequireCSRF
 
-	// Курсы.
-	mux.Handle("/api/courses", h.RequireAuth(http.HandlerFunc(h.CoursesAPI)))
+	// Курсы: GET + POST -> RequireCSRF пропустит GET, проверит POST.
+	mux.Handle("/api/courses", h.RequireAuth(h.RequireCSRF(http.HandlerFunc(h.CoursesAPI))))
 
 	// Записи на курсы.
-	mux.Handle("/api/enrollments/mine", h.RequireAuth(http.HandlerFunc(h.MyEnrollments)))
-	mux.Handle("/api/enrollments", h.RequireAuth(http.HandlerFunc(h.Enroll)))
-	mux.Handle("/api/enrollments/cancel", h.RequireAuth(http.HandlerFunc(h.CancelEnrollment)))
-	mux.Handle("/api/enrollments/course", h.RequireAuth(http.HandlerFunc(h.CourseStudents)))
+	mux.Handle("/api/enrollments/mine", h.RequireAuth(http.HandlerFunc(h.MyEnrollments)))                     // GET-only
+	mux.Handle("/api/enrollments", h.RequireAuth(h.RequireCSRF(http.HandlerFunc(h.Enroll))))                  // POST
+	mux.Handle("/api/enrollments/cancel", h.RequireAuth(h.RequireCSRF(http.HandlerFunc(h.CancelEnrollment)))) // POST
+	mux.Handle("/api/enrollments/course", h.RequireAuth(http.HandlerFunc(h.CourseStudents)))                  // GET-only
 
-	// Админ-контур.
+	// Админ-контур (GET-only).
 	mux.Handle("/api/admin/users", h.RequireRole("admin")(http.HandlerFunc(h.AdminUsers)))
 
-	// Задания и сдачи работ.
-	mux.Handle("/api/assignments", h.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Задания и сдачи работ (смешанные GET+POST -> оборачиваем целиком).
+	mux.Handle("/api/assignments", h.RequireAuth(h.RequireCSRF(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			h.ListAssignments(w, r)
@@ -100,9 +104,9 @@ func main() {
 		default:
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		}
-	})))
+	}))))
 
-	mux.Handle("/api/submissions", h.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/submissions", h.RequireAuth(h.RequireCSRF(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			h.ListSubmissionsForAssignment(w, r)
@@ -111,13 +115,17 @@ func main() {
 		default:
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		}
-	})))
+	}))))
 
-	mux.Handle("/api/submissions/mine", h.RequireAuth(http.HandlerFunc(h.MySubmissions)))
-	mux.Handle("/api/submissions/grade", h.RequireAuth(http.HandlerFunc(h.GradeSubmission)))
+	mux.Handle("/api/submissions/mine", h.RequireAuth(http.HandlerFunc(h.MySubmissions)))                   // GET-only
+	mux.Handle("/api/submissions/grade", h.RequireAuth(h.RequireCSRF(http.HandlerFunc(h.GradeSubmission)))) // POST
 
-	// Лента расписания (персональная, требует авторизации).
+	// Лента расписания (GET-only).
 	mux.Handle("/api/schedule", h.RequireAuth(http.HandlerFunc(h.ScheduleFeed)))
+
+	// Ресурсы и события (смешанные GET+POST).
+	mux.Handle("/api/resources", h.RequireAuth(h.RequireCSRF(http.HandlerFunc(h.ResourcesAPI))))
+	mux.Handle("/api/events", h.RequireAuth(h.RequireCSRF(http.HandlerFunc(h.EventsAPI))))
 
 	// Статика.
 	mux.Handle("/css/", http.StripPrefix("/css/", http.FileServer(http.Dir(filepath.Join("web", "css")))))
@@ -131,9 +139,7 @@ func main() {
 	}
 }
 
-// seedAdmin создаёт учётную запись администратора из переменных окружения,
-// если они заданы и такого пользователя ещё нет. Публичная регистрация
-// роль admin не выдаёт никогда — только здесь.
+// seedAdmin создаёт учётную запись администратора из переменных окружения.
 func seedAdmin(users *store.UserStore) {
 	username := os.Getenv("ADMIN_USERNAME")
 	password := os.Getenv("ADMIN_PASSWORD")

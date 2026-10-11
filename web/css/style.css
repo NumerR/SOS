@@ -584,3 +584,7 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
 @media (max-width: 640px) {
   .sched-embed-card { flex-direction: column; gap: 12px; }
 }
+/* ---------- schedule: events + resources ---------- */
+.feed-item.is-event { border-left-color: var(--ok); }
+.feed-state-event { background: var(--ok-tint); color: var(--ok); }
+.res-link { margin-top: 2px; }

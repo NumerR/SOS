@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Расписание · SOS</title>
+    <title>Расписание и ресурсы · SOS</title>
     <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
@@ -15,7 +15,7 @@
                 </span>
                 <span class="brand-text">
                     <span class="brand-title">SOS</span>
-                    <span class="brand-sub">Расписание</span>
+                    <span class="brand-sub">Расписание · Ресурсы</span>
                 </span>
             </a>
 
@@ -62,7 +62,7 @@
 
             <section id="feedSection" class="section hidden">
                 <div class="section-head">
-                    <span class="section-label"><span class="section-index">02</span> Моя лента · дедлайны</span>
+                    <span class="section-label"><span class="section-index">02</span> Моя лента · дедлайны и события</span>
                     <span class="section-rule"></span>
                     <button id="refreshBtn" class="btn btn-icon" title="Обновить" aria-label="Обновить">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
@@ -92,9 +92,101 @@
                 </div>
             </section>
 
+            <section id="resourcesSection" class="section hidden">
+                <div class="section-head">
+                    <span class="section-label"><span class="section-index">03</span> Полезные ресурсы</span>
+                    <span class="section-rule"></span>
+                    <button id="refreshResources" class="btn btn-icon" title="Обновить" aria-label="Обновить">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+                    </button>
+                </div>
+
+                <div id="resources" class="grid grid-cards">
+                    <div class="empty-state">
+                        <span class="spinner" aria-hidden="true"></span>
+                        <span class="empty-hint">Загрузка ресурсов…</span>
+                    </div>
+                </div>
+
+                <section id="createResourceSection" class="panel hidden" style="margin-top:18px;">
+                    <div class="section-head">
+                        <span class="section-label"><span class="section-index">+</span> Добавить ресурс</span>
+                        <span class="section-rule"></span>
+                        <span class="section-note">POST /api/resources</span>
+                    </div>
+
+                    <form id="resourceForm" class="form" novalidate>
+                        <label class="field">
+                            <span class="field-label">Название</span>
+                            <input class="control" type="text" name="title" required maxlength="200" placeholder="Например: Библиотека / Moodle / Стенд">
+                        </label>
+
+                        <label class="field">
+                            <span class="field-label">Категория</span>
+                            <input class="control" type="text" name="category" maxlength="64" placeholder="Например: Материалы">
+                        </label>
+
+                        <label class="field">
+                            <span class="field-label">Ссылка (URL)</span>
+                            <input class="control" type="url" name="url" maxlength="2000" placeholder="https://…">
+                            <span class="helper">Можно оставить пустым, если ресурс — не ссылка.</span>
+                        </label>
+
+                        <label class="field">
+                            <span class="field-label">Описание</span>
+                            <textarea class="control" name="description" maxlength="2000" rows="3" placeholder="Коротко: что это и зачем"></textarea>
+                        </label>
+
+                        <div class="form-actions">
+                            <button type="submit" class="btn">
+                                Сохранить
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+                            </button>
+                        </div>
+
+                        <p id="resourceMsg" class="message hidden" role="status"></p>
+                    </form>
+                </section>
+            </section>
+
+            <section id="eventsManageSection" class="panel hidden">
+                <div class="section-head">
+                    <span class="section-label"><span class="section-index">04</span> Добавить событие</span>
+                    <span class="section-rule"></span>
+                    <span class="section-note">POST /api/events</span>
+                </div>
+
+                <form id="eventForm" class="form" novalidate>
+                    <label class="field">
+                        <span class="field-label">Название</span>
+                        <input class="control" type="text" name="title" required maxlength="200" placeholder="Например: День открытых дверей">
+                    </label>
+
+                    <label class="field">
+                        <span class="field-label">Дата и время</span>
+                        <input class="control" type="datetime-local" name="event_date_raw">
+                        <span class="helper">Оставьте пустым, если точной даты нет.</span>
+                    </label>
+
+                    <label class="field">
+                        <span class="field-label">Описание</span>
+                        <textarea class="control" name="description" maxlength="2000" rows="3" placeholder="Кратко о событии"></textarea>
+                    </label>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn">
+                            Сохранить
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+                        </button>
+                    </div>
+
+                    <p id="eventMsg" class="message hidden" role="status"></p>
+                </form>
+            </section>
+
             <div id="guestNotice" class="alert hidden" role="note">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-                <span>Войдите, чтобы видеть персональную ленту дедлайнов по вашим курсам.</span>
+                <span>Войдите, чтобы видеть персональную ленту дедлайнов и событий и полезные ресурсы по вашим курсам.</span>
             </div>
 
         </div>
@@ -102,7 +194,7 @@
 
     <footer class="site-footer">
         <div class="container footer-row">
-            <span class="footer-meta">Schedule · official link + aggregated deadlines</span>
+            <span class="footer-meta">Schedule · events · resources — one place</span>
             <div class="swatches" aria-hidden="true">
                 <span class="swatch parchment"></span>
                 <span class="swatch surface"></span>

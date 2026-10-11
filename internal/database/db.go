@@ -23,7 +23,6 @@ func Open(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("open sqlite database: %w", err)
 	}
 
-	// Одно соединение — снижает риск блокировок SQLite в учебном проекте.
 	db.SetMaxOpenConns(1)
 
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON;`); err != nil {
@@ -90,7 +89,7 @@ CREATE TABLE IF NOT EXISTS assignments (
     course_id INTEGER NOT NULL,
     title TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
-    due_date INTEGER NOT NULL DEFAULT 0, -- unix timestamp, 0 = no deadline
+    due_date INTEGER NOT NULL DEFAULT 0,
     created_by INTEGER NOT NULL,
     FOREIGN KEY(course_id) REFERENCES courses(id) ON DELETE CASCADE,
     FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE CASCADE
@@ -103,17 +102,42 @@ CREATE TABLE IF NOT EXISTS submissions (
     assignment_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
     content TEXT NOT NULL DEFAULT '',
-    score REAL NOT NULL DEFAULT -1, -- -1 means not graded yet
+    score REAL NOT NULL DEFAULT -1,
     comment TEXT NOT NULL DEFAULT '',
     submitted_at INTEGER NOT NULL,
     graded_at INTEGER NOT NULL DEFAULT 0,
-    UNIQUE(assignment_id, user_id), -- One submission per student per assignment
+    UNIQUE(assignment_id, user_id),
     FOREIGN KEY(assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_submissions_assignment_id ON submissions(assignment_id);
 CREATE INDEX IF NOT EXISTS idx_submissions_user_id ON submissions(user_id);
+
+CREATE TABLE IF NOT EXISTS resources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT '',
+    url TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    created_by INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_resources_created_by ON resources(created_by);
+
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    event_date INTEGER NOT NULL DEFAULT 0,
+    created_by INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_event_date ON events(event_date);
 `
 
 	if _, err := db.Exec(schema); err != nil {

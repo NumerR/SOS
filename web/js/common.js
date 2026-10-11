@@ -22,11 +22,27 @@ const GS = (() => {
         element.className = "message hidden";
     }
 
+    // Читает csrf-токен из cookie (выставляется сервером в RequireAuth).
+    function getCSRFToken() {
+        const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
+        return match ? decodeURIComponent(match[1]) : "";
+    }
+
     async function fetchJSON(url, options = {}) {
+        const method = (options.method || "GET").toUpperCase();
+
         const headers = {
             "Content-Type": "application/json",
             ...(options.headers || {}),
         };
+
+        // Для mutate-запросов прикладываем двойной токен (заголовок == cookie).
+        if (method !== "GET" && method !== "HEAD") {
+            const token = getCSRFToken();
+            if (token) {
+                headers["X-CSRF-Token"] = token;
+            }
+        }
 
         const response = await fetch(url, {
             credentials: "same-origin",

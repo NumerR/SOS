@@ -1,0 +1,83 @@
+package handlers
+
+import (
+	"net/http"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/NumerR/SOS/internal/models"
+)
+
+type CreateEventRequest struct {
+	Title        string `json:"title"`
+	Description  string `json:"description"`
+	EventDateStr string `json:"event_date"` // ISO8601 или пусто
+}
+
+// EventsAPI — GET (все авторизованные) / POST (teacher, admin) /api/events.
+func (h *Handlers) EventsAPI(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		events, err := h.Events.List(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load events")
+			return
+		}
+		writeJSON(w, http.StatusOK, events)
+
+	case http.MethodPost:
+		user := h.currentUser(r)
+		if user == nil {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		if !hasRole([]string{"teacher", "admin"}, user.Role) {
+			writeError(w, http.StatusForbidden, "only teachers can add events")
+			return
+		}
+
+		var req CreateEventRequest
+		if !readJSON(w, r, &req) {
+			return
+		}
+
+		req.Title = strings.TrimSpace(req.Title)
+		req.Description = strings.TrimSpace(req.Description)
+
+		if req.Title == "" {
+			writeError(w, http.StatusUnprocessableEntity, "title is required")
+			return
+		}
+		if utf8.RuneCountInString(req.Title) > 200 {
+			writeError(w, http.StatusUnprocessableEntity, "title is too long")
+			return
+		}
+		if utf8.RuneCountInString(req.Description) > 2000 {
+			writeError(w, http.StatusUnprocessableEntity, "description is too long")
+			return
+		}
+
+		var eventTimestamp int64 = 0
+		if req.EventDateStr != "" {
+			t, err := time.Parse(time.RFC3339, req.EventDateStr)
+			if err == nil {
+				eventTimestamp = t.Unix()
+			}
+		}
+
+		event, err := h.Events.Create(r.Context(), models.CreateEventInput{
+			Title:       req.Title,
+			Description: req.Description,
+			EventDate:   eventTimestamp,
+		}, user.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create event")
+			return
+		}
+		writeJSON(w, http.StatusCreated, event)
+
+	default:
+		methodNotAllowed(w)
+	}
+}
