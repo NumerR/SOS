@@ -28,7 +28,16 @@
 - записи на курсы (`enrollments`): студент записывается/отписывается,
   преподаватель видит список **своих** курсов, админ — любых;
 - админ-панель `/admin` (список пользователей и выдача ролей), закрыта
-  `RequireRole` + `RequireCSRF`;
+  правом `admin.panel.view` / `user.list` + `RequireCSRF`;
+- права доступа описаны реестром (`internal/authz`): 22 права, у каждой роли свой
+  набор, маршрут декларирует право и текст отказа, а обработчик проверяет только
+  «эта строка моя» (обход — отдельные права `*.any`). Ролевые сравнения вида
+  `user.Role == "admin"` из обработчиков удалены;
+- модульный каркас (`internal/platform` + `internal/modules/*`): маршруты каждого
+  модуля объявлены в его пакете, список модулей — одна функция
+  `moduleList()` в `cmd/server/modules.go`, маршрутизатор не стартует при
+  некорректной декларации маршрута; у модулей есть миграции через общий runner
+  (`platform_module_migrations`);
 - CSRF для всех mutate-запросов: double-submit cookie `csrf_token` +
   заголовок `X-CSRF-Token`, токен выдаётся вместе с сессией на `register`
   и `login`; сравнение — constant-time;
@@ -62,6 +71,35 @@
 | `POST /api/auth/logout`               | ✅ (без куки 200) | ✅ | ✅ | ✅ |
 | `POST /api/auth/logout-all`           | 401       | ✅      | ✅      | ✅    |
 | `POST /api/auth/change-password`      | 401       | ✅      | ✅      | ✅    |
+
+## Права (`authz`)
+
+Ролевые сравнения в обработчиках заменены реестром прав: маршрут декларирует
+право, `RequirePerm` проверяет вход и право, обработчик — только владельца
+строки. Всего 22 права: student 3, teacher 10, admin 21 (единственное, чего у
+админа нет — `schedule.scope.created`, потому что есть `schedule.scope.all`).
+Матрица зафиксирована тестом в обе стороны: `internal/authz/authz_test.go`.
+
+| Маршрут | Право | Кто |
+|---|---|---|
+| `GET /api/courses`, `GET /api/schedule`, `GET /api/submissions/mine`, `GET /api/auth/me` | — (нужен вход) | все роли |
+| `POST /api/courses`, `POST /api/resources`, `POST /api/events` | `course.create`, `resource.create`, `event.create` | teacher, admin |
+| `POST /api/assignments` | `assignment.create` | teacher, admin (только свой курс; чужой — `assignment.create.any`, то есть admin) |
+| `POST /api/enrollments`, `POST /api/enrollments/cancel` | `enrollment.manage` | student, admin |
+| `GET /api/enrollments/course` | `course.students.view` | teacher, admin (свои курсы; admin — любые через `.any`) |
+| `GET /api/submissions` | `submission.view` | teacher, admin (свои задания; admin — любые) |
+| `POST /api/submissions/grade` | `submission.grade` | teacher, admin |
+| `POST /api/submissions` | — (нужен вход) | все; без записи на курс — только admin (`submission.create.any`) |
+| `GET /api/admin/users` | `user.list` | admin |
+| `POST /api/admin/users/role` | `user.role.manage` | admin (не себе) |
+| `/admin` (страница) | `admin.panel.view` | admin (иначе 302 на `/dashboard`) |
+| `POST /api/auth/register`, `/login`, `/logout` | — (публичные) | любой |
+| `POST /api/auth/logout-all`, `/change-password` | — (вход + CSRF) | все роли |
+
+Права `*.any` (`submission.grade.any`, `assignment.view.any`, …) — единственный
+способ обойти проверку «строка моя», и они видны в таблице прав, а не в `if`.
+`event.source.manage` объявлено и выдано admin заранее — под источник событий
+из T4.2; ни один текущий маршрут его не требует.
 
 ## Запуск
 
@@ -219,14 +257,21 @@ kill -TERM $pid; wait $pid; echo $? # «сервер остановлен кор
 ## Структура
 
 ```txt
-cmd/server/        точка входа: маршруты, таймауты сервера, graceful shutdown,
-                   health с ping базы, сид админа, сборщик протухших сессий
+cmd/server/        точка входа: список модулей (modules.go), сборка маршрутизатора,
+                   таймауты сервера, graceful shutdown, health с ping базы,
+                   сид админа, сборщик протухших сессий
+internal/platform/ ядро: Module/Migration/Route, Registry с валидацией, Mount
+                   (диспетчер по методу, 405/404), runner модульных миграций
+internal/authz/    реестр прав: роль → набор прав, Can, ValidPermission,
+                   ScheduleScope (для ленты расписания)
+internal/modules/  модули: accounts, courses, assignments, resources, events,
+                   schedule — в каждом объявлены его маршруты
 internal/database/ открытие SQLite + миграции схемы
 internal/models/   доменные типы (User, Course, ...)
 internal/store/    доступ к БД (users, sessions, courses, enrollments,
                    assignments, submissions, resources, events, schedule) + ошибки
 internal/ratelimit/ токен-бакет: лимиты на IP и счётчик неудачных входов
-internal/handlers/ HTTP-обработчики и middleware: RequireAuth / RequireRole /
+internal/handlers/ HTTP-обработчики и middleware: RequireAuth / RequirePerm /
                    RequireCSRF / RateLimit, логи + request id (logging.go),
                    дедлайн БД (deadline.go), границы полей (fields.go),
                    куки сессии с `__Host-` (handlers.go)
@@ -249,12 +294,20 @@ submissions(id, assignment_id FK->assignments, user_id FK->users, content, score
             comment, submitted_at int, graded_at int, UNIQUE(assignment_id, user_id))
 resources(id, title, category, url, description, created_by FK->users, created_at int)
 events(id, title, description, event_date int, created_by FK->users, created_at int)
+platform_module_migrations(module, version, applied_at, PK(module, version))  -- журнал runner'а T1.1
 ```
 
 Миграции — `CREATE TABLE IF NOT EXISTS` в `internal/database/db.go`, применяются
 при каждом старте; существующая `data/app.db` остаётся валидной. Версионируемых
 миграций и PostgreSQL пока нет — это T2.1 (ADR-0002). Путь к файлу базы —
 `DB_PATH` (по умолчанию `data/app.db`).
+
+Таблица `platform_module_migrations` — единственная, которую создаёт общий runner
+(`internal/platform/migrations.go`): модуль заявляет `Migrations()` с номером
+версии и SQL, runner применяет каждую в отдельной транзакции, повторяющий
+запуск пропускает уже применённые, ошибка SQL откатывает миграцию и не даёт
+серверу стартовать. Сейчас `Migrations()` пусты у всех шести модулей — их
+таблицы относятся к core-схеме выше.
 
 ## Шрифт
 
@@ -309,6 +362,14 @@ Go-тесты: `internal/ratelimit/limiter_test.go` (8 сценариев),
 `internal/handlers/auth_test.go`, `account_test.go`, `fields_test.go`,
 `logging_test.go`, `cookie_test.go` — 33 верхнеуровневых сценария и 23 подкейса
 в `internal/handlers`; из них 15 сценариев (29 проверок) добавлены в T0.3.
+Добавлены в T1.1: `internal/authz/authz_test.go` (6 — матрица «роль × право» в
+обе стороны, отказ неизвестному праву, целостность реестра, `ScheduleScope`),
+`internal/platform/platform_test.go` (10 + 9 подтестов — диспетчер по методам,
+405, catch-all, 7 случаев некорректного маршрута, прогоны миграций с откатом),
+`cmd/server/modules_test.go` (2 — 14 живых проверок на настоящем списке модулей:
+401 анониму, 403 студенту с текстом отказа, 201 преподавателю, 403 чужому
+преподавателю, 201 админу через `*.any`, 405 на PUT, 404 на неизвестный путь,
+CSRF 403→201). Всего по репозиторию: 59 верхнеуровневых тестов и 32 подтеста.
 UI-тесты гоняют jsdom против живого сервера, поэтому требуют запущенного
 `go run ./cmd/server`, `ADMIN_USERNAME`/`ADMIN_PASSWORD` в окружении
 (иначе `admin-roles.cjs` не сможет войти) и применённого `tests/ui/seed.sh`
@@ -347,16 +408,27 @@ SQL-пакета нет, схему применяет код (`internal/databas
 
 Первый прогон на GitHub — [run 40037668304](https://github.com/NumerR/SOS/actions/runs/40037668304),
 `success`, все три работы зелёные (Go / Фронтенд / UI на `ubuntu-latest`).
+Последующие прогоны той же ветки: [40038860104](https://github.com/NumerR/SOS/actions/runs/40038860104)
+(документация, `2f79eb8`) и [40041370917](https://github.com/NumerR/SOS/actions/runs/40041370917)
+(T1.1, `439a08b`) — оба `completed / success`.
 
 ## Что дальше (не реализовано)
 
-- PostgreSQL и версионируемые миграции — T2.1 (ADR-0002), после него —
+- PostgreSQL и версионируемые миграции core-таблиц — T2.1 (ADR-0002), после него —
   сервис-контейнер PostgreSQL и dry-run миграций в CI, пересмотр дедлайна БД
-  и размера пула;
+  и размера пула; runner модульных миграций уже есть (`internal/platform`), но
+  `Migrations()` у всех шести модулей пусты, а SQL написан под SQLite;
 - `audit_events` (запись входа/выхода/оценки/смены роли в базу, а не в лог) — T1.2;
-- конфиг `API_BASE_URL` во фронтенде, относительные пути и раздача статики через
-  GitHub Pages — T1.1 (вариант размещения, ADR-0001);
+- конфиг `API_BASE_URL` во фронтенде, единый API-клиент, относительные пути и
+  раздача статики через GitHub Pages — T3.1 (вариант размещения, ADR-0001);
 - модуль расписания по группе/дате и импорт из официального источника — T4.1,
   заблокирован: источник не предоставлен (ADR-0004);
 - восстановление пароля, подтверждение email;
-- единый `authz.Can(user, perm)` вместо ролевых проверок по обработчикам — T3.1.
+- распад `internal/handlers` и `internal/store` по модулям (каркас T1.1 к этому
+  готов, но обработчики пока общий пакет); единый формат ошибки с `code` — §4
+  docs/02, отдельным изменением.
+
+Реализовано в T1.1 (`439a08b`): `authz.Can(роль, право)` вместо ролевых
+сравнений, реестр маршрутов `internal/platform`, шесть модулей в
+`internal/modules/*` — см. раздел «Права (`authz`)» и
+[docs/how-to-add-a-module.md](docs/how-to-add-a-module.md).

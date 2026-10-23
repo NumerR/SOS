@@ -11,7 +11,8 @@
 | [02-ARCHITECTURE.md](02-ARCHITECTURE.md) | Архитектура MVP: модули, структура каталогов, контракты API, схема БД, конфигурация |
 | [03-UNKNOWN-AND-DECISIONS.md](03-UNKNOWN-AND-DECISIONS.md) | Неизвестные требования, решения, требующие слова владельца, принятые допущения |
 | [04-TASK-BREAKDOWN.md](04-TASK-BREAKDOWN.md) | Первый конкретный набор задач по агентам и порядок проверки |
-| [05-DECISIONS.md](05-DECISIONS.md) | ADR-0001…ADR-0009: размещение, PostgreSQL, модульность, источник расписания, события, роли и rate limit, остаток T0.2, production-вид HTTP-сервера, CI |
+| [05-DECISIONS.md](05-DECISIONS.md) | ADR-0001…ADR-0010: размещение, PostgreSQL, модульность, источник расписания, события, роли и rate limit, остаток T0.2, production-вид HTTP-сервера, CI, реестр модулей и права |
+| [how-to-add-a-module.md](how-to-add-a-module.md) | Приёмка T1.1: как добавить модуль за пять шагов (пакет + право + миграция + одна строка в списке) |
 
 Статус (2026-10-24): исследование завершено, решения владельца получены (ADR-0001, ADR-0002, ADR-0004, ADR-0005).
 Выполнено и запушено: T0.1 (модальное окно заданий) и T0.2 целиком (роли, rate limit,
@@ -24,6 +25,11 @@ T0.3 (таймауты `http.Server` и graceful shutdown, `WithDBDeadline`, `sl
 T0.4 (CI: `go` + `frontend` + `ui`, `scripts/check-frontend.mjs`) закрыт коммитом
 `d4a2141` кроме PostgreSQL-позиции, перенесённой в T2.1 (ADR-0009). Первый прогон
 CI на GitHub — [run 40037668304](https://github.com/NumerR/SOS/actions/runs/40037668304),
-`completed / success`, три работы зелёные.
-Дальше по плану — T2.1 (PostgreSQL), затем T1.1 (конфиг API + GitHub Pages) и T3.1 (модульность).
+`completed / success`, три работы зелёные. Документация после T0.4 — `2f79eb8`
+([run 40038860104](https://github.com/NumerR/SOS/actions/runs/40038860104), success).
+T1.1 (реестр модулей `internal/platform`, права `internal/authz`, шесть модулей в
+`internal/modules/*`) закрыт коммитом `439a08b` (ADR-0010) —
+[run 40041370917](https://github.com/NumerR/SOS/actions/runs/40041370917), `completed / success`.
+Дальше по плану — T2.1 (PostgreSQL + версионные миграции, локально не проверяема:
+нет Docker и утилит PostgreSQL) и T3.1 (API-клиент, конфигурация, Pages).
 Ничего из перечисленного не развёрнуто: публикуется только код в git, сервер поднят локально на `:8080`.

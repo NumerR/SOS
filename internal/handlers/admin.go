@@ -51,8 +51,8 @@ var assignableRoles = func() map[string]bool {
 // AdminSetRole меняет роль пользователя.
 //
 // Это единственный путь, которым роль вообще выдаётся: публичная регистрация
-// создаёт только студентов. Маршрут закрыт RequireRole("admin") и RequireCSRF,
-// поэтому здесь остаётся проверить лишь корректность самих значений.
+// создаёт только студентов. Маршрут закрыт правом authz.UserRoleManage и
+// RequireCSRF, поэтому здесь остаётся проверить лишь корректность самих значений.
 func (h *Handlers) AdminSetRole(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w)
