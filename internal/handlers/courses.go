@@ -3,7 +3,6 @@ package handlers
 import (
 	"net/http"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/NumerR/SOS/internal/models"
 )
@@ -54,18 +53,9 @@ func (h *Handlers) CoursesAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if utf8.RuneCountInString(req.Title) > 200 {
-			writeError(w, http.StatusUnprocessableEntity, "title is too long")
-			return
-		}
-
-		if utf8.RuneCountInString(req.Description) > 2000 {
-			writeError(w, http.StatusUnprocessableEntity, "description is too long")
-			return
-		}
-
-		if utf8.RuneCountInString(req.Teacher) > 200 {
-			writeError(w, http.StatusUnprocessableEntity, "teacher name is too long")
+		if !validateLength(w, "title", req.Title, maxTitleLength) ||
+			!validateLength(w, "description", req.Description, maxDescriptionLength) ||
+			!validateLength(w, "teacher name", req.Teacher, maxPersonNameLength) {
 			return
 		}
 

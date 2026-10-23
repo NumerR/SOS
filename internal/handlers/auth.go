@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -194,7 +194,10 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	// проверку бакета выше и получит 429.
 	if err := bcrypt.CompareHashAndPassword(hash, []byte(req.Password)); err != nil || userWithSecret == nil {
 		h.Limits.LoginAccount.Consume(accountKey, 1)
-		log.Printf("auth: неудачный вход identifier=%s ip=%s", redactKey(req.Identifier), ClientIP(r))
+		requestLogger(r).Warn("auth: неудачный вход",
+			slog.String("identifier", redactKey(req.Identifier)),
+			slog.String("ip", ClientIP(r)),
+		)
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -205,7 +208,10 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("auth: вход выполнен user_id=%d ip=%s", userWithSecret.User.ID, ClientIP(r))
+	requestLogger(r).Info("auth: вход выполнен",
+		slog.Int64("user_id", userWithSecret.User.ID),
+		slog.String("ip", ClientIP(r)),
+	)
 	writeJSON(w, http.StatusOK, userWithSecret.User)
 }
 
@@ -217,7 +223,10 @@ func (h *Handlers) tooManyAttempts(w http.ResponseWriter, r *http.Request, accou
 	}
 	w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())))
 	writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
-	log.Printf("auth: перебор по идентификатору %s заблокирован на %s", redactKey(accountKey), retry)
+	requestLogger(r).Warn("auth: перебор по идентификатору заблокирован",
+		slog.String("identifier", redactKey(accountKey)),
+		slog.String("retry_after", retry.String()),
+	)
 }
 
 // Logout удаляет текущую сессию.
@@ -227,9 +236,8 @@ func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cookie, err := r.Cookie(sessionCookieName)
-	if err == nil && cookie.Value != "" {
-		_ = h.Sessions.Delete(r.Context(), cookie.Value)
+	if sessionID := sessionIDFromRequest(r); sessionID != "" {
+		_ = h.Sessions.Delete(r.Context(), sessionID)
 	}
 
 	clearSessionCookie(w, r)
@@ -265,7 +273,10 @@ func (h *Handlers) LogoutAll(w http.ResponseWriter, r *http.Request) {
 	clearSessionCookie(w, r)
 	clearCSRFCookie(w, r)
 
-	log.Printf("auth: вышли все сессии user_id=%d ip=%s", user.ID, ClientIP(r))
+	requestLogger(r).Info("auth: вышли все сессии",
+		slog.Int64("user_id", user.ID),
+		slog.String("ip", ClientIP(r)),
+	)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -310,7 +321,10 @@ func (h *Handlers) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	// Старый пароль проверяется обязательно: без этого любой XSS или оставленная
 	// на чужом ноутбуке вкладка получила бы право менять пароль произвольно.
 	if err := bcrypt.CompareHashAndPassword([]byte(withSecret.PasswordHash), []byte(req.CurrentPassword)); err != nil {
-		log.Printf("auth: неверный текущий пароль при смене user_id=%d ip=%s", user.ID, ClientIP(r))
+		requestLogger(r).Warn("auth: неверный текущий пароль при смене",
+			slog.Int64("user_id", user.ID),
+			slog.String("ip", ClientIP(r)),
+		)
 		writeError(w, http.StatusUnauthorized, "current password is incorrect")
 		return
 	}
@@ -332,10 +346,7 @@ func (h *Handlers) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	revoked := int64(0)
-	current := ""
-	if cookie, err := r.Cookie(sessionCookieName); err == nil {
-		current = cookie.Value
-	}
+	current := sessionIDFromRequest(r)
 
 	if current != "" {
 		revoked, err = h.Sessions.DeleteAllForUserExcept(r.Context(), user.ID, current)
@@ -352,7 +363,11 @@ func (h *Handlers) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.Limits.Password.Reset(ClientIP(r))
-	log.Printf("auth: пароль изменён user_id=%d отозвано сессий=%d ip=%s", user.ID, revoked, ClientIP(r))
+	requestLogger(r).Info("auth: пароль изменён",
+		slog.Int64("user_id", user.ID),
+		slog.Int64("revoked_sessions", revoked),
+		slog.String("ip", ClientIP(r)),
+	)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":           "ok",
@@ -392,32 +407,36 @@ func (h *Handlers) startSession(w http.ResponseWriter, r *http.Request, user *mo
 	return true
 }
 
+// setSessionCookie выпускает сессионную куку под именем, которое соответствует
+// протоколу: на HTTPS это __Host-gs_session, на локальном HTTP — обычное имя,
+// потому что браузер префикс __Host- без Secure просто выбросил бы.
 func setSessionCookie(w http.ResponseWriter, r *http.Request, sessionID string) {
-	cookie := &http.Cookie{
-		Name:     sessionCookieName,
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieNameFor(r),
 		Value:    sessionID,
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   isSecureRequest(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(store.SessionLifetime.Seconds()),
-	}
-
-	http.SetCookie(w, cookie)
+	})
 }
 
+// clearSessionCookie снимает оба имени. Одно из них заведомо лишнее, но
+// «угадать», какое именно лежит в браузере, мы не можем: пользователь мог
+// застать переход с http на https, и тогда обе куки живут рядом.
 func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
-	cookie := &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   isSecureRequest(r),
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
+	for _, name := range sessionCookieNames() {
+		http.SetCookie(w, &http.Cookie{
+			Name:     name,
+			Value:    "",
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   isSecureRequest(r),
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   -1,
+		})
 	}
-
-	http.SetCookie(w, cookie)
 }
 
 func isSecureRequest(r *http.Request) bool {

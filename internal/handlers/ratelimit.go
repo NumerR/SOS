@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
@@ -57,7 +57,9 @@ func (h *Handlers) RateLimit(limiter *ratelimit.Limiter, name string, keyOf func
 			if key == "" {
 				// Без ключа ограничивать нечего — не роняем вход, но и не делаем вид,
 				// что защита работает: пишем в лог.
-				log.Printf("ratelimit %s: не удалось определить ключ запроса, лимит пропущен", name)
+				requestLogger(r).Warn("ratelimit: не удалось определить ключ запроса, лимит пропущен",
+					slog.String("limiter", name),
+				)
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -69,7 +71,10 @@ func (h *Handlers) RateLimit(limiter *ratelimit.Limiter, name string, keyOf func
 				}
 				w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())))
 				writeError(w, http.StatusTooManyRequests, "too many requests, try again later")
-				log.Printf("ratelimit %s: превышен лимит для ключа %s", name, redactKey(key))
+				requestLogger(r).Warn("ratelimit: превышен лимит",
+					slog.String("limiter", name),
+					slog.String("key", redactKey(key)),
+				)
 				return
 			}
 
@@ -78,8 +83,8 @@ func (h *Handlers) RateLimit(limiter *ratelimit.Limiter, name string, keyOf func
 	}
 }
 
-// trustProxy decides whether X-Forwarded-For may be believed. It is set from
-// TRUST_PROXY at startup in main.go — see SetTrustProxy.
+// trustProxy — можно ли верить X-Forwarded-For. Выставляется из TRUST_PROXY
+// при старте в main.go, см. SetTrustProxy.
 var trustProxy bool
 
 // SetTrustProxy включает доверие X-Forwarded-For и X-Forwarded-Proto.

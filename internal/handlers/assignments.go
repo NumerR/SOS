@@ -105,6 +105,13 @@ func (h *Handlers) CreateAssignment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Описания раньше не ограничивались ничем: 1 МиБ текста в description —
+	// и страница со списком заданий отдаёт мегабайты на каждый GET.
+	if !validateLength(w, "title", req.Title, maxTitleLength) ||
+		!validateLength(w, "description", req.Description, maxDescriptionLength) {
+		return
+	}
+
 	if user.Role != "admin" {
 		owner, found, err := h.Enrollments.CourseOwner(r.Context(), req.CourseID)
 		if err != nil || !found || owner != user.ID {

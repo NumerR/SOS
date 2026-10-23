@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -108,7 +108,16 @@ func (h *Handlers) AdminSetRole(w http.ResponseWriter, r *http.Request) {
 	if admin != nil {
 		actorID = admin.ID
 	}
-	log.Printf("admin: user_id=%d роль %s -> %s (изменил user_id=%d)", target.ID, target.Role, role, actorID)
+
+	// Отдельной таблицы аудита пока нет (T1.2), поэтому запись ролевой смены
+	// живёт только в логе — и она должна быть в машине-читаемом виде.
+	requestLogger(r).Info("admin: роль изменена",
+		slog.Int64("target_user_id", target.ID),
+		slog.String("from_role", target.Role),
+		slog.String("to_role", role),
+		slog.Int64("actor_user_id", actorID),
+		slog.String("ip", ClientIP(r)),
+	)
 
 	target.Role = role
 	writeJSON(w, http.StatusOK, target)

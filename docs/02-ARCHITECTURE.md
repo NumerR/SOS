@@ -153,21 +153,35 @@ logout-all, смене пароля и смене роли; фоновая оч�
 верхняя граница длины пароля; `X-Forwarded-Proto` и `X-Forwarded-For`
 доверяются только при `TRUST_PROXY=true`.
 
-Осталось (T0.3, T1.2): `audit_events` на вход/выход/оценку/смену роли;
-`context.WithTimeout` на каждый запрос к БД; `http.Server` со всеми таймаутами
-и graceful shutdown; лимиты длины всех текстовых полей; `__Host-` префикс куки
-при TLS (сейчас `gs_session`, чтобы не ломать локальный прогон по HTTP).
+Добавлено в T0.3 (ADR-0008): `http.Server` с таймаутами чтения заголовка/тела,
+записи, идеала и `MaxHeaderBytes` + graceful shutdown по `SIGINT`/`SIGTERM`;
+`WithDBDeadline` — `context.WithTimeout` на каждый запрос; структурированный
+лог `slog` с `request_id` и защитой от лог-инъекции; лимиты длины всех
+текстовых полей и шкалы оценки (`fields.go`, `422` до обращения к БД);
+`__Host-gs_session` при TLS (на локальном HTTP — `gs_session`, иначе префикс
+требует Secure и ломает прогон без certificates).
+
+Осталось (T1.2): `audit_events` на вход/выход/оценку/смену роли. Отдельный
+долг: `csrf_token` не может быть `__Host-`, потому что токен читает JS для
+заголовка `X-CSRF-Token` (double-submit), и `SameSite=Lax` остаётся единственной
+защитой cookie вне TLS-сценариев.
 
 ## 8. Конфигурация (env)
 
 ```
 ADDR=:8080                       DATABASE_URL=postgres://…        TZ_NAME=Europe/Moscow
 ENV=production|development       TRUST_PROXY=false                SESSION_TTL=24h
+LOG_LEVEL=info|debug|warn|error  (уровень slog; debug включает статику в доступ-логе)
 CORS_ALLOW_ORIGINS=https://…     (пусто = same-origin, заголовка нет)
 ADMIN_USERNAME/ADMIN_EMAIL/ADMIN_FULL_NAME/ADMIN_PASSWORD   (сид, существующий механизм)
 TELEGRAM_BOT_TOKEN=<secret>      TELEGRAM_ALLOWED_CHANNELS=…
 SCHEDULE_SOURCE_BASE_URL=…       IMPORT_INTERVAL=15m
 ```
+
+Таймауты HTTP-сервера и дедлайн обращений к БД пока не настраиваются через env —
+это константы в `cmd/server/main.go` и `internal/handlers/deadline.go`
+(`dbRequestTimeout`). Делать их переменными смысла нет до `T2.1`: значения
+подбираются под пул соединений PostgreSQL, а не под SQLite-файл.
 
 Секреты только из окружения управляемого хостинга/GitHub Secrets; `data/`, `.env` уже в `.gitignore`. Логи — `slog` JSON без значений секретов и без паролей.
 

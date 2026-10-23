@@ -10,6 +10,30 @@ import (
 
 const sessionCookieName = "gs_session"
 
+// secureSessionCookieName — то же имя с префиксом __Host-.
+//
+// Браузер принимает __Host-* только по HTTPS, только с Path=/ и только без
+// Domain. Это закрывает два обхода, которые остаются у обычной куки: её
+// может подставить любой поддомен того же хоста и её может сузить/расширить
+// Path. На plain HTTP такой префикс браузер выбросил бы, поэтому локальная
+// разработка продолжает ходить под обычным именем.
+const secureSessionCookieName = "__Host-" + sessionCookieName
+
+// sessionCookieNames — порядок чтения: сначала защищённое имя, потом обычное.
+// Если в браузере остались обе (переезд на HTTPS), победит та, которую
+// подделать дешевле нельзя.
+func sessionCookieNames() []string {
+	return []string{secureSessionCookieName, sessionCookieName}
+}
+
+// sessionCookieNameFor — имя, под которым кука выпускается прямо сейчас.
+func sessionCookieNameFor(r *http.Request) string {
+	if isSecureRequest(r) {
+		return secureSessionCookieName
+	}
+	return sessionCookieName
+}
+
 type contextKey string
 
 const userContextKey contextKey = "user"
@@ -52,14 +76,27 @@ func (h *Handlers) currentUser(r *http.Request) *models.User {
 	return user
 }
 
+// sessionIDFromRequest берёт идентификатор сессии из куки любого из двух
+// имён. Единая точка нужна затем, чтобы чтение и отзыв сессий не разошлись:
+// «Logout» под обычным именем оставил бы __Host-* жить в браузере.
+func sessionIDFromRequest(r *http.Request) string {
+	for _, name := range sessionCookieNames() {
+		cookie, err := r.Cookie(name)
+		if err == nil && cookie.Value != "" {
+			return cookie.Value
+		}
+	}
+	return ""
+}
+
 // authenticatedUser проверяет cookie-сессию и возвращает пользователя.
 func (h *Handlers) authenticatedUser(r *http.Request) (*models.User, bool) {
-	cookie, err := r.Cookie(sessionCookieName)
-	if err != nil || cookie.Value == "" {
+	sessionID := sessionIDFromRequest(r)
+	if sessionID == "" {
 		return nil, false
 	}
 
-	session, err := h.Sessions.Get(r.Context(), cookie.Value)
+	session, err := h.Sessions.Get(r.Context(), sessionID)
 	if err != nil {
 		return nil, false
 	}

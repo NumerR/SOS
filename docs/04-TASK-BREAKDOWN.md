@@ -8,6 +8,8 @@
 |---|---|---|
 | T0.1 + первая половина T0.2 | `3368fc2`, `f1b4c7e` | [#1 — слит в `main` (`0eb89bd`)](https://github.com/NumerR/SOS/pull/1) |
 | остаток T0.2 | `1485482` | [#2 — открыт, конфликтов с `main` нет](https://github.com/NumerR/SOS/pull/2) |
+| документация после T0.2 | `1253624` | тот же PR #2 |
+| T0.3 | коммит с этим документом | тот же PR #2 (своего хэша в таблице нет — документ правится в том же коммите) |
 
 Ветка `fix/t0-frontend-modals` идёт одной линией истории: каждый следующий этап
 доразвивает её же, пока PR не слит. Ни один PR не создавался из CLI: `gh` на этой
@@ -60,7 +62,64 @@ HTTP-проверки против живого сервера.
 - `csrf_token` выдаётся только внутри `RequireAuth` (`handlers.go:97`), поэтому сразу после регистрации любой POST отдаёт 403 `csrf token missing` — токен нужно выпускать и на `/api/auth/register`, и на `/api/auth/login`. Обход в сиде (`tests/ui/seed.sh`) — лишний авторизованный GET; после правки обход убрать.
 - Приёмка: тесты `handlers/auth_test.go` на 5 сценариев (успех, неверный пароль, неизвестный пользователь, блокировка после N попыток, отзыв всех сессий).
 
-### T0.3 Привести HTTP-сервер в production-вид (Агент 2)
+### T0.3 Привести HTTP-сервер в production-вид (Агент 2) — выполнено, коммит в этой же ветке (ждёт в PR #2)
+
+Закрыто (ADR-0008):
+
+- `cmd/server/main.go`: вместо `http.ListenAndServe` — `http.Server` с
+  `ReadHeaderTimeout`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`,
+  `MaxHeaderBytes` и адресом из `ADDR`. Остановка по `SIGINT`/`SIGTERM`
+  через `signal.NotifyContext`, затем `Shutdown(ctx)` с таймаутом и `Close()`
+  как запасной вариант. Фоновый сборщик сессий останавливается тем же
+  контекстом, и `main` дожидается его выхода.
+- `handlers.WithDBDeadline` — `context.WithTimeout` (5 с) на каждый запрос:
+  обёртка над всем mux, поэтому дедлайн действует и в обработчиках, и в
+  middleware авторизации.
+- `handlers.LogRequests` — `slog` JSON с `request_id` (заголовок
+  `X-Request-Id`), методом, путём, статусом, длительностью, числом байт и IP.
+  Чужой `X-Request-Id` принимается только при `TRUST_PROXY=true`, только
+  длиной ≤ 64 и без управляющих символов, иначе генерируется свой — иначе
+  заголовок стал бы каналом лог-инъекции. Статика пишется на `Debug`,
+  4xx — `Warn`, 5xx — `Error`; тел запросов в логе нет. `log.Printf` в
+  `auth.go`, `admin.go`, `ratelimit.go` заменён структурированными вызовами
+  `requestLogger(r)`; уровень задаётся `LOG_LEVEL`.
+- `/api/health` проверяет базу: `db.PingContext` с таймаутом 1 с, иначе
+  `503 {"status":"error","db":"error"}`.
+- `internal/handlers/fields.go` — границы длины в рунах (не в байтах) для
+  названия и описания задания, текста сдачи, комментария оценки, имени,
+  категории, URL и шкалы оценки 0–10. Проверка до обращения к БД, ответ `422`.
+  `courses.go`, `resources.go`, `events.go` переведены на общий хелпер,
+  `assignments.go` и `submissions.go` получили лимиты, которых у них не было.
+- Кука сессии: `__Host-gs_session` при защищённом запросе, `gs_session`
+  на локальном HTTP; чтение перебирает оба имени и предпочитает префиксное,
+  снятие всегда отдаёт оба (`handlers.go`, `auth.go`).
+
+Проверено: `gofmt -l .` пусто, `go vet ./...` чисто, `go test ./...` зелёное;
+в `internal/handlers` 33 верхнеуровневых сценария и 23 подкейса (56 `--- PASS`),
+15 сценариев (29 проверок) — новые: `logging_test.go`, `fields_test.go`,
+`cookie_test.go`; в `internal/ratelimit` 8. Живые
+проверки (собранный бинарник, изолированная `DB_PATH`): JSON-строки лога с
+`request_id` и `X-Request-Id` в ответе; `/api/health` → `{"status":"ok","db":"ok"}`;
+`422 {"error":"title is too long"}` на заголовке задания из 201 символа и `201`
+на 200 символах (счёт в рунах, проверено кириллицей); клиент, не досылающий
+заголовки, оборван без байт ответа через 5.01 с; недописанный `POST` (20 КБ из
+900), начатый до `SIGTERM`, получил `400` через 10.001 с, процесс вышел с кодом 0
+и строкой «сервер остановлен корректно»; при `TRUST_PROXY=true` и
+`X-Forwarded-Proto: https` в `Set-Cookie` оказался `__Host-gs_session; Secure`,
+без заголовка — прежний `gs_session`. UI-регрессии нет: `assignments-modal.cjs`
+20/20, `admin-roles.cjs` 11/11, `account-security.cjs` 22/22 (прогон требует
+`ADMIN_USERNAME`/`ADMIN_PASSWORD` в окружении — без них `admin-roles.cjs` падает
+на входе, а `account-security.cjs`, оборванный посреди смены пароля, оставляет
+`s_stud` с новым паролем; восстановление паролем из сида — прямой `UPDATE` хэша).
+
+Ограничения приняты осознанно: `WriteTimeout` обрежет долгие ответы и
+в будущем помешает стримингу — для текущих коротких JSON-ответов это правильный
+размен, при выгрузке расписания понадобится `http.ResponseController` с
+точечным сбросом дедлайна. 5 с выбраны под локальный SQLite; в `T2.1` на
+PostgreSQL дедлайн пересматривается вместе с пулом соединений. `audit_events`
+не делался — это `T1.2`.
+
+Исходная постановка:
 
 - `http.Server` с `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, `MaxHeaderBytes`; graceful shutdown по `SIGINT/SIGTERM` с `Shutdown(ctx)` (`main.go:137` — сейчас `ListenAndServe` без таймаутов и без остановки).
 - `context.WithTimeout` на все обращения к БД (сейчас 0 в `internal/`).

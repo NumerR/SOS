@@ -40,6 +40,11 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req.Content = strings.TrimSpace(req.Content)
+	if !validateLength(w, "content", req.Content, maxSubmissionLength) {
+		return
+	}
+
 	assignment, err := h.Assignments.GetByID(r.Context(), req.AssignmentID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "assignment not found")
@@ -65,7 +70,7 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sub, err := h.Submissions.Upsert(r.Context(), user.ID, req.AssignmentID, strings.TrimSpace(req.Content))
+	sub, err := h.Submissions.Upsert(r.Context(), user.ID, req.AssignmentID, req.Content)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save submission")
 		return
@@ -173,6 +178,13 @@ func (h *Handlers) GradeSubmission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Оценку и комментарий проверяем до обращения к базе: запрос с мусором не
+	// должен тратить три SELECT и соединение.
+	req.Comment = strings.TrimSpace(req.Comment)
+	if !validateScore(w, req.Score) || !validateLength(w, "comment", req.Comment, maxDescriptionLength) {
+		return
+	}
+
 	// 1. Находим сабмит, чтобы узнать, к какому заданию он относится.
 	sub, err := h.Submissions.GetByID(r.Context(), req.SubmissionID)
 	if err != nil {
@@ -193,7 +205,7 @@ func (h *Handlers) GradeSubmission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Submissions.Grade(r.Context(), req.SubmissionID, req.Score, strings.TrimSpace(req.Comment)); err != nil {
+	if err := h.Submissions.Grade(r.Context(), req.SubmissionID, req.Score, req.Comment); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to grade submission")
 		return
 	}

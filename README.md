@@ -29,6 +29,17 @@
   преподаватель видит список **своих** курсов, админ — любых;
 - админ-панель `/admin` (список пользователей и выдача ролей), закрыта
   `RequireRole` + `RequireCSRF`;
+- CSRF для всех mutate-запросов: double-submit cookie `csrf_token` +
+  заголовок `X-CSRF-Token`, токен выдаётся вместе с сессией на `register`
+  и `login`; сравнение — constant-time;
+- cookie сессии: `HttpOnly`, `SameSite=Lax`, `Secure` и имя `__Host-gs_session`
+  при защищённом запросе (на локальном HTTP — `gs_session`, см. раздел
+  «Работа за обратным прокси»);
+- HTTP-сервер с таймаутами (заголовок/тело/запись/идеал/размер заголовков),
+  graceful shutdown по `SIGINT`/`SIGTERM`, `context.WithTimeout` на каждый
+  запрос к БД, `slog` JSON + `request_id`, `/api/health` с `db.PingContext`;
+- границы длины всех текстовых полей и шкала оценки 0–10 — проверка до
+  обращения к БД, ответ `422` с именем поля;
 - дизайн-система: тёплый пергамент + neumorphism + единственный акцент
   (petrol-teal), спецификационная типографика, состояния controls
   (pressed/disabled/loading/focus/error), empty-state, скелетоны, таблица.
@@ -63,6 +74,10 @@ go run ./cmd/server
 
 Открыть `http://localhost:8080`. Двойным кликом по `index.html` (`file://`)
 не открывать — статика и API не найдутся.
+
+Порт и уровень логов берутся из окружения (`ADDR=:8090 go run ./cmd/server`,
+`LOG_LEVEL=debug`), остальное — константы, см. раздел «Логи, таймауты и
+остановка сервера».
 
 ## Администратор
 
@@ -146,16 +161,78 @@ TRUST_PROXY=true go run ./cmd/server
 иначе подмена заголовка обходит все лимиты. Без флага поведение честное и
 консервативное: лимиты по IP прокси, куки по факту TLS.
 
+При защищённом запросе сессия выдаётся под именем `__Host-gs_session`
+(`HttpOnly`, `Secure`, `Path=/`, без `Domain`) — префикс запрещает поддоменам
+и `Domain`-атрибуту подменить куку. На plain HTTP остаётся
+`gs_session`: браузеры требуют `Secure` для `__Host-`, и строгое имя сломало бы
+локальный прогон без сертификата. Чтение перебирает оба имени (предпочитая
+префиксное), снятие всегда отдаёт оба, поэтому переход HTTP → HTTPS не оставляет
+двойной сессии. `csrf_token` префикса не получает осознанно: его читает JS для
+заголовка `X-CSRF-Token`.
+
+## Логи, таймауты и остановка сервера
+
+Логи — `slog` в JSON на stdout, по одной строке на запрос (msg — `http request`):
+
+```json
+{"level":"INFO","msg":"http request","request_id":"2daeeb370f2aed3b","method":"POST",
+ "path":"/api/auth/login","status":200,"duration_ms":91,"bytes":99,"ip":"::1"}
+```
+
+Уровни: раздача статики — `DEBUG`, 2xx/3xx — `INFO`, 4xx — `WARN`, 5xx — `ERROR`
+(`LOG_LEVEL=debug` включает `/css/`, `/js/`, `/favicon.ico`). В лог не пишутся
+тела запросов, пароли и значения куки — только метаданные транспорта.
+`request_id` генерируется на каждый запрос и возвращается в заголовке
+`X-Request-Id`; чужой `X-Request-Id` принимается только при `TRUST_PROXY=true`,
+только длиной ≤ 64 и без управляющих символов — иначе это канал лог-инъекции,
+и идентификатор генерируется заново.
+
+Таймауты (константы `cmd/server/main.go`, `internal/handlers/deadline.go`):
+`ReadHeaderTimeout` 5 с — клиент, не досылающий заголовки (Slowloris) обрывается,
+не успев занять горутину; `ReadTimeout` 10 с; `WriteTimeout` 30 с;
+`IdleTimeout` 90 с; `MaxHeaderBytes` 64 КиБ. Все обращения к БД идут через
+`WithDBDeadline` — `context.WithTimeout` 5 с на запрос, поэтому висячий SQL
+не держит соединение (`db.SetMaxOpenConns(1)` делает это особенно заметным
+на SQLite).
+
+Остановка: `SIGINT`/`SIGTERM` → `server.Shutdown` даёт активным запросам
+10 с долиться, затем `server.Close()`; фоновый сборщик протухших сессий
+останавливается тем же контекстом, и процесс ждёт его выхода (не более 5 с).
+Проверка:
+
+```bash
+go build -o /tmp/sos-server ./cmd/server
+/tmp/sos-server & pid=$!
+curl -s localhost:8080/api/health   # {"status":"ok","db":"ok"}
+kill -TERM $pid; wait $pid; echo $? # «сервер остановлен корректно», код выхода 0
+```
+
+`/api/health` не статичен: он выполняет `db.PingContext` с таймаутом 1 с, и при
+недоступной базе отвечает `503 {"status":"error","db":"error"}`.
+
+Границы длины полей (`internal/handlers/fields.go`) проверяются до обращения к БД
+и отвечают `422` с именем поля: название задания ≤ 200, описание ≤ 2000, текст сдачи
+≤ 20000, комментарий оценки ≤ 2000, имя ≤ 200, категория ≤ 64, URL ≤ 2000,
+оценка — шкала 0–10 (совпадает с `min`/`max` в `web/js/modals.js`). Счёт в рунах,
+а не байтах: кириллический текст в 200 символов проходит.
+
 ## Структура
 
 ```txt
-cmd/server/        точка входа, маршрутизация, сид админа
+cmd/server/        точка входа: маршруты, таймауты сервера, graceful shutdown,
+                   health с ping базы, сид админа, сборщик протухших сессий
 internal/database/ открытие SQLite + миграции схемы
 internal/models/   доменные типы (User, Course, ...)
-internal/store/    доступ к БД (users, sessions, courses, enrollments) + ошибки
-internal/handlers/ HTTP-обработчики, middleware RequireAuth/RequireRole
+internal/store/    доступ к БД (users, sessions, courses, enrollments,
+                   assignments, submissions, resources, events, schedule) + ошибки
+internal/ratelimit/ токен-бакет: лимиты на IP и счётчик неудачных входов
+internal/handlers/ HTTP-обработчики и middleware: RequireAuth / RequireRole /
+                   RequireCSRF / RateLimit, логи + request id (logging.go),
+                   дедлайн БД (deadline.go), границы полей (fields.go),
+                   куки сессии с `__Host-` (handlers.go)
 web/               статика: HTML-страницы, css/, js/
 data/              локальная база (создаётся при старте, в git не попадает)
+tests/ui/          jsdom-тесты фронтенда против живого сервера + seed
 ```
 
 ## Схема БД
@@ -165,10 +242,17 @@ users(id, username UNIQUE, email UNIQUE, full_name, password_hash, role)
 sessions(id PK, user_id FK->users, expires_at)
 courses(id, title, description, teacher, created_by FK->users)
 enrollments(id, user_id FK->users, course_id FK->courses, created_at, UNIQUE(user_id, course_id))
+assignments(id, course_id FK->courses, title, description, due_date int, created_by FK->users)
+submissions(id, assignment_id FK->assignments, user_id FK->users, content, score real DEFAULT -1,
+            comment, submitted_at int, graded_at int, UNIQUE(assignment_id, user_id))
+resources(id, title, category, url, description, created_by FK->users, created_at int)
+events(id, title, description, event_date int, created_by FK->users, created_at int)
 ```
 
 Миграции — `CREATE TABLE IF NOT EXISTS` в `internal/database/db.go`, применяются
-при каждом старте; существующая `data/app.db` остаётся валидной.
+при каждом старте; существующая `data/app.db` остаётся валидной. Версионируемых
+миграций и PostgreSQL пока нет — это T2.1 (ADR-0002). Путь к файлу базы —
+`DB_PATH` (по умолчанию `data/app.db`).
 
 ## Шрифт
 
@@ -211,15 +295,33 @@ curl -i -X POST http://localhost:8080/api/auth/register \
 ## Тесты
 
 ```bash
-go test ./...                            # лимитер + обработка аутентификации и аккаунта
+gofmt -l . && go vet ./...               # должно быть пусто / чисто
+go test ./...                            # лимитер + аутентификация, аккаунт,
+                                         # логи/дедлайн, лимиты полей, куки
 cd tests/ui && npm install
 npm run test:account                     # панель «Аккаунт и доступ» в jsdom
 npm run test:all                         # UI заданий + роли админа + аккаунт
 ```
 
-Прогон `tests/ui` требует сервер с админ-сидом и применённый `tests/ui/seed.sh`
-(см. шапку скрипта).
+Go-тесты: `internal/ratelimit/limiter_test.go` (8 сценариев),
+`internal/handlers/auth_test.go`, `account_test.go`, `fields_test.go`,
+`logging_test.go`, `cookie_test.go` — 33 верхнеуровневых сценария и 23 подкейса
+в `internal/handlers`; из них 15 сценариев (29 проверок) добавлены в T0.3.
+UI-тесты гоняют jsdom против живого сервера, поэтому требуют запущенного
+`go run ./cmd/server`, `ADMIN_USERNAME`/`ADMIN_PASSWORD` в окружении
+(иначе `admin-roles.cjs` не сможет войти) и применённого `tests/ui/seed.sh`
+(см. его шапку — сид выдаёт роль `teacher` админом).
 
 ## Что дальше (не реализовано)
 
+- CI: `go vet`/`go build`/`go test` и проверка целостности фронтенда
+  (`node --check` + сверка `<script src>` с диском) — T0.4;
+- PostgreSQL и версионируемые миграции — T2.1 (ADR-0002), после него —
+  пересмотр дедлайна БД и размера пула;
+- `audit_events` (запись входа/выхода/оценки/смены роли в базу, а не в лог) — T1.2;
+- конфиг `API_BASE_URL` во фронтенде, относительные пути и раздача статики через
+  GitHub Pages — T1.1 (вариант размещения, ADR-0001);
+- модуль расписания по группе/дате и импорт из официального источника — T4.1,
+  заблокирован: источник не предоставлен (ADR-0004);
 - восстановление пароля, подтверждение email;
+- единый `authz.Can(user, perm)` вместо ролевых проверок по обработчикам — T3.1.

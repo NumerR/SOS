@@ -11,13 +11,15 @@
 | [02-ARCHITECTURE.md](02-ARCHITECTURE.md) | Архитектура MVP: модули, структура каталогов, контракты API, схема БД, конфигурация |
 | [03-UNKNOWN-AND-DECISIONS.md](03-UNKNOWN-AND-DECISIONS.md) | Неизвестные требования, решения, требующие слова владельца, принятые допущения |
 | [04-TASK-BREAKDOWN.md](04-TASK-BREAKDOWN.md) | Первый конкретный набор задач по агентам и порядок проверки |
-| [05-DECISIONS.md](05-DECISIONS.md) | ADR-0001…ADR-0007: размещение, PostgreSQL, модульность, источник расписания, события, роли и rate limit, остаток T0.2 |
+| [05-DECISIONS.md](05-DECISIONS.md) | ADR-0001…ADR-0008: размещение, PostgreSQL, модульность, источник расписания, события, роли и rate limit, остаток T0.2, production-вид HTTP-сервера |
 
 Статус (2026-10-24): исследование завершено, решения владельца получены (ADR-0001, ADR-0002, ADR-0004, ADR-0005).
 Выполнено и запушено: T0.1 (модальное окно заданий) и T0.2 целиком (роли, rate limit,
 тайминг, отзыв и очистка сессий, «выйти везде», смена пароля, `TRUST_PROXY`).
 Оформлено двумя pull request'ами: [#1 слит в `main`](https://github.com/NumerR/SOS/pull/1),
 [#2 открыт](https://github.com/NumerR/SOS/pull/2).
-Дальше по плану — T0.3 (таймауты HTTP-сервера, graceful shutdown, `context.WithTimeout`
-на обращения к БД, `slog` + request id), затем T2.1 (PostgreSQL) и T1.1 (конфиг API + GitHub Pages).
+T0.3 (таймауты `http.Server` и graceful shutdown, `WithDBDeadline`, `slog` + request id,
+лимиты длины полей, `__Host-` кука, `LOG_LEVEL`) закрыт кодом и тестами и лежит
+в той же ветке `fix/t0-frontend-modals` → PR #2.
+Дальше по плану — T0.4 (CI), затем T2.1 (PostgreSQL) и T1.1 (конфиг API + GitHub Pages).
 Ничего из перечисленного не развёрнуто: публикуется только код в git, сервер поднят локально на `:8080`.

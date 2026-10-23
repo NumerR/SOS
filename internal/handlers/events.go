@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/NumerR/SOS/internal/models"
 )
@@ -49,12 +48,8 @@ func (h *Handlers) EventsAPI(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnprocessableEntity, "title is required")
 			return
 		}
-		if utf8.RuneCountInString(req.Title) > 200 {
-			writeError(w, http.StatusUnprocessableEntity, "title is too long")
-			return
-		}
-		if utf8.RuneCountInString(req.Description) > 2000 {
-			writeError(w, http.StatusUnprocessableEntity, "description is too long")
+		if !validateLength(w, "title", req.Title, maxTitleLength) ||
+			!validateLength(w, "description", req.Description, maxDescriptionLength) {
 			return
 		}
 
