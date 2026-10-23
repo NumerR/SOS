@@ -14,8 +14,10 @@ type contextKey string
 
 const userContextKey contextKey = "user"
 
-// Handlers — HTTP-обработчики.
-type Handlers struct {
+// Deps — зависимости обработчиков. Собираются в main.go инициализатором
+// с именами полей: девять позиционных аргументов подряд легко перепутать
+// местами, и компилятор это не заметит.
+type Deps struct {
 	Users       *store.UserStore
 	Sessions    *store.SessionStore
 	Courses     *store.CourseStore
@@ -25,31 +27,17 @@ type Handlers struct {
 	Schedule    *store.ScheduleStore
 	Resources   *store.ResourceStore
 	Events      *store.EventStore
+	Limits      Limiters
+}
+
+// Handlers — HTTP-обработчики. Поля Deps доступны напрямую: h.Users, h.Sessions…
+type Handlers struct {
+	Deps
 }
 
 // New создаёт набор обработчиков.
-func New(
-	users *store.UserStore,
-	sessions *store.SessionStore,
-	courses *store.CourseStore,
-	enrollments *store.EnrollmentStore,
-	assignments *store.AssignmentStore,
-	submissions *store.SubmissionStore,
-	schedule *store.ScheduleStore,
-	resources *store.ResourceStore,
-	events *store.EventStore,
-) *Handlers {
-	return &Handlers{
-		Users:       users,
-		Sessions:    sessions,
-		Courses:     courses,
-		Enrollments: enrollments,
-		Assignments: assignments,
-		Submissions: submissions,
-		Schedule:    schedule,
-		Resources:   resources,
-		Events:      events,
-	}
+func New(deps Deps) *Handlers {
+	return &Handlers{Deps: deps}
 }
 
 // currentUser возвращает пользователя из контекста запроса.

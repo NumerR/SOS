@@ -1,0 +1,13 @@
+{
+  "name": "sos-ui-tests",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Headless-проверка UI (jsdom) против локального Go-сервера",
+  "scripts": {
+    "test": "node assignments-modal.cjs",
+    "test:admin": "node admin-roles.cjs"
+  },
+  "dependencies": {
+    "jsdom": "^30.1.3"
+  }
+}

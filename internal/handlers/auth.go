@@ -2,9 +2,12 @@ package handlers
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/NumerR/SOS/internal/models"
@@ -28,17 +31,26 @@ type LoginRequest struct {
 var (
 	usernamePattern = regexp.MustCompile(`^[\p{L}\p{N}_.-]{3,32}$`)
 	emailPattern    = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+
+	// dummyPasswordHash — заведомо чужой bcrypt-хэш фиктивной стоимости 10.
+	// Нужен только для того, чтобы ветка «пользователь не найден» тратила на
+	// сравнение столько же времени, сколько ветка «пользователь найден».
+	// Пароль к нему не подбирается: он никогда не признаётся успешным входом
+	// (см. проверку userWithSecret == nil в Login).
+	dummyPasswordHash = []byte("$2a$10$CwTycUXWue0Thq9StjUM0uJ8Z1MZ0D3vLqKZ2h8uJgW6cHmB7lTIW")
 )
 
 // normalizeRole валидирует роль из публичной регистрации.
-// admin сюда никогда не проходит — он только через сид.
+//
+// Публично разрешена только роль студента. Раньше здесь же проходил и
+// «teacher», то есть любой посетитель получал право создавать курсы и
+// оценивать чужие работы (учётка t_teacher в тестовой базе создана именно
+// так). Роль теперь назначает администратор — см. AdminSetRole.
 func normalizeRole(role string) (string, bool) {
 	role = strings.ToLower(strings.TrimSpace(role))
 	switch role {
 	case "", "student":
 		return "student", true
-	case "teacher":
-		return "teacher", true
 	default:
 		return "", false
 	}
@@ -62,7 +74,7 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 
 	role, ok := normalizeRole(req.Role)
 	if !ok {
-		writeError(w, http.StatusUnprocessableEntity, "role must be student or teacher")
+		writeError(w, http.StatusUnprocessableEntity, "role is assigned by an administrator; register as a student")
 		return
 	}
 
@@ -118,6 +130,10 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 }
 
 // Login проверяет учётные данные и создаёт сессию.
+//
+// Ограничения здесь двухуровневые: middleware по IP (main.go) отсекает флуд,
+// а бакет по идентификатору считает именно неудачные проверки пароля — чтобы
+// перебор одного аккаунта с разных адресов тоже упирался в лимит.
 func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w)
@@ -136,27 +152,55 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userWithSecret, err := h.Users.GetByIdentifier(r.Context(), req.Identifier)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusUnauthorized, "invalid credentials")
-			return
-		}
+	accountKey := "login:" + req.Identifier
+	if remaining := h.Limits.LoginAccount.Tokens(accountKey); remaining < 1 {
+		h.tooManyAttempts(w, r, accountKey)
+		return
+	}
 
+	userWithSecret, err := h.Users.GetByIdentifier(r.Context(), req.Identifier)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusInternalServerError, "failed to login")
 		return
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(userWithSecret.PasswordHash), []byte(req.Password)); err != nil {
+	// Сравниваем с bcrypt всегда: если пользователя нет, сравниваем с фиктивным
+	// хэшем. Иначе ответ «нет такого логина» приходит быстрее, и по таймингу
+	// можно перебрать существующие учётные записи.
+	hash := dummyPasswordHash
+	if userWithSecret != nil {
+		hash = []byte(userWithSecret.PasswordHash)
+	}
+
+	// Неудача всегда отвечает 401 «invalid credentials»: сообщать «вы только что
+	// заблокировали аккаунт» смысла нет, а вот следующая попытка упрётся в
+	// проверку бакета выше и получит 429.
+	if err := bcrypt.CompareHashAndPassword(hash, []byte(req.Password)); err != nil || userWithSecret == nil {
+		h.Limits.LoginAccount.Consume(accountKey, 1)
+		log.Printf("auth: неудачный вход identifier=%s ip=%s", redactKey(req.Identifier), LimitByIP(r))
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
+
+	h.Limits.LoginAccount.Reset(accountKey)
 
 	if !h.startSession(w, r, &userWithSecret.User) {
 		return
 	}
 
+	log.Printf("auth: вход выполнен user_id=%d ip=%s", userWithSecret.User.ID, LimitByIP(r))
 	writeJSON(w, http.StatusOK, userWithSecret.User)
+}
+
+// tooManyAttempts — ответ «слишком много неудачных попыток» с Retry-After.
+func (h *Handlers) tooManyAttempts(w http.ResponseWriter, r *http.Request, accountKey string) {
+	retry := h.Limits.LoginAccount.RetryAfter(accountKey)
+	if retry < time.Second {
+		retry = time.Second
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())))
+	writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+	log.Printf("auth: перебор по идентификатору %s заблокирован на %s", redactKey(accountKey), retry)
 }
 
 // Logout удаляет текущую сессию.
@@ -202,6 +246,11 @@ func (h *Handlers) startSession(w http.ResponseWriter, r *http.Request, user *mo
 	}
 
 	setSessionCookie(w, r, sessionID)
+
+	// CSRF-токен выдаём сразу вместе с сессией. Раньше это делал только
+	// RequireAuth, поэтому после register/login первый же POST возвращал
+	// 403 «csrf token missing», пока клиент не сходит на GET /api/auth/me.
+	ensureCSRFCookie(w, r)
 	return true
 }
 

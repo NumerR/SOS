@@ -48,17 +48,18 @@ func main() {
 
 	seedAdmin(userStore)
 
-	h := handlers.New(
-		userStore,
-		sessionStore,
-		courseStore,
-		enrollmentStore,
-		assignmentStore,
-		submissionStore,
-		scheduleStore,
-		resourceStore,
-		eventStore,
-	)
+	h := handlers.New(handlers.Deps{
+		Users:       userStore,
+		Sessions:    sessionStore,
+		Courses:     courseStore,
+		Enrollments: enrollmentStore,
+		Assignments: assignmentStore,
+		Submissions: submissionStore,
+		Schedule:    scheduleStore,
+		Resources:   resourceStore,
+		Events:      eventStore,
+		Limits:      handlers.NewLimiters(),
+	})
 
 	mux := http.NewServeMux()
 
@@ -76,9 +77,13 @@ func main() {
 	mux.HandleFunc("/admin", h.AdminPage)
 	mux.HandleFunc("/schedule", h.SchedulePage)
 
-	// API авторизации (публичные; login/register CSRF при Lax+HttpOnly снижен — known limitation).
-	mux.HandleFunc("/api/auth/register", h.Register)
-	mux.HandleFunc("/api/auth/login", h.Login)
+	// API авторизации (публичные). Оба эндпоинта ограничены по IP: login — от
+	// перебора паролей, register — от накрутки мусорных аккаунтов. Внутри Login
+	// есть второй уровень — бакет неудачных попыток по идентификатору учётки.
+	// CSRF на них не проверяется: с SameSite=Lax межсайтовый POST сюда не доходит
+	// (known limitation, см. docs/01-STATE-REPORT.md).
+	mux.Handle("/api/auth/register", h.RateLimit(h.Limits.Register, "register", handlers.LimitByIP)(http.HandlerFunc(h.Register)))
+	mux.Handle("/api/auth/login", h.RateLimit(h.Limits.Login, "login", handlers.LimitByIP)(http.HandlerFunc(h.Login)))
 	mux.HandleFunc("/api/auth/logout", h.Logout)
 	mux.Handle("/api/auth/me", h.RequireAuth(http.HandlerFunc(h.Me))) // только GET -> без RequireCSRF
 
@@ -91,8 +96,10 @@ func main() {
 	mux.Handle("/api/enrollments/cancel", h.RequireAuth(h.RequireCSRF(http.HandlerFunc(h.CancelEnrollment)))) // POST
 	mux.Handle("/api/enrollments/course", h.RequireAuth(http.HandlerFunc(h.CourseStudents)))                  // GET-only
 
-	// Админ-контур (GET-only).
+	// Админ-контур: список пользователей и выдача ролей.
+	// Единственный способ получить роль teacher или admin.
 	mux.Handle("/api/admin/users", h.RequireRole("admin")(http.HandlerFunc(h.AdminUsers)))
+	mux.Handle("/api/admin/users/role", h.RequireRole("admin")(h.RequireCSRF(http.HandlerFunc(h.AdminSetRole))))
 
 	// Задания и сдачи работ (смешанные GET+POST -> оборачиваем целиком).
 	mux.Handle("/api/assignments", h.RequireAuth(h.RequireCSRF(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
