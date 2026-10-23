@@ -22,7 +22,24 @@ const GS = (() => {
         element.className = "message hidden";
     }
 
-    // Читает csrf-токен из cookie (выставляется сервером в RequireAuth).
+    //unix-секунды -> человекочитаемая дата; 0/пусто = «без срока».
+    function formatDate(timestamp) {
+        if (!timestamp || timestamp === 0) return "Без дедлайна";
+        const date = new Date(timestamp * 1000);
+        return date.toLocaleDateString("ru-RU", { day: "numeric", month: "short", year: "numeric" });
+    }
+
+    // Инициалы для аватара: первая буква имени + первая буквы фамилии.
+    function initialsFrom(person) {
+        const source = String((person && (person.full_name || person.username)) || "?").trim();
+        if (!source) return "?";
+        const parts = source.split(/\s+/).filter(Boolean);
+        if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+        return source.slice(0, 2).toUpperCase();
+    }
+
+    // Читает csrf-токен из cookie (выставляется сервером при входе/регистрации
+    // и пополняется в RequireAuth).
     function getCSRFToken() {
         const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
         return match ? decodeURIComponent(match[1]) : "";
@@ -102,6 +119,8 @@ const GS = (() => {
         escapeHtml,
         showMessage,
         hideMessage,
+        formatDate,
+        initialsFrom,
         fetchJSON,
         bindLogout,
     };

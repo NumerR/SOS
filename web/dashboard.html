@@ -146,7 +146,22 @@
         </div>
     </footer>
 
+    <!-- Модальное окно заданий: содержимое рендерит js/modals.js -->
+    <div id="modalContainer" class="modal-overlay hidden">
+        <div id="modalDialog" class="modal-content" role="dialog" aria-modal="true"
+             aria-labelledby="modalTitle" tabindex="-1">
+            <div class="modal-header">
+                <h2 id="modalTitle" class="modal-title">Задания</h2>
+                <button id="modalCloseBtn" class="modal-close" type="button" aria-label="Закрыть окно">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div id="modalBody"></div>
+        </div>
+    </div>
+
     <script src="/js/common.js"></script>
+    <script src="/js/modals.js"></script>
     <script src="/js/dashboard.js"></script>
 </body>
 </html>

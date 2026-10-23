@@ -27,21 +27,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     let user = null;
     let mySet = new Set(); 
 
-    function initialsFrom(u) {
-        const source = (u.full_name || u.username || "?").trim();
-        const parts = source.split(/\s+/).filter(Boolean);
-        if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-        return source.slice(0, 2).toUpperCase();
-    }
-
     function globalMsg(text, type = "success") {
         GS.showMessage(globalMessage, text, type);
         clearTimeout(globalMsg._t);
         globalMsg._t = setTimeout(() => GS.hideMessage(globalMessage), 4000);
     }
-
-    // Expose refresh function globally for modals to trigger reload
-    window.refreshDashboardData = loadAll;
 
     // ---------- рендер каталога ----------
     function catalogCardActions(course) {
@@ -207,7 +197,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             if (courseStudentsList) {
                 courseStudentsList.innerHTML = users.map((u) => `
                     <div class="person-row">
-                        <span class="avatar" aria-hidden="true">${GS.escapeHtml(initialsFrom(u))}</span>
+                        <span class="avatar" aria-hidden="true">${GS.escapeHtml(GS.initialsFrom(u))}</span>
                         <span class="person-info">
                             <span class="person-name">${GS.escapeHtml(u.full_name || u.username)}</span>
                             <span class="person-login">@${GS.escapeHtml(u.username)}</span>
@@ -222,126 +212,17 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
     }
 
-    // NEW: Handle Assignment Actions
+    // ---------- действия заданий ----------
+    // Рендер и обработчики модальных окон живут в js/modals.js (AssignmentsUI);
+    // здесь только точка входа из делегата карточек курса.
     async function handleAssignmentAction(actionType, courseId, courseTitle) {
         if (actionType === "view-assignments-student") {
-            const content = await window.renderStudentAssignments(courseId, courseTitle);
-            ModalManager.open(`Задания: ${courseTitle}`, content);
+            await AssignmentsUI.openStudent(courseId, courseTitle);
         } else if (actionType === "manage-assignments") {
-            // For teachers/admins: Show list of assignments with ability to check submissions
-            const content = await renderTeacherAssignmentsList(courseId, courseTitle);
-            ModalManager.open(`Управление заданиями: ${courseTitle}`, content);
+            await AssignmentsUI.openTeacher(courseId, courseTitle);
         }
     }
 
-    // Helper for Teacher View inside Modal
-    async function renderTeacherAssignmentsList(courseId, courseTitle) {
-        try {
-            const res = await GS.fetchJSON(`/api/assignments?course_id=${courseId}`);
-            
-            if (!res.length) {
-                return `<div class="empty-state" style="border:0;box-shadow:none;background:transparent;">
-                            <span class="empty-text">Нет заданий</span>
-                            <button class="btn mt-4" onclick="openCreateAssignmentModal(${courseId})">Создать первое задание</button>
-                        </div>`;
-            }
-
-            const items = res.map(a => `
-                <div class="assignment-item">
-                    <div class="assignment-top">
-                        <div class="assignment-info">
-                            <h4>${GS.escapeHtml(a.title)}</h4>
-                            <span class="assignment-meta">${formatDate(a.due_date)}</span>
-                        </div>
-                        <span class="chip chip-outline">#${a.id}</span>
-                    </div>
-                    <div class="assignment-actions">
-                        <button class="btn btn-secondary" onclick="openCheckSubmissionsModal(${a.id}, '${GS.escapeHtml(a.title)}')">
-                            Проверить сдачи
-                        </button>
-                    </div>
-                </div>
-            `).join("");
-
-            return `
-                <div class="stack mb-4">
-                    <button class="btn" onclick="openCreateAssignmentModal(${courseId})">+ Новое задание</button>
-                </div>
-                ${items}
-            `;
-        } catch (err) {
-            return `<p class="message message-error">${GS.escapeHtml(err.message)}</p>`;
-        }
-    }
-
-    // Placeholder for Create Assignment Modal (to be implemented fully next)
-    window.openCreateAssignmentModal = function(courseId) {
-        const html = `
-            <form id="createAssForm" class="form stack">
-                <input type="hidden" name="course_id" value="${courseId}">
-                <label class="field">
-                    <span class="field-label">Название</span>
-                    <input class="control" type="text" name="title" required placeholder="HW 1">
-                </label>
-                <label class="field">
-                    <span class="field-label">Описание</span>
-                    <textarea class="control" name="description" rows="3" placeholder="Что нужно сделать..."></textarea>
-                </label>
-                <label class="field">
-                    <span class="field-label">Дедлайн (ISO Date)</span>
-                    <input class="control" type="datetime-local" name="due_date_raw">
-                    <span class="helper">Оставьте пустым, если дедлайна нет.</span>
-                </label>
-                <div class="form-actions">
-                    <button type="submit" class="btn">Создать</button>
-                </div>
-                <p id="createAssMsg" class="message hidden"></p>
-            </form>
-        `;
-        ModalManager.open("Новое задание", html);
-
-        const form = document.getElementById("createAssForm");
-        const msg = document.getElementById("createAssMsg");
-
-        form.addEventListener("submit", async (e) => {
-            e.preventDefault();
-            const fd = new FormData(form);
-            const dueRaw = fd.get("due_date_raw");
-            let dueIso = "";
-            if(dueRaw) {
-                // Convert local datetime string to ISO UTC roughly for backend parsing
-                const d = new Date(dueRaw);
-                if(!isNaN(d.getTime())) dueIso = d.toISOString();
-            }
-
-            const payload = {
-                course_id: Number(fd.get("course_id")),
-                title: String(fd.get("title")).trim(),
-                description: String(fd.get("description")).trim(),
-                due_date: dueIso
-            };
-
-            try {
-                await GS.fetchJSON("/api/assignments", {
-                    method: "POST",
-                    body: JSON.stringify(payload)
-                });
-                GS.showMessage(msg, "Задание создано", "success");
-                setTimeout(() => {
-                    ModalManager.close();
-                    // Re-open parent modal to show updated list
-                    handleAssignmentAction("manage-assignments", payload.course_id, ""); 
-                }, 800);
-            } catch (err) {
-                GS.showMessage(msg, err.message, "error");
-            }
-        });
-    };
-
-    window.openCheckSubmissionsModal = async function(assignmentId, assignmentTitle) {
-        const content = await window.renderTeacherSubmissions(assignmentId, assignmentTitle);
-        ModalManager.open(`Сдачи: ${assignmentTitle}`, content);
-    };
 
     function attachDelegation(el) {
         if (!el) return;
@@ -373,7 +254,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     if (userNameElement) userNameElement.textContent = user.full_name || user.username;
     if (userRoleElement) userRoleElement.textContent = roleLabels[user.role] || user.role;
-    if (userAvatarElement) userAvatarElement.textContent = initialsFrom(user);
+    if (userAvatarElement) userAvatarElement.textContent = GS.initialsFrom(user);
 
     const canCreate = canCreateRoles.has(user.role);
     const canEnroll = canEnrollRoles.has(user.role);
@@ -386,6 +267,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     attachDelegation(coursesContainer);
     attachDelegation(myCoursesContainer);
+
+    // Модальные окна сообщают об изменениях через событие, а не через глобалку.
+    document.addEventListener("sos:data-changed", () => loadAll());
 
     if (closeStudentsBtn) closeStudentsBtn.addEventListener("click", () => courseStudentsPanel && courseStudentsPanel.classList.add("hidden"));
     if (refreshButton) refreshButton.addEventListener("click", loadAll);
