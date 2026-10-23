@@ -199,6 +199,16 @@ SCHEDULE_SOURCE_BASE_URL=…       IMPORT_INTERVAL=15m
 `deploy-frontend.yml` — если выбран вариант B (Pages). `deploy-backend.yml` — по выбранному варианту размещения backend.
 Секреты через GitHub Environments, в логи не выводятся.
 
+Фактическое состояние (T0.4, ADR-0009): `.github/workflows/ci.yml` есть и состоит
+из трёх работ — `go` (gofmt, vet, build, `go test -race -count=1`), `frontend`
+(`node --check` + `scripts/check-frontend.mjs`) и `ui` (jsdom-тесты против живого
+сервера, `npm ci` по закоммиченному lockfile). Триггеры — `pull_request`, push в
+`main`, ручной запуск; push в feature-ветку не гоняется, чтобы не удваивать прогоны
+открытого PR. Чего ещё нет: сервис-контейнер PostgreSQL и dry-run миграций
+(перенесено в T2.1 — SQL-пакета миграций пока нет), `deploy-frontend.yml` и
+`deploy-backend.yml` (ждут решения о варианте размещения, ADR-0001/D-01).
+Пароль сида в работе `ui` — не секрет: он создаёт одноразовую базу внутри раннера.
+
 ## 11. Тестирование (минимальный набор для MVP)
 
 - unit: `authz` (таблица «роль × пермиссия»), нормализация времени в импортах, валидация форм, `ratelimit`.

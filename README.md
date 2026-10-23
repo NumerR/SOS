@@ -233,6 +233,8 @@ internal/handlers/ HTTP-обработчики и middleware: RequireAuth / Requ
 web/               статика: HTML-страницы, css/, js/
 data/              локальная база (создаётся при старте, в git не попадает)
 tests/ui/          jsdom-тесты фронтенда против живого сервера + seed
+scripts/           check-frontend.mjs — связи HTML ↔ JS без сборки
+.github/workflows/ ci.yml: go (gofmt/vet/build/test -race), frontend, ui
 ```
 
 ## Схема БД
@@ -312,12 +314,42 @@ UI-тесты гоняют jsdom против живого сервера, по�
 (иначе `admin-roles.cjs` не сможет войти) и применённого `tests/ui/seed.sh`
 (см. его шапку — сид выдаёт роль `teacher` админом).
 
+## CI
+
+`.github/workflows/ci.yml` — три работы:
+
+| Работа | Команды | Что ловит |
+|---|---|---|
+| `go` | `gofmt -l .`, `go vet ./...`, `go build ./...`, `go test -race -count=1 ./...` | компиляцию, формат, гонки (в лимитере есть конкурентный тест) |
+| `frontend` | `node --check` по каждому `web/js/*.js`, `node scripts/check-frontend.mjs` | синтаксис и связи: неподключённый скрипт, несуществующий `<script src>`/`<link href>`, `getElementById` на отсутствующий id, инлайновые `on*`-обработчики |
+| `ui` | сервер + `bash tests/ui/seed.sh` + `npm ci` + `npm run test:all` | поведение страниц в jsdom против живого API |
+
+Триггеры: `pull_request`, push в `main`, ручной запуск. Push в feature-ветку CI
+не гоняется — для открытого PR это был бы второй прогон того же коммита.
+`ADMIN_USERNAME`/`ADMIN_PASSWORD` в работе `ui` — пароль одноразовой базы внутри
+раннера, а не секрет; настоящие учётные данные (будущий `DATABASE_URL`, токен
+бота) в workflow не появляются.
+
+Шаги можно прогнать локально — теми же командами:
+
+```bash
+gofmt -l . && go vet ./... && go test -race -count=1 ./...
+for f in web/js/*.js; do node --check "$f"; done && node scripts/check-frontend.mjs
+```
+
+Детектор бага T0.1 работает в обе стороны: если убрать из `dashboard.html` строку
+`<script src="/js/modals.js"></script>`, `check-frontend.mjs` падает с
+`FAIL modals.js не подключён ни к одной странице`; если удалить сам файл —
+`FAIL подключён несуществующий скрипт`.
+
+Миграции на чистой PostgreSQL в CI появятся вместе с T2.1: сейчас отдельного
+SQL-пакета нет, схему применяет код (`internal/database/db.go`).
+
 ## Что дальше (не реализовано)
 
-- CI: `go vet`/`go build`/`go test` и проверка целостности фронтенда
-  (`node --check` + сверка `<script src>` с диском) — T0.4;
 - PostgreSQL и версионируемые миграции — T2.1 (ADR-0002), после него —
-  пересмотр дедлайна БД и размера пула;
+  сервис-контейнер PostgreSQL и dry-run миграций в CI, пересмотр дедлайна БД
+  и размера пула;
 - `audit_events` (запись входа/выхода/оценки/смены роли в базу, а не в лог) — T1.2;
 - конфиг `API_BASE_URL` во фронтенде, относительные пути и раздача статики через
   GitHub Pages — T1.1 (вариант размещения, ADR-0001);
