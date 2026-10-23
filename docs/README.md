@@ -19,7 +19,7 @@
 Оформлено двумя pull request'ами: [#1 слит в `main`](https://github.com/NumerR/SOS/pull/1),
 [#2 открыт](https://github.com/NumerR/SOS/pull/2).
 T0.3 (таймауты `http.Server` и graceful shutdown, `WithDBDeadline`, `slog` + request id,
-лимиты длины полей, `__Host-` кука, `LOG_LEVEL`) закрыт кодом и тестами и лежит
+лимиты длины полей, `__Host-` кука, `LOG_LEVEL`) закрыт коммитом `863b4e5`
 в той же ветке `fix/t0-frontend-modals` → PR #2.
 Дальше по плану — T0.4 (CI), затем T2.1 (PostgreSQL) и T1.1 (конфиг API + GitHub Pages).
 Ничего из перечисленного не развёрнуто: публикуется только код в git, сервер поднят локально на `:8080`.
