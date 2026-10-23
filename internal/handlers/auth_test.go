@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NumerR/SOS/internal/authz"
 	"github.com/NumerR/SOS/internal/database"
 	"github.com/NumerR/SOS/internal/models"
 	"github.com/NumerR/SOS/internal/ratelimit"
@@ -103,7 +104,8 @@ func callRegister(h *Handlers, body, remoteAddr string) *httptest.ResponseRecord
 }
 
 func callAdminSetRole(h *Handlers, body, remoteAddr string, cookies []*http.Cookie) *httptest.ResponseRecorder {
-	handler := h.RequireRole("admin")(h.RequireCSRF(http.HandlerFunc(h.AdminSetRole)))
+	handler := h.RequirePerm(authz.UserRoleManage, "only administrators can assign roles",
+		h.RequireCSRF(http.HandlerFunc(h.AdminSetRole)))
 
 	req := request(http.MethodPost, "/api/admin/users/role", body, remoteAddr, cookies)
 	// Double-submit: токен едет и в cookie, и в заголовке.
@@ -361,7 +363,8 @@ func TestAdminSetRoleRequiresCSRF(t *testing.T) {
 	target := createUser(t, h, "fred", "studentp1", "student")
 	cookies := login(t, h, "root3", "adminpass1", "10.0.8.1:1")
 
-	handler := h.RequireRole("admin")(h.RequireCSRF(http.HandlerFunc(h.AdminSetRole)))
+	handler := h.RequirePerm(authz.UserRoleManage, "only administrators can assign roles",
+		h.RequireCSRF(http.HandlerFunc(h.AdminSetRole)))
 
 	req := request(http.MethodPost, "/api/admin/users/role", `{"user_id":`+itoa(target.ID)+`,"role":"teacher"}`, "10.0.8.1:1", cookies)
 	rec := httptest.NewRecorder()

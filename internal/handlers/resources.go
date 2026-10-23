@@ -14,7 +14,8 @@ type CreateResourceRequest struct {
 	Description string `json:"description"`
 }
 
-// ResourcesAPI — GET (все авторизованные) / POST (teacher, admin) /api/resources.
+// ResourcesAPI — GET (все авторизованные) / POST (право resource.create,
+// проверяется маршрутизатором) /api/resources.
 func (h *Handlers) ResourcesAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -29,10 +30,6 @@ func (h *Handlers) ResourcesAPI(w http.ResponseWriter, r *http.Request) {
 		user := h.currentUser(r)
 		if user == nil {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
-			return
-		}
-		if !hasRole([]string{"teacher", "admin"}, user.Role) {
-			writeError(w, http.StatusForbidden, "only teachers can add resources")
 			return
 		}
 

@@ -14,7 +14,8 @@ type CreateEventRequest struct {
 	EventDateStr string `json:"event_date"` // ISO8601 или пусто
 }
 
-// EventsAPI — GET (все авторизованные) / POST (teacher, admin) /api/events.
+// EventsAPI — GET (все авторизованные) / POST (право event.create,
+// проверяется маршрутизатором) /api/events.
 func (h *Handlers) EventsAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -29,10 +30,6 @@ func (h *Handlers) EventsAPI(w http.ResponseWriter, r *http.Request) {
 		user := h.currentUser(r)
 		if user == nil {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
-			return
-		}
-		if !hasRole([]string{"teacher", "admin"}, user.Role) {
-			writeError(w, http.StatusForbidden, "only teachers can add events")
 			return
 		}
 

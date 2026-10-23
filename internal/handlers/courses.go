@@ -15,7 +15,8 @@ type CreateCourseRequest struct {
 
 // CoursesAPI обрабатывает GET и POST /api/courses.
 // GET — любой авторизованный (каталог виден студентам).
-// POST — только teacher и admin.
+// POST — право course.create: его проверяет маршрутизатор, поэтому здесь
+// роль больше не сравнивается.
 func (h *Handlers) CoursesAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -31,11 +32,6 @@ func (h *Handlers) CoursesAPI(w http.ResponseWriter, r *http.Request) {
 		user := h.currentUser(r)
 		if user == nil {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
-			return
-		}
-
-		if !hasRole([]string{"teacher", "admin"}, user.Role) {
-			writeError(w, http.StatusForbidden, "only teachers can create courses")
 			return
 		}
 

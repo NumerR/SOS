@@ -6,11 +6,12 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/NumerR/SOS/internal/authz"
 	"github.com/NumerR/SOS/internal/store"
 )
 
 // AdminUsers возвращает список всех пользователей.
-// Маршрут защищён middleware RequireRole("admin"), поэтому
+// Маршрут защищён правом authz.UserList, поэтому
 // здесь роль уже проверена — остаётся только отдать данные.
 func (h *Handlers) AdminUsers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -34,11 +35,18 @@ type SetRoleRequest struct {
 }
 
 // assignableRoles — роли, которые администратор может выставить вручную.
-var assignableRoles = map[string]bool{
-	"student": true,
-	"teacher": true,
-	"admin":   true,
-}
+//
+// Список совпадает со всеми ролями системы (authz.Roles()), потому что право на
+// назначение роли уже отдано администратору целиком. Отдельный набор здесь был
+// бы вторым местом, где перечислены роли, и он бы разъехался с authz при
+// добавлении четвёртой роли — поэтому он вычислен из authz.
+var assignableRoles = func() map[string]bool {
+	roles := make(map[string]bool, len(authz.Roles()))
+	for _, role := range authz.Roles() {
+		roles[string(role)] = true
+	}
+	return roles
+}()
 
 // AdminSetRole меняет роль пользователя.
 //
@@ -69,7 +77,7 @@ func (h *Handlers) AdminSetRole(w http.ResponseWriter, r *http.Request) {
 
 	// Самоназначение/саморазжалование: админ, меняющий собственную роль,
 	// может остаться без доступа к админ-контуру посреди сеанса.
-	// RequireRole уже положил пользователя в контекст, nil здесь — ошибка сборки
+	// Middleware права уже положил пользователя в контекст, nil здесь — ошибка сборки
 	// маршрута, поэтому на него не опираемся, а просто подставляем 0 в лог.
 	admin := h.currentUser(r)
 	if admin != nil && admin.ID == req.UserID {

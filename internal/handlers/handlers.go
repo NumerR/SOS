@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/NumerR/SOS/internal/authz"
 	"github.com/NumerR/SOS/internal/models"
 	"github.com/NumerR/SOS/internal/store"
 )
@@ -64,8 +65,13 @@ func New(deps Deps) *Handlers {
 	return &Handlers{Deps: deps}
 }
 
-// currentUser возвращает пользователя из контекста запроса.
-func (h *Handlers) currentUser(r *http.Request) *models.User {
+// UserFromContext — авторизованный пользователь запроса.
+//
+// Экспортировано для обработчиков модулей: middleware входа кладёт
+// пользователя в контекст, и модулю незачем знать, как устроена кука сессии —
+// ему нужен только автор. nil означает «запрос не прошёл RequireAuth или
+// RequirePerm», то есть маршрутизатор собран неправильно.
+func UserFromContext(r *http.Request) *models.User {
 	if r == nil {
 		return nil
 	}
@@ -74,6 +80,11 @@ func (h *Handlers) currentUser(r *http.Request) *models.User {
 		return nil
 	}
 	return user
+}
+
+// currentUser возвращает пользователя из контекста запроса.
+func (h *Handlers) currentUser(r *http.Request) *models.User {
+	return UserFromContext(r)
 }
 
 // sessionIDFromRequest берёт идентификатор сессии из куки любого из двух
@@ -126,30 +137,51 @@ func (h *Handlers) RequireAuth(next http.Handler) http.Handler {
 	})
 }
 
-// RequireRole — middleware: доступ только указанным ролям.
-func (h *Handlers) RequireRole(roles ...string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			user, ok := h.authenticatedUser(r)
-			if !ok {
-				writeError(w, http.StatusUnauthorized, "unauthorized")
-				return
-			}
-			if !hasRole(roles, user.Role) {
-				writeError(w, http.StatusForbidden, "forbidden")
-				return
-			}
-			ctx := context.WithValue(r.Context(), userContextKey, user)
-			next.ServeHTTP(w, r.WithContext(ctx))
-		})
+// RequirePerm — middleware: вход в систему плюс право из authz.
+//
+// Это замена RequireRole(...): раньше маршрут декларировал список ролей, и
+// решение о доступе жило в двух местах — в маршруте и внутри обработчика
+// (`hasRole`). Теперь маршрут декларирует *право*, а соответствие
+// «роль → право» стоит в одной таблице (internal/authz).
+//
+// denyMessage — текст отказа: клиенту нужен внятный «only teachers can create
+// courses», а не голое «forbidden». Текст передаёт маршрутизатор, потому что
+// именно он знает, какое действие запрашивали.
+//
+// Требование к сборщику маршрутов: каждый защищённый путь обязан пройти через
+// этот middleware. Проверка «принадлежит ли объект пользователю» отсюда не
+// видна — она остаётся в обработчике, потому что требует данных из базы.
+func (h *Handlers) RequirePerm(perm authz.Permission, denyMessage string, next http.Handler) http.Handler {
+	if denyMessage == "" {
+		denyMessage = "forbidden"
 	}
+
+	return h.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := h.currentUser(r)
+		if user == nil {
+			// RequireAuth положил пользователя в контекст. nil здесь означает,
+			// что middleware собрали в неправильном порядке, — отвечаем 401 и
+			// не пытаемся угадать права.
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+
+		if !authz.Can(authz.Role(user.Role), perm) {
+			writeError(w, http.StatusForbidden, denyMessage)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	}))
 }
 
-func hasRole(allowed []string, role string) bool {
-	for _, r := range allowed {
-		if r == role {
-			return true
-		}
+// canHere — право текущего пользователя без обращения к строке роли.
+//
+// Обработчики больше не сравнивают user.Role с литералом: им нужно понять,
+// распространяется ли их действие на чужие объекты (права вида *.any).
+func canHere(user *models.User, perm authz.Permission) bool {
+	if user == nil {
+		return false
 	}
-	return false
+	return authz.Can(authz.Role(user.Role), perm)
 }

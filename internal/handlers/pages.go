@@ -3,6 +3,8 @@ package handlers
 import (
 	"net/http"
 	"path/filepath"
+
+	"github.com/NumerR/SOS/internal/authz"
 )
 
 // Index отдаёт главную страницу.
@@ -36,6 +38,10 @@ func (h *Handlers) DashboardPage(w http.ResponseWriter, r *http.Request) {
 }
 
 // AdminPage отдаёт админ-панель только администраторам.
+//
+// HTML-страницы не проходят через Registry с обёрткой права: отказ здесь
+// выглядит как redirect на /dashboard, а не как 403 в JSON. Поэтому проверка
+// остаётся в обработчике, но спрашивает она authz, а не сравнивает строку роли.
 func (h *Handlers) AdminPage(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.authenticatedUser(r)
 	if !ok {
@@ -43,7 +49,7 @@ func (h *Handlers) AdminPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if user.Role != "admin" {
+	if !canHere(user, authz.AdminPanelView) {
 		http.Redirect(w, r, "/dashboard", http.StatusFound)
 		return
 	}

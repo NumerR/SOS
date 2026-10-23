@@ -10,6 +10,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/NumerR/SOS/internal/authz"
+
 	"github.com/NumerR/SOS/internal/models"
 	"github.com/NumerR/SOS/internal/store"
 	"golang.org/x/crypto/bcrypt"
@@ -63,11 +65,15 @@ var (
 // «teacher», то есть любой посетитель получал право создавать курсы и
 // оценивать чужие работы (учётка t_teacher в тестовой базе создана именно
 // так). Роль теперь назначает администратор — см. AdminSetRole.
+//
+// Имя роли берётся из authz.RoleStudent: строка «student» в таблице users и в
+// реестре прав — одно и то же значение, а не два текста, которые можно
+// рассогласовать.
 func normalizeRole(role string) (string, bool) {
 	role = strings.ToLower(strings.TrimSpace(role))
 	switch role {
-	case "", "student":
-		return "student", true
+	case "", string(authz.RoleStudent):
+		return string(authz.RoleStudent), true
 	default:
 		return "", false
 	}

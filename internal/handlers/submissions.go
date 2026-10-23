@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/NumerR/SOS/internal/authz"
 )
 
 type SubmitRequest struct {
@@ -18,6 +20,9 @@ type GradeRequest struct {
 }
 
 // SubmitWork handles POST /api/submissions
+//
+// Право на маршрут — «вход в систему»: сдавать может любая роль, если она
+// записана на курс. Исключение для незаписанных — authz.SubmissionCreateAny.
 func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w)
@@ -65,7 +70,9 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if !isEnrolled && user.Role != "admin" {
+	// Сдавать можно только с записью на курс; право submission.create.any
+	// снимает это ограничение (оно одно у администратора).
+	if !isEnrolled && !canHere(user, authz.SubmissionCreateAny) {
 		writeError(w, http.StatusForbidden, "you must be enrolled in the course to submit work")
 		return
 	}
@@ -80,6 +87,9 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListSubmissionsForAssignment handles GET /api/submissions?assignment_id=N
+//
+// Право submission.view проверяет маршрутизатор; здесь остаётся «своё ли
+// задание».
 func (h *Handlers) ListSubmissionsForAssignment(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w)
@@ -89,11 +99,6 @@ func (h *Handlers) ListSubmissionsForAssignment(w http.ResponseWriter, r *http.R
 	user := h.currentUser(r)
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-
-	if !hasRole([]string{"teacher", "admin"}, user.Role) {
-		writeError(w, http.StatusForbidden, "only teachers can view submissions")
 		return
 	}
 
@@ -114,7 +119,7 @@ func (h *Handlers) ListSubmissionsForAssignment(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if user.Role != "admin" && assignment.CreatedBy != user.ID {
+	if !canHere(user, authz.SubmissionViewAny) && assignment.CreatedBy != user.ID {
 		writeError(w, http.StatusForbidden, "you can only view submissions for your own assignments")
 		return
 	}
@@ -151,6 +156,9 @@ func (h *Handlers) MySubmissions(w http.ResponseWriter, r *http.Request) {
 }
 
 // GradeSubmission handles POST /api/submissions/grade
+//
+// Право submission.grade проверяет маршрутизатор; здесь — проверка владельца
+// задания и валидация оценки.
 func (h *Handlers) GradeSubmission(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w)
@@ -160,11 +168,6 @@ func (h *Handlers) GradeSubmission(w http.ResponseWriter, r *http.Request) {
 	user := h.currentUser(r)
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-
-	if !hasRole([]string{"teacher", "admin"}, user.Role) {
-		writeError(w, http.StatusForbidden, "only teachers can grade submissions")
 		return
 	}
 
@@ -200,7 +203,7 @@ func (h *Handlers) GradeSubmission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. Проверяем право: оценить может только владелец курса-задания либо админ.
-	if user.Role != "admin" && assignment.CreatedBy != user.ID {
+	if !canHere(user, authz.SubmissionGradeAny) && assignment.CreatedBy != user.ID {
 		writeError(w, http.StatusForbidden, "you can only grade submissions for your own courses")
 		return
 	}

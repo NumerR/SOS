@@ -130,105 +130,33 @@ func main() {
 		Limits:      handlers.NewLimiters(),
 	})
 
-	mux := http.NewServeMux()
+	// Модули платформы: список в cmd/server/modules.go.
+	//
+	// Миграции модулей применяются до сборки маршрутизатора и после базовой
+	// схемы: не применились — значит сервер не стартует вовсе, а не работает с
+	// половиной таблиц.
+	modules := moduleList(h)
 
-	// Живость. Отвечает не «да», а «да, и база отвечает» — иначе мониторинг
-	// молча считает мёртвый сервер рабочим.
-	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := applyModuleMigrations(ctx, db, modules); err != nil {
+		slog.Error("миграции модулей не применились", slog.Any("error", err))
+		stop()
+		<-cleanupStopped
+		os.Exit(1)
+	}
 
-		pingCtx, cancel := context.WithTimeout(r.Context(), healthPingTimeout)
-		defer cancel()
+	// LOG_LEVEL=debug отдаёт полный список путей и прав без чтения кода.
+	routeTable(modules)
 
-		if err := db.PingContext(pingCtx); err != nil {
-			slog.Error("health: база не ответила", slog.Any("error", err))
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte(`{"status":"error","db":"error"}`))
-			return
-		}
-
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok","db":"ok"}`))
-	})
-
-	// HTML-страницы.
-	mux.HandleFunc("/", h.Index)
-	mux.HandleFunc("/login", h.LoginPage)
-	mux.HandleFunc("/register", h.RegisterPage)
-	mux.HandleFunc("/dashboard", h.DashboardPage)
-	mux.HandleFunc("/admin", h.AdminPage)
-	mux.HandleFunc("/schedule", h.SchedulePage)
-
-	// API авторизации (публичные). Оба эндпоинта ограничены по IP: login — от
-	// перебора паролей, register — от накрутки мусорных аккаунтов. Внутри Login
-	// есть второй уровень — бакет неудачных попыток по идентификатору учётки.
-	// CSRF на них не проверяется: с SameSite=Lax межсайтовый POST сюда не доходит
-	// (known limitation, см. docs/01-STATE-REPORT.md).
-	mux.Handle("/api/auth/register", h.RateLimit(h.Limits.Register, "register", handlers.ClientIP)(http.HandlerFunc(h.Register)))
-	mux.Handle("/api/auth/login", h.RateLimit(h.Limits.Login, "login", handlers.ClientIP)(http.HandlerFunc(h.Login)))
-	mux.HandleFunc("/api/auth/logout", h.Logout)
-
-	// «Выйти везде» и смена пароля меняют состояние — RequireAuth + RequireCSRF.
-	// Смена пароля дополнительно ограничена по IP: текущий пароль внутри
-	// открытой сессии тоже можно перебирать.
-	mux.Handle("/api/auth/logout-all", h.RequireAuth(h.RequireCSRF(http.HandlerFunc(h.LogoutAll))))
-	mux.Handle(
-		"/api/auth/change-password",
-		h.RequireAuth(h.RequireCSRF(h.RateLimit(h.Limits.Password, "password", handlers.ClientIP)(http.HandlerFunc(h.ChangePassword)))),
-	)
-
-	mux.Handle("/api/auth/me", h.RequireAuth(http.HandlerFunc(h.Me))) // только GET -> без RequireCSRF
-
-	// Курсы: GET + POST -> RequireCSRF пропустит GET, проверит POST.
-	mux.Handle("/api/courses", h.RequireAuth(h.RequireCSRF(http.HandlerFunc(h.CoursesAPI))))
-
-	// Записи на курсы.
-	mux.Handle("/api/enrollments/mine", h.RequireAuth(http.HandlerFunc(h.MyEnrollments)))                     // GET-only
-	mux.Handle("/api/enrollments", h.RequireAuth(h.RequireCSRF(http.HandlerFunc(h.Enroll))))                  // POST
-	mux.Handle("/api/enrollments/cancel", h.RequireAuth(h.RequireCSRF(http.HandlerFunc(h.CancelEnrollment)))) // POST
-	mux.Handle("/api/enrollments/course", h.RequireAuth(http.HandlerFunc(h.CourseStudents)))                  // GET-only
-
-	// Админ-контур: список пользователей и выдача ролей.
-	// Единственный способ получить роль teacher или admin.
-	mux.Handle("/api/admin/users", h.RequireRole("admin")(http.HandlerFunc(h.AdminUsers)))
-	mux.Handle("/api/admin/users/role", h.RequireRole("admin")(h.RequireCSRF(http.HandlerFunc(h.AdminSetRole))))
-
-	// Задания и сдачи работ (смешанные GET+POST -> оборачиваем целиком).
-	mux.Handle("/api/assignments", h.RequireAuth(h.RequireCSRF(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			h.ListAssignments(w, r)
-		case http.MethodPost:
-			h.CreateAssignment(w, r)
-		default:
-			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		}
-	}))))
-
-	mux.Handle("/api/submissions", h.RequireAuth(h.RequireCSRF(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			h.ListSubmissionsForAssignment(w, r)
-		case http.MethodPost:
-			h.SubmitWork(w, r)
-		default:
-			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		}
-	}))))
-
-	mux.Handle("/api/submissions/mine", h.RequireAuth(http.HandlerFunc(h.MySubmissions)))                   // GET-only
-	mux.Handle("/api/submissions/grade", h.RequireAuth(h.RequireCSRF(http.HandlerFunc(h.GradeSubmission)))) // POST
-
-	// Лента расписания (GET-only).
-	mux.Handle("/api/schedule", h.RequireAuth(http.HandlerFunc(h.ScheduleFeed)))
-
-	// Ресурсы и события (смешанные GET+POST).
-	mux.Handle("/api/resources", h.RequireAuth(h.RequireCSRF(http.HandlerFunc(h.ResourcesAPI))))
-	mux.Handle("/api/events", h.RequireAuth(h.RequireCSRF(http.HandlerFunc(h.EventsAPI))))
-
-	// Статика.
-	mux.Handle("/css/", http.StripPrefix("/css/", http.FileServer(http.Dir(filepath.Join("web", "css")))))
-	mux.Handle("/js/", http.StripPrefix("/js/", http.FileServer(http.Dir(filepath.Join("web", "js")))))
+	mux, err := newRouter(h, db, modules)
+	if err != nil {
+		// Дубликат маршрута или право, которого нет в реестре authz, — ошибка
+		// сборки, а не рантайм: продолжать нет смысла, половина API
+		// всё равно была бы недоступна.
+		slog.Error("маршруты не собраны", slog.Any("error", err))
+		stop()
+		<-cleanupStopped
+		os.Exit(1)
+	}
 
 	// Порядок обёрт: логирование снаружи, иначе оно не увидит итоговый статус
 	// обработчика; дедлайн БД внутри него, чтобы в лог попал и request id.
