@@ -106,6 +106,18 @@ func (s *SessionStore) Delete(ctx context.Context, id string) error {
 	return err
 }
 
+// DeleteAllForUser удаляет все сессии пользователя: отзыв доступа после смены
+// роли, блокировки или по «выйти везде».
+func (s *SessionStore) DeleteAllForUser(ctx context.Context, userID int64) error {
+	_, err := s.db.ExecContext(
+		ctx,
+		`DELETE FROM sessions WHERE user_id = ?`,
+		userID,
+	)
+
+	return err
+}
+
 func newSessionID() (string, error) {
 	bytes := make([]byte, 32)
 

@@ -9,14 +9,21 @@
 
 ## Реализовано
 
-- регистрация и вход; пароль — только bcrypt-хэш;
+- регистрация и вход; пароль — только bcrypt-хэш; сравнение выполняется и для
+  неизвестного логина (фиктивный хэш), чтобы ответ не различался по таймингу;
+- ограничение частоты запросов на `POST /api/auth/login` и `/register`:
+  токен-бакет в памяти процесса (`internal/ratelimit`), ответ `429` +
+  `Retry-After`; отдельно считается бакет неудачных попыток на аккаунт;
 - сессии в БД (`sessions`), токен в cookie `HttpOnly` + `SameSite=Lax`;
-- роли `student` / `teacher` / `admin`; `admin` — только сидом из env, публичной
-  регистрацией не выдаётся;
+- роли `student` / `teacher` / `admin`. Публичная регистрация выдаёт только
+  `student`; `teacher` и `admin` назначает администратор (`/admin`,
+  `POST /api/admin/users/role`), `admin` дополнительно создаётся сидом из env.
+  При смене роли все сессии пользователя отзываются;
 - каталог курсов: читают все авторизованные, создают только `teacher`/`admin`;
 - записи на курсы (`enrollments`): студент записывается/отписывается,
   преподаватель видит список **своих** курсов, админ — любых;
-- админ-панель `/admin` (список пользователей), закрыта `RequireRole`;
+- админ-панель `/admin` (список пользователей и выдача ролей), закрыта
+  `RequireRole` + `RequireCSRF`;
 - дизайн-система: тёплый пергамент + neumorphism + единственный акцент
   (petrol-teal), спецификационная типографика, состояния controls
   (pressed/disabled/loading/focus/error), empty-state, скелетоны, таблица.
@@ -35,6 +42,7 @@
 | `POST /api/enrollments/cancel`        | 401       | ✅      | 403     | ✅    |
 | `GET /api/enrollments/course?course_id=N` | 401   | 403     | ✅ свой | ✅ любой |
 | `GET /api/admin/users`                | 401       | 403     | 403     | ✅    |
+| `POST /api/admin/users/role`          | 401       | 403     | 403     | ✅ (не себе) |
 
 ## Запуск
 
@@ -53,6 +61,19 @@ go run ./cmd/server
 Публичная регистрация роль `admin` не выдаёт. Админ создаётся сидом при старте,
 если заданы env-переменные. Сид идемпотентен (`Ensure`): повторный запуск не
 дублирует аккаунт.
+
+После входа под `ADMIN_USERNAME` роль `teacher` (и любая другая) выдаётся
+на странице `/admin` — в списке пользователей есть селект роли и кнопка
+«Сохранить». Тот же механизм доступен и через API:
+
+```bash
+curl -b cookies.txt -X POST http://localhost:8080/api/admin/users/role \
+  -H "Content-Type: application/json" -H "X-CSRF-Token: $CSRF" \
+  -d '{"user_id":2,"role":"teacher"}'
+```
+
+Сменить собственную роль нельзя (409) — иначе админ может потерять доступ к
+странице посреди сеанса.
 
 Linux / macOS / Git Bash:
 
@@ -121,17 +142,29 @@ curl http://localhost:8080/api/health
 curl -c cookies.txt -X POST http://localhost:8080/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{"username":"s1","email":"s1@example.com","full_name":"S","password":"password123","role":"student"}'
-curl -b cookies.txt -X POST http://localhost:8080/api/enrollments \
+
+# mutate-запросы требуют double-submit CSRF: заголовок должен равняться cookie
+CSRF=$(awk '/csrf_token/ {print $7}' cookies.txt)
+curl -b cookies.txt -H "X-CSRF-Token: $CSRF" -X POST http://localhost:8080/api/enrollments \
   -H "Content-Type: application/json" -d '{"course_id":1}'
 curl -b cookies.txt http://localhost:8080/api/enrollments/mine
 
-# роль admin через публичную регистрацию отклоняется (ожидаем 422)
+# любая роль кроме student через публичную регистрацию отклоняется (ожидаем 422)
 curl -i -X POST http://localhost:8080/api/auth/register \
   -H "Content-Type: application/json" \
-  -d '{"username":"h","email":"h@example.com","full_name":"H","password":"password123","role":"admin"}'
+  -d '{"username":"h","email":"h@example.com","full_name":"H","password":"password123","role":"teacher"}'
 ```
+
+## Тесты
+
+```bash
+go test ./...                        # юнит-тесты лимитера и обработки аутентификации
+cd tests/ui && npm install && npm test   # прогон UI заданий в jsdom против запущенного сервера
+```
+
+Прогон `tests/ui` требует сервер с админ-сидом и применённый `tests/ui/seed.sh`
+(см. шапку скрипта).
 
 ## Что дальше (не реализовано)
 
-- CSRF-токены для mutate-запросов;
 - восстановление пароля, подтверждение email;

@@ -174,6 +174,30 @@ func (s *UserStore) List(ctx context.Context) ([]models.User, error) {
 	return users, nil
 }
 
+// SetRole меняет роль пользователя. Вызывается только из админ-контура:
+// публичная регистрация роль не выбирает.
+func (s *UserStore) SetRole(ctx context.Context, id int64, role string) error {
+	result, err := s.db.ExecContext(
+		ctx,
+		`UPDATE users SET role = ? WHERE id = ?`,
+		role,
+		id,
+	)
+	if err != nil {
+		return err
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+
+	return nil
+}
+
 // GetByIdentifier ищет пользователя по username или email.
 func (s *UserStore) GetByIdentifier(ctx context.Context, identifier string) (*models.UserWithSecret, error) {
 	identifier = strings.ToLower(strings.TrimSpace(identifier))
