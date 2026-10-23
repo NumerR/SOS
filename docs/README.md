@@ -21,8 +21,9 @@
 T0.3 (таймауты `http.Server` и graceful shutdown, `WithDBDeadline`, `slog` + request id,
 лимиты длины полей, `__Host-` кука, `LOG_LEVEL`) закрыт коммитом `863b4e5`
 в той же ветке `fix/t0-frontend-modals` → PR #2.
-T0.4 (CI: `go` + `frontend` + `ui`, `scripts/check-frontend.mjs`) закрыт кроме
-PostgreSQL-позиции, перенесённой в T2.1 (ADR-0009); статус прогонов на GitHub
-публикуется в docs/04 по мере появления.
+T0.4 (CI: `go` + `frontend` + `ui`, `scripts/check-frontend.mjs`) закрыт коммитом
+`d4a2141` кроме PostgreSQL-позиции, перенесённой в T2.1 (ADR-0009). Первый прогон
+CI на GitHub — [run 40037668304](https://github.com/NumerR/SOS/actions/runs/40037668304),
+`completed / success`, три работы зелёные.
 Дальше по плану — T2.1 (PostgreSQL), затем T1.1 (конфиг API + GitHub Pages) и T3.1 (модульность).
 Ничего из перечисленного не развёрнуто: публикуется только код в git, сервер поднят локально на `:8080`.

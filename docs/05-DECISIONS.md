@@ -260,10 +260,12 @@
   строки `<script src="/js/modals.js">` → `FAIL modals.js не подключён ни к
   одной странице`; удаление файла → `FAIL подключён несуществующий скрипт`;
   инлайновый `onclick` и фантомный `getElementById` → тоже FAIL.
-  `actions/checkout@v4`-и-`setup-go@v5` версии зафиксированы явными тегами.
+  Версии `actions/checkout@v4`, `actions/setup-go@v5`, `actions/setup-node@v4`
+  зафиксированы явными тегами.
 - Что нельзя проверить локально: сам GitHub-раннер (версии образов, поведение
-  `actions/*`, NetworkAvailable) — это видно только по факту прогона, и
-  статус прогона публикуется здесь же, в docs, а не «на глаз».
+  `actions/*`). Первый прогон закрыл и это: run 40037668304 на коммите `d4a2141`
+  (`pull_request`) — `completed / success`, три работы зелёные, UI-шаги (build,
+  `npm ci`, запуск сервера, `seed.sh`, `test:all`) прошли на `ubuntu-latest`.
 - `check-frontend.mjs` не исполняет JS: он проверяет связи. Поведение страниц
   по-прежнему закрывают jsdom-тесты, а не этот шаг.
 - `go test -race` на macOS/Linux требует gcc для раннего этапа — на

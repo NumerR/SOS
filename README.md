@@ -345,6 +345,9 @@ for f in web/js/*.js; do node --check "$f"; done && node scripts/check-frontend.
 Миграции на чистой PostgreSQL в CI появятся вместе с T2.1: сейчас отдельного
 SQL-пакета нет, схему применяет код (`internal/database/db.go`).
 
+Первый прогон на GitHub — [run 40037668304](https://github.com/NumerR/SOS/actions/runs/40037668304),
+`success`, все три работы зелёные (Go / Фронтенд / UI на `ubuntu-latest`).
+
 ## Что дальше (не реализовано)
 
 - PostgreSQL и версионируемые миграции — T2.1 (ADR-0002), после него —
