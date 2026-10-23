@@ -174,6 +174,42 @@ func (s *UserStore) List(ctx context.Context) ([]models.User, error) {
 	return users, nil
 }
 
+// GetWithSecretByID возвращает пользователя вместе с хэшем пароля — только для
+// внутренней проверки (смена пароля), наружу UserWithSecret не отдаётся.
+func (s *UserStore) GetWithSecretByID(ctx context.Context, id int64) (*models.UserWithSecret, error) {
+	var user models.User
+	var passwordHash string
+
+	err := s.db.QueryRowContext(
+		ctx,
+		`
+		SELECT id, username, email, full_name, role, password_hash
+		FROM users
+		WHERE id = ?
+		`,
+		id,
+	).Scan(
+		&user.ID,
+		&user.Username,
+		&user.Email,
+		&user.FullName,
+		&user.Role,
+		&passwordHash,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.UserWithSecret{
+		User:         user,
+		PasswordHash: passwordHash,
+	}, nil
+}
+
 // SetRole меняет роль пользователя. Вызывается только из админ-контура:
 // публичная регистрация роль не выбирает.
 func (s *UserStore) SetRole(ctx context.Context, id int64, role string) error {
@@ -181,6 +217,30 @@ func (s *UserStore) SetRole(ctx context.Context, id int64, role string) error {
 		ctx,
 		`UPDATE users SET role = ? WHERE id = ?`,
 		role,
+		id,
+	)
+	if err != nil {
+		return err
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+
+	return nil
+}
+
+// SetPassword обновляет хэш пароля. Вызывается только после проверки старого
+// пароля — см. handlers.ChangePassword.
+func (s *UserStore) SetPassword(ctx context.Context, id int64, passwordHash string) error {
+	result, err := s.db.ExecContext(
+		ctx,
+		`UPDATE users SET password_hash = ? WHERE id = ?`,
+		passwordHash,
 		id,
 	)
 	if err != nil {

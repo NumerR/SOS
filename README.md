@@ -15,6 +15,11 @@
   токен-бакет в памяти процесса (`internal/ratelimit`), ответ `429` +
   `Retry-After`; отдельно считается бакет неудачных попыток на аккаунт;
 - сессии в БД (`sessions`), токен в cookie `HttpOnly` + `SameSite=Lax`;
+  просроченные сессии чистит фоновый сборщик (`cmd/server`: раз в час,
+  старт сразу при запуске);
+- «выйти везде» (`POST /api/auth/logout-all`) отзывает все сессии аккаунта,
+  смена пароля (`POST /api/auth/change-password`) требует текущий пароль и
+  отзывает все остальные сессии, оставляя текущую;
 - роли `student` / `teacher` / `admin`. Публичная регистрация выдаёт только
   `student`; `teacher` и `admin` назначает администратор (`/admin`,
   `POST /api/admin/users/role`), `admin` дополнительно создаётся сидом из env.
@@ -43,6 +48,9 @@
 | `GET /api/enrollments/course?course_id=N` | 401   | 403     | ✅ свой | ✅ любой |
 | `GET /api/admin/users`                | 401       | 403     | 403     | ✅    |
 | `POST /api/admin/users/role`          | 401       | 403     | 403     | ✅ (не себе) |
+| `POST /api/auth/logout`               | ✅ (без куки 200) | ✅ | ✅ | ✅ |
+| `POST /api/auth/logout-all`           | 401       | ✅      | ✅      | ✅    |
+| `POST /api/auth/change-password`      | 401       | ✅      | ✅      | ✅    |
 
 ## Запуск
 
@@ -92,6 +100,51 @@ $env:ADMIN_FULL_NAME="Главный администратор"
 $env:ADMIN_PASSWORD="change-me-please"
 go run ./cmd/server
 ```
+
+## Сессии, «выйти везде», смена пароля
+
+Три разных действия — и у каждого своя семантика, путать их нельзя:
+
+| Запрос | Что делает | Текущая сессия |
+|---|---|---|
+| `POST /api/auth/logout` | выходить отсюда | отзывается |
+| `POST /api/auth/logout-all` | выходить везде (компрометация) | отзывается, редирект на `/login?revoked=1` |
+| `POST /api/auth/change-password` | сменить пароль | сохраняется, остальные отзываются |
+
+Смена пароля требует текущий пароль — без этой проверки любая открытая вкладка
+или XSS умел бы менять пароль. Ответ содержит `revoked_sessions`, интерфейс
+показывает, сколько устройств было выброшено.
+
+```bash
+CSRF=$(awk '/csrf_token/ {print $7}' cookies.txt)
+
+curl -b cookies.txt -H "X-CSRF-Token: $CSRF" -X POST http://localhost:8080/api/auth/change-password \
+  -H "Content-Type: application/json" \
+  -d '{"current_password":"password123","new_password":"another-secret1"}'
+
+curl -b cookies.txt -H "X-CSRF-Token: $CSRF" -X POST http://localhost:8080/api/auth/logout-all
+```
+
+Оба эндпоинта закрыты `RequireAuth` + `RequireCSRF`, а смена пароля ещё и
+лимитером по IP (6 запросов за 15 минут): текущий пароль внутри открытой сессии
+тоже можно перебирать.
+
+## Работа за обратным прокси
+
+Ключ лимитера по умолчанию берётся из адреса TCP-соединения, а cookie `Secure`
+ставится только при `r.TLS`. За реверс-прокси это неправильно (весь трафик
+приходит с одного адреса), но и верить `X-Forwarded-*` без условий нельзя —
+их подделывает любой клиент. Поэтому включается явно:
+
+```bash
+TRUST_PROXY=true go run ./cmd/server
+```
+
+С этим флагом `X-Forwarded-For` (первый адрес цепочки, только валидный IP)
+становится ключом лимитера, а `X-Forwarded-Proto: https` — основанием выдавать
+`Secure`-куку. Требование: прямой доступ к порту приложения должен быть закрыт,
+иначе подмена заголовка обходит все лимиты. Без флага поведение честное и
+консервативное: лимиты по IP прокси, куки по факту TLS.
 
 ## Структура
 
@@ -158,8 +211,10 @@ curl -i -X POST http://localhost:8080/api/auth/register \
 ## Тесты
 
 ```bash
-go test ./...                        # юнит-тесты лимитера и обработки аутентификации
-cd tests/ui && npm install && npm test   # прогон UI заданий в jsdom против запущенного сервера
+go test ./...                            # лимитер + обработка аутентификации и аккаунта
+cd tests/ui && npm install
+npm run test:account                     # панель «Аккаунт и доступ» в jsdom
+npm run test:all                         # UI заданий + роли админа + аккаунт
 ```
 
 Прогон `tests/ui` требует сервер с админ-сидом и применённый `tests/ui/seed.sh`

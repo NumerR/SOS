@@ -118,6 +118,53 @@ func (s *SessionStore) DeleteAllForUser(ctx context.Context, userID int64) error
 	return err
 }
 
+// DeleteAllForUserExcept удаляет все сессии пользователя, кроме указанной.
+// Нужна для смены пароля: текущее устройство остаётся рабочим, остальные
+// (в том числе украденная кука) — отзываются.
+func (s *SessionStore) DeleteAllForUserExcept(ctx context.Context, userID int64, keepSessionID string) (int64, error) {
+	result, err := s.db.ExecContext(
+		ctx,
+		`DELETE FROM sessions WHERE user_id = ? AND id <> ?`,
+		userID,
+		keepSessionID,
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	return result.RowsAffected()
+}
+
+// DeleteExpired удаляет сессии, у которых истёк expires_at, и возвращает
+// количество удалённых. Без этой чистки таблицa sessions растёт бесконечно:
+// Get фильтрует по сроку, но записи не удаляет никто.
+func (s *SessionStore) DeleteExpired(ctx context.Context) (int64, error) {
+	result, err := s.db.ExecContext(
+		ctx,
+		`DELETE FROM sessions WHERE expires_at <= ?`,
+		time.Now().Unix(),
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	return result.RowsAffected()
+}
+
+// CountActive — число сессий, годных прямо сейчас. Нужен чтобы проверить
+// отзыв доступа и вывести это в лог очистки.
+func (s *SessionStore) CountActive(ctx context.Context) (int64, error) {
+	var count int64
+
+	err := s.db.QueryRowContext(
+		ctx,
+		`SELECT COUNT(*) FROM sessions WHERE expires_at > ?`,
+		time.Now().Unix(),
+	).Scan(&count)
+
+	return count, err
+}
+
 func newSessionID() (string, error) {
 	bytes := make([]byte, 32)
 

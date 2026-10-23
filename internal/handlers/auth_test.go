@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -25,6 +26,16 @@ import (
 func newTestHandlers(t *testing.T) *Handlers {
 	t.Helper()
 
+	h, _ := newTestEnv(t)
+	return h
+}
+
+// newTestEnv — то же, но возвращает и *sql.DB: часть проверок двигает
+// expires_at у сессии прямым запросом, а такого метода у хранилища нет —
+// и быть не должно, наружу «подделать срок» не должен уметь никто.
+func newTestEnv(t *testing.T) (*Handlers, *sql.DB) {
+	t.Helper()
+
 	db, err := database.Open(":memory:")
 	if err != nil {
 		t.Fatalf("открыть базу: %v", err)
@@ -38,7 +49,7 @@ func newTestHandlers(t *testing.T) *Handlers {
 		Users:    store.NewUserStore(db),
 		Sessions: store.NewSessionStore(db),
 		Limits:   NewLimiters(),
-	})
+	}), db
 }
 
 func createUser(t *testing.T, h *Handlers, username, password, role string) *models.User {
@@ -78,14 +89,14 @@ func request(method, target, body, remoteAddr string, cookies []*http.Cookie) *h
 
 // call — вызов обработчика с теми же middleware, что навешаны на маршрут в main.go.
 func callLogin(h *Handlers, body, remoteAddr string, cookies []*http.Cookie) *httptest.ResponseRecorder {
-	handler := h.RateLimit(h.Limits.Login, "login", LimitByIP)(http.HandlerFunc(h.Login))
+	handler := h.RateLimit(h.Limits.Login, "login", ClientIP)(http.HandlerFunc(h.Login))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, request(http.MethodPost, "/api/auth/login", body, remoteAddr, cookies))
 	return rec
 }
 
 func callRegister(h *Handlers, body, remoteAddr string) *httptest.ResponseRecorder {
-	handler := h.RateLimit(h.Limits.Register, "register", LimitByIP)(http.HandlerFunc(h.Register))
+	handler := h.RateLimit(h.Limits.Register, "register", ClientIP)(http.HandlerFunc(h.Register))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, request(http.MethodPost, "/api/auth/register", body, remoteAddr, nil))
 	return rec

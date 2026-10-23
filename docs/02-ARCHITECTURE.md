@@ -144,7 +144,19 @@ audit_events(id, at, actor_user_id, action, target_type, target_id, ip, user_age
 
 Пароли — bcrypt (оставляем, аргон2ид не вносим: лишняя зависимость без выигрыша для MVP). Сессии — серверные, `__Host-gs_session` (HttpOnly, Secure, SameSite=Lax — совместимо с раздачей с одного домена). Права — `authz.Can(user, perm)` с реестром пермиссий по модулям.
 
-Обязательные исправления из отчёта 01: роль `teacher` не выдаётся при саморегистрации (только назначение админом); rate limit на `login/register` (например 10/мин на IP+identifier) и счётчик неудач с временной блокировкой; `DeleteAllForUser` при logout-all и смене пароля; фоновая очистка протухших сессий; `audit_events` на вход/выход/оценку/смену роли; `context.WithTimeout` на каждый запрос к БД; `http.Server` со всеми таймаутами + graceful shutdown; лимиты длины всех текстовых полей; `X-Forwarded-Proto` доверяем только если `TRUST_PROXY=true` в конфиге.
+Обязательные исправления из отчёта 01.
+
+Уже в коде (T0.2, ADR-0006 и ADR-0007): роль `teacher` не выдаётся при
+саморегистрации; rate limit на `login`/`register` и счётчик неудач с
+постепенной блокировкой; `DeleteAllForUser` / `DeleteAllForUserExcept` при
+logout-all, смене пароля и смене роли; фоновая очистка протухших сессий;
+верхняя граница длины пароля; `X-Forwarded-Proto` и `X-Forwarded-For`
+доверяются только при `TRUST_PROXY=true`.
+
+Осталось (T0.3, T1.2): `audit_events` на вход/выход/оценку/смену роли;
+`context.WithTimeout` на каждый запрос к БД; `http.Server` со всеми таймаутами
+и graceful shutdown; лимиты длины всех текстовых полей; `__Host-` префикс куки
+при TLS (сейчас `gs_session`, чтобы не ломать локальный прогон по HTTP).
 
 ## 8. Конфигурация (env)
 

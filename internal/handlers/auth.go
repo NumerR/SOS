@@ -28,6 +28,23 @@ type LoginRequest struct {
 	Password   string `json:"password"`
 }
 
+// ChangePasswordRequest — смена пароля внутри авторизованной сессии.
+// Подтверждение нового пароля намеренно не запрашивается: это делает фронтенд,
+// а серверу достаточно одного поля, иначе API нельзя было бы описать честно.
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+const (
+	// minPasswordLength — то же требование, что у регистрации.
+	minPasswordLength = 8
+	// maxPasswordLength ограничен сверху, чтобы bcrypt не тра CPU на
+	// многомегабайтное тело: bcrypt обрезает вход после 72 байт, а длинные
+	// строки — удобный способ замедить обработчик.
+	maxPasswordLength = 200
+)
+
 var (
 	usernamePattern = regexp.MustCompile(`^[\p{L}\p{N}_.-]{3,32}$`)
 	emailPattern    = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
@@ -88,8 +105,8 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if utf8.RuneCountInString(req.Password) < 8 {
-		writeError(w, http.StatusUnprocessableEntity, "password must be at least 8 characters")
+	if n := utf8.RuneCountInString(req.Password); n < minPasswordLength || n > maxPasswordLength {
+		writeError(w, http.StatusUnprocessableEntity, "password must be between 8 and 200 characters")
 		return
 	}
 
@@ -177,7 +194,7 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	// проверку бакета выше и получит 429.
 	if err := bcrypt.CompareHashAndPassword(hash, []byte(req.Password)); err != nil || userWithSecret == nil {
 		h.Limits.LoginAccount.Consume(accountKey, 1)
-		log.Printf("auth: неудачный вход identifier=%s ip=%s", redactKey(req.Identifier), LimitByIP(r))
+		log.Printf("auth: неудачный вход identifier=%s ip=%s", redactKey(req.Identifier), ClientIP(r))
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -188,7 +205,7 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("auth: вход выполнен user_id=%d ip=%s", userWithSecret.User.ID, LimitByIP(r))
+	log.Printf("auth: вход выполнен user_id=%d ip=%s", userWithSecret.User.ID, ClientIP(r))
 	writeJSON(w, http.StatusOK, userWithSecret.User)
 }
 
@@ -219,6 +236,127 @@ func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status": "ok",
+	})
+}
+
+// LogoutAll отзывает все сессии пользователя, включая текущую.
+//
+// Смысл в компрометации: «выйти везде» чистит чужие устройства, когда пароль
+// уже мог утечь. Кука снимается и у этого запроса, поэтому клиент после
+// ответа обязан уйти на страницу входа.
+func (h *Handlers) LogoutAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+
+	user := h.currentUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	if err := h.Sessions.DeleteAllForUser(r.Context(), user.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to revoke sessions")
+		return
+	}
+
+	// Отдельно удалять текущую сессию не нужно: DeleteAllForUser забирает и её.
+	clearSessionCookie(w, r)
+	clearCSRFCookie(w, r)
+
+	log.Printf("auth: вышли все сессии user_id=%d ip=%s", user.ID, ClientIP(r))
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// ChangePassword меняет пароль по текущему паролю и отзывает остальные сессии.
+//
+// Текущая сессия сохраняется: пользователя не выбрасывает из вкладки, где он
+// только что ввёл новый пароль. Остальные устройства выходят — именно так
+// выглядит «смена пароля спасла аккаунт».
+func (h *Handlers) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+
+	user := h.currentUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var req ChangePasswordRequest
+	if !readJSON(w, r, &req) {
+		return
+	}
+
+	if utf8.RuneCountInString(req.NewPassword) < minPasswordLength {
+		writeError(w, http.StatusUnprocessableEntity, "password must be at least 8 characters")
+		return
+	}
+	if utf8.RuneCountInString(req.NewPassword) > maxPasswordLength {
+		writeError(w, http.StatusUnprocessableEntity, "password is too long")
+		return
+	}
+
+	withSecret, err := h.Users.GetWithSecretByID(r.Context(), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load user")
+		return
+	}
+
+	// Старый пароль проверяется обязательно: без этого любой XSS или оставленная
+	// на чужом ноутбуке вкладка получила бы право менять пароль произвольно.
+	if err := bcrypt.CompareHashAndPassword([]byte(withSecret.PasswordHash), []byte(req.CurrentPassword)); err != nil {
+		log.Printf("auth: неверный текущий пароль при смене user_id=%d ip=%s", user.ID, ClientIP(r))
+		writeError(w, http.StatusUnauthorized, "current password is incorrect")
+		return
+	}
+
+	if req.CurrentPassword == req.NewPassword {
+		writeError(w, http.StatusUnprocessableEntity, "new password must differ from the current one")
+		return
+	}
+
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to hash password")
+		return
+	}
+
+	if err := h.Users.SetPassword(r.Context(), user.ID, string(passwordHash)); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update password")
+		return
+	}
+
+	revoked := int64(0)
+	current := ""
+	if cookie, err := r.Cookie(sessionCookieName); err == nil {
+		current = cookie.Value
+	}
+
+	if current != "" {
+		revoked, err = h.Sessions.DeleteAllForUserExcept(r.Context(), user.ID, current)
+	} else {
+		// Сессии в куке нет (например, протухла) — отзываем всё, что есть.
+		err = h.Sessions.DeleteAllForUser(r.Context(), user.ID)
+	}
+
+	if err != nil {
+		// Пароль уже новый — молчать нельзя: это ровно тот случай, когда
+		// пользователь ждёт, что чужие устройства вышли.
+		writeError(w, http.StatusInternalServerError, "password changed but other sessions could not be revoked")
+		return
+	}
+
+	h.Limits.Password.Reset(ClientIP(r))
+	log.Printf("auth: пароль изменён user_id=%d отозвано сессий=%d ip=%s", user.ID, revoked, ClientIP(r))
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":           "ok",
+		"revoked_sessions": revoked,
 	})
 }
 
@@ -287,7 +425,11 @@ func isSecureRequest(r *http.Request) bool {
 		return true
 	}
 
-	if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+	// X-Forwarded-Proto — заголовок, который пишет прокси. Без явного доверия
+	// ему любой клиент может подставить «https» и получить куку с Secure,
+	// или наоборот: приложение за plain HTTP начнёт выдавать незащищённую
+	// gs_session. Решение — тот же переключатель TRUST_PROXY, что и для IP.
+	if trustProxy && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
 		return true
 	}
 

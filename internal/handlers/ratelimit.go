@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/NumerR/SOS/internal/ratelimit"
@@ -21,6 +22,9 @@ type Limiters struct {
 	LoginAccount *ratelimit.Limiter
 	// Register — по IP: не даём набить базу мусорными аккаунтами.
 	Register *ratelimit.Limiter
+	// Password — по IP на POST /api/auth/change-password: попытка подобрать
+	// текущий пароль внутри чужой открытой сессии так же ограничена, как вход.
+	Password *ratelimit.Limiter
 }
 
 const (
@@ -30,7 +34,8 @@ const (
 	loginAccountWindow   = 15 * time.Minute
 	registerIPCapacity   = 10
 	registerIPWindow     = time.Hour
-	loginAccountPenalty  = 2 // неудачная проверка пароля стоит дороже одного запроса
+	passwordIPCapacity   = 6
+	passwordIPWindow     = 15 * time.Minute
 )
 
 // NewLimiters собирает наборы ограничений со значениями по умолчанию.
@@ -39,6 +44,7 @@ func NewLimiters() Limiters {
 		Login:        ratelimit.New(loginIPCapacity, loginIPWindow),
 		LoginAccount: ratelimit.New(loginAccountCapacity, loginAccountWindow),
 		Register:     ratelimit.New(registerIPCapacity, registerIPWindow),
+		Password:     ratelimit.New(passwordIPCapacity, passwordIPWindow),
 	}
 }
 
@@ -72,15 +78,38 @@ func (h *Handlers) RateLimit(limiter *ratelimit.Limiter, name string, keyOf func
 	}
 }
 
-// LimitByIP — ключом служит адрес соединения.
+// trustProxy decides whether X-Forwarded-For may be believed. It is set from
+// TRUST_PROXY at startup in main.go — see SetTrustProxy.
+var trustProxy bool
+
+// SetTrustProxy включает доверие X-Forwarded-For и X-Forwarded-Proto.
 //
-// За реверс-прокси это адрес прокси, и тогда нужен X-Forwarded-For + явный
-// список доверенных прокси; пока приложение наружу не публикуется, оставляем
-// честное «берём то, что даёт TCP» вместо ложного доверия заголовку.
-func LimitByIP(r *http.Request) string {
+// По умолчанию выключено: за заголовком может стоять кто угодно, и «доверять
+// всегда» означало бы, что переборщик обходит лимиты одной строчкой в curl.
+// Включать нужно только когда приложение гарантированно стоит за своим
+// прокси (или когда известна сеть прокси — тогда её надо сравнивать с RemoteAddr).
+func SetTrustProxy(on bool) { trustProxy = on }
+
+// ClientIP — адрес клиента для логов и ключа лимитера.
+//
+// Без TRUST_PROXY это адрес TCP-соединения. С TRUST_PROXY берётся первое
+// значение из X-Forwarded-For (клиент, а не промежуточные узлы) — и только
+// валидное: пустой, не-IP или «unknown» из-за прокси-заглушки не должны
+// превращаться в один общий бакет на всех.
+func ClientIP(r *http.Request) string {
+	if trustProxy {
+		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+			candidate := strings.TrimSpace(strings.Split(forwarded, ",")[0])
+			if ip := net.ParseIP(candidate); ip != nil {
+				return ip.String()
+			}
+		}
+	}
+
 	if ip, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return ip
 	}
+
 	return r.RemoteAddr
 }
 

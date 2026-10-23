@@ -13,6 +13,12 @@ document.addEventListener("DOMContentLoaded", () => {
             // Не авторизован — оставляем форму.
         });
 
+    // Сюда попадают после «выйти везде»: без подписи пользователь не понимает,
+    // что произошло — страницы как бы не было.
+    if (new URLSearchParams(window.location.search).get("revoked") === "1") {
+        GS.showMessage(messageElement, "Все активные сессии завершены. Войдитесь заново.", "success");
+    }
+
     form.addEventListener("submit", async (event) => {
         event.preventDefault();
 
