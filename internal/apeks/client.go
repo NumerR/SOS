@@ -158,12 +158,16 @@ func New(cfg Config) (*Client, error) {
 	return &Client{baseURL: base, token: token, http: httpClient, timeout: timeout}, nil
 }
 
-// BaseURL — фактический адрес источника: DefaultBaseURL либо переопределение
+// Endpoint — фактический адрес источника: DefaultBaseURL либо переопределение
 // из APEKS_API_URL. Нужен логу старта: печатать константу, когда оператор
 // сменил адрес переменной окружения, — значит врать в журнале именно там, где
 // им отлаживают конфигурацию. Токена в этом значении нет: он подставляется
 // только в запрос.
-func (c *Client) BaseURL() string { return c.baseURL }
+func (c *Client) Endpoint() string { return c.baseURL }
+
+// Engine — «go»: ответ разобран кодом этого репозитория, а не приложенным
+// Python-парсером. См. backend.go.
+func (c *Client) Engine() string { return EngineGo }
 
 // Group — учебная группа из каталога источника.
 //
@@ -186,56 +190,17 @@ type Month struct {
 	Lessons   []Lesson
 }
 
-// GetGroups — каталог групп (587 записей на момент 2026-10-24).
+// GetGroups — каталог групп (587 записей на момент 24.10.2026).
 //
-// Ответ без group_id/month/year тот же эндпоинт отдаёт как дерево
-// «кафедра -> направление -> группа»; обход здесь ровно трёхуровневый, как в
-// get_groups() у Python-версии.
+// Разбор вынесен в ParseGroups: он нужен тесту паритета без сети ровно так же,
+// как GetMonth пользуется ParseMonth.
 func (c *Client) GetGroups(ctx context.Context) ([]Group, error) {
 	payload, err := c.request(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	var data struct {
-		Groups map[string]groupNode `json:"groups"`
-	}
-	if err := json.Unmarshal(payload, &data); err != nil {
-		return nil, errors.New("apeks: каталог групп пришёл в неизвестном формате")
-	}
-
-	groups := make([]Group, 0, 64)
-	for _, department := range data.Groups {
-		for _, course := range department.Items {
-			for _, group := range course.Items {
-				id := group.ID.String()
-				name := norm(group.Name)
-				if id == "" || name == "" {
-					continue
-				}
-				groups = append(groups, Group{
-					ID:         id,
-					Name:       name,
-					Department: norm(department.Name),
-					Course:     norm(course.Name),
-				})
-			}
-		}
-	}
-
-	if len(groups) == 0 {
-		return nil, errors.New("apeks: источник вернул пустой каталог групп")
-	}
-
-	return groups, nil
-}
-
-// groupNode — узел дерева групп. Одна и та же форма на всех трёх уровнях,
-// поэтому рекурсивный тип вместо трёх структур.
-type groupNode struct {
-	ID    flex                 `json:"id"`
-	Name  string               `json:"name"`
-	Items map[string]groupNode `json:"items"`
+	return ParseGroups(payload)
 }
 
 // GetMonth — расписание группы за месяц.
@@ -244,14 +209,8 @@ type groupNode struct {
 // формата: запрос вне 1..12 / 2000..2100 — наша ошибка, а не ответ вуза.
 func (c *Client) GetMonth(ctx context.Context, groupID string, month, year int) (*Month, error) {
 	groupID = norm(groupID)
-	if groupID == "" {
-		return nil, errors.New("apeks: пустой идентификатор группы")
-	}
-	if month < 1 || month > 12 {
-		return nil, fmt.Errorf("apeks: месяц %d вне диапазона 1..12", month)
-	}
-	if year < 2000 || year > 2100 {
-		return nil, fmt.Errorf("apeks: год %d вне диапазона 2000..2100", year)
+	if err := checkMonthArgs(groupID, month, year); err != nil {
+		return nil, err
 	}
 
 	params := url.Values{

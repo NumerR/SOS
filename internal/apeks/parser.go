@@ -74,15 +74,15 @@ type Lesson struct {
 // расписания звонков lessonTimesEnabled) при добавлении нового поля у источника
 // не должно ломать импорт, поэтому строгой структуры на весь ответ нет.
 type payload struct {
-	GroupID       flex                         `json:"group_id"`
-	Group         payloadGroup                 `json:"group"`
-	StartDate     string                       `json:"start_date"`
-	EndDate       string                       `json:"end_date"`
-	Lessons       []rawLesson                  `json:"lessons"`
-	LessonTimes   []rawLessonTime              `json:"lessonTimes"`
-	GroupNames    map[string]string            `json:"groupNames"`
-	SubgroupNames map[string]string            `json:"subgroupNames"`
-	GroupsList    map[string]map[string]string `json:"groupsList"`
+	GroupID       flex                 `json:"group_id"`
+	Group         payloadGroup         `json:"group"`
+	StartDate     string               `json:"start_date"`
+	EndDate       string               `json:"end_date"`
+	Lessons       []rawLesson          `json:"lessons"`
+	LessonTimes   []rawLessonTime      `json:"lessonTimes"`
+	GroupNames    named[string]        `json:"groupNames"`
+	SubgroupNames named[string]        `json:"subgroupNames"`
+	GroupsList    named[named[string]] `json:"groupsList"`
 }
 
 type payloadGroup struct {
@@ -113,6 +113,90 @@ type rawLesson struct {
 	SuperflowSubgroupsIds list   `json:"superflowSubgroupsIds"`
 	IsEmpty               flag   `json:"is_empty"`
 	SelfWork              flag   `json:"self_work"`
+}
+
+// ParseGroups разбирает содержимое поля "data" в каталог групп.
+//
+// Ответ без group_id/month/year тот же эндпоинт отдаёт как дерево
+// «институт -> направление -> группа»; обход ровно трёхуровневый, как в
+// get_groups() у Python-версии.
+//
+// Порядок групп не гарантирован: у Go-версии это обход словаря, и он же влияет
+// только на то, в каком порядке строки лягут в базу — страница читает каталог
+// со своим ORDER BY.
+func ParseGroups(data []byte) ([]Group, error) {
+	var payload struct {
+		Groups nodes `json:"groups"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, errors.New("apeks: каталог групп пришёл в неизвестном формате")
+	}
+
+	groups := make([]Group, 0, 64)
+	for _, department := range payload.Groups {
+		for _, course := range department.Items {
+			for _, group := range course.Items {
+				id := group.ID.String()
+				name := norm(group.Name)
+				if id == "" || name == "" {
+					continue
+				}
+				groups = append(groups, Group{
+					ID:         id,
+					Name:       name,
+					Department: norm(department.Name),
+					Course:     norm(course.Name),
+				})
+			}
+		}
+	}
+
+	if len(groups) == 0 {
+		return nil, errors.New("apeks: источник вернул пустой каталог групп")
+	}
+
+	return groups, nil
+}
+
+// groupNode — узел дерева групп. Одна и та же форма на всех трёх уровнях,
+// поэтому рекурсивный тип вместо трёх структур.
+type groupNode struct {
+	ID    flex   `json:"id"`
+	Name  string `json:"name"`
+	Items nodes  `json:"items"`
+}
+
+// nodes — уровень дерева групп, который может прийти пустым списком.
+//
+// Источник сериализует пустой словарь как [], а не как {}: на живом ответе
+// 24.10.2026 у 14 институтов из 659 узлов «items» — пустой массив. Обычный
+// map[string]groupNode падает на таком месте, и ошибка при этом звучала как
+// «каталог групп пришёл в неизвестном формате», хотя формат как раз известен:
+// импорт всего каталога обнулялся из-за одного пустого отдела. Python-версия
+// обходила это через (department.get("items") or {}).
+//
+// Непустой массив не принимается намеренно: такой формы в живом ответе не
+// было, а молча выбросить половину каталога опаснее, чем показать админу
+// ошибку — вместо расписания, из которого что-то потерялось, он получит
+// «источник не ответил» и узнает о смене формата.
+type nodes map[string]groupNode
+
+// UnmarshalJSON принимает объект, пустой список и null.
+func (n *nodes) UnmarshalJSON(data []byte) error {
+	switch trimmed := strings.TrimSpace(string(data)); {
+	case trimmed == "" || trimmed == "null" || trimmed == "[]" || trimmed == "{}":
+		*n = nil
+		return nil
+	case trimmed[0] == '[':
+		return errors.New("apeks: узлы каталога пришли непустым списком")
+	default:
+		var raw map[string]groupNode
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return err
+		}
+		*n = raw
+		return nil
+	}
 }
 
 // ParseMonth разбирает содержимое поля "data" в список пар.

@@ -5,7 +5,14 @@ name: CI
 #   frontend — синтаксис каждого JS-файла и целостность подключений (модальные
 #              окна T0.1 сломались именно здесь: файл был валидным, но ни одна
 #              страница его не подключала);
-#   ui       — jsdom-тесты против живого сервера.
+#   parser   — приложенный Python-парсер: синтаксис, его собственный тест и
+#              договор с Go-мостом по фикстурам живого ответа;
+#   ui       — jsdom-тесты против живого сервера, плюс сквозная проверка
+#              источника расписания на подставном парсере.
+#
+# Живой АПЭКС-ВУЗ из CI не дёргается: для этого нужен токен вуза, а публиковать
+# его в настройках репозитория смысла нет — доступ выдаётся на время. Всё, что
+# можно проверить без сети, проверяется на срезах ответа (internal/apeks/testdata).
 #
 # Миграции на чистой PostgreSQL появляются вместе с T2.1: сейчас схема применяется
 # кодом на SQLite (internal/database/db.go), отдельного SQL-пакета для dry-run нет.
@@ -36,6 +43,14 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      # Тест паритета каталога (TestPythonGroupsMatchGoParser) вызывает python3 и
+      # молча пропускается, если интерпретатора нет. Чтобы «зелёный» CI означал
+      # именно проверенный паритет, интерпретатор ставится здесь же.
+      - name: Установка Python (для проверки паритета разборов)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
       - name: gofmt
         run: |
@@ -85,6 +100,30 @@ jobs:
 
       - name: Целостность фронтенда
         run: node scripts/check-frontend.mjs
+
+  parser:
+    name: Парсер расписания (Python, офлайн)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # requests не ставится: офлайн-проверкам он не нужен, а живой запрос из CI
+      # не делается (см. шапку файла). Установка пакета только маскировала бы тот
+      # факт, что граница процесса проверяется без него.
+      - name: Установка Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Синтаксис всех модулей парсера
+        run: python3 -m py_compile tools/schedule-parser/*.py
+
+      - name: Тест разбора из приложенного архива
+        working-directory: tools/schedule-parser
+        run: python3 test_parser.py
+
+      - name: Договор CLI с Go-мостом
+        run: python3 tools/schedule-parser/test_contract.py
 
   ui:
     name: UI против живого сервера (jsdom)
@@ -140,6 +179,13 @@ jobs:
       - name: Прогон UI
         working-directory: tests/ui
         run: npm run test:all
+
+      # Отдельный сервер, отдельная база, отдельный порт: раннер сам всё это
+      # поднимает и убирает. Python для шага не нужен — дочерним процессом
+      # выступает /bin/sh с подставным парсером, поэтому шаг стоит здесь, а не
+      # в job parser.
+      - name: Источник расписания на подставном парсере (мост -> база -> страница)
+        run: bash tests/schedule-source-python.sh
 
       - name: Лог сервера при падении
         if: failure()

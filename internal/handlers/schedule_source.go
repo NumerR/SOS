@@ -211,13 +211,31 @@ func (h *Handlers) ScheduleStatusAPI(w http.ResponseWriter, r *http.Request) {
 	// Настроен ли источник: админская панель по этому полю показывает либо
 	// кнопки импорта, либо подсказку про APEKS_TOKEN. Состояние «не настроен» —
 	// не ошибка запроса, а конфигурация, поэтому оно часть ответа, а не код 503.
+	//
+	// engine — каким кодом разобраны привезённые пары («go» / «python»).
+	// Поле нужно не панели, а человеку, который разбирается, почему у двух
+	// одинаковых импортов разные строки: при двух движках это единственный
+	// способ увидеть, какой из них работал.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"source":         apeks.Source,
 		"source_name":    apeks.DisplayName,
 		"configured":     h.Apeks != nil,
+		"engine":         scheduleSourceEngine(h.Apeks),
 		"missing_config": "APEKS_TOKEN",
 		"stats":          stats,
 	})
+}
+
+// scheduleSourceEngine — имя движка источника для админского статуса.
+//
+// Пустая строка при nil: «источник не настроен» — это не «движок go» и не
+// «движок python», и выдумывать одно из двух значило бы показать админу
+// рабочий путь там, где его нет.
+func scheduleSourceEngine(client apeks.Backend) string {
+	if client == nil {
+		return ""
+	}
+	return client.Engine()
 }
 
 // ScheduleSyncGroupsAPI — POST /api/schedule/source/groups.

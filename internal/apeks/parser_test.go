@@ -15,6 +15,10 @@ import (
 // реальный срез ответа (testdata/apeks-2026-10-week.json, снят 2026-10-24 с
 // живого эндпоинта) закрепляет всё остальное — подгруппы, «Поточку», подписи
 // дней, чистку аудитории от HTML.
+//
+// Каталог групп проверяется по своему срезу — testdata/apeks-groups-tree.json
+// (тот же день, те же 24.10.2026): он нужен ради формы «пустой уровень пришёл
+// списком», на которой разбор каталога и падал.
 
 func TestParseMonthSortsByRealStartTime(t *testing.T) {
 	// Оракл перенесён из test_parser.py: там id слотов идут в обратном к
@@ -226,6 +230,32 @@ func TestParseMonthSubgroupRules(t *testing.T) {
 	}
 }
 
+// TestParseMonthAcceptsEmptyDictionaries — словари источника могут прийти
+// пустым списком.
+//
+// Тот же quirk сериализатора, что и в дереве групп: пустой словарь у АПЭКС-ВУЗа
+// это [], а не {}. Для groupNames/subgroupNames/groupsList это значило бы одно:
+// месяц с импортом не справился бы, хотя пар в ответе достаточно. Словари в
+// разборе читаются только по ключам, поэтому пустой список здесь — ровно «пустой
+// словарь», и пара уходит на страницу с подписью по запасному правилу.
+func TestParseMonthAcceptsEmptyDictionaries(t *testing.T) {
+	month := mustParse(t, map[string]any{
+		"lessons": []map[string]any{
+			{"id": 1, "date": "07.09.2026", "lesson_time_id": 1, "subgroup_id": 632, "groupName": "Б-ИСиТ-22/1"},
+		},
+		"groupNames":    []any{},
+		"subgroupNames": []any{},
+		"groupsList":    []any{},
+	})
+
+	if len(month.Lessons) != 1 {
+		t.Fatalf("пар %d, ожидалась одна", len(month.Lessons))
+	}
+	if got := month.Lessons[0].Subgroup; got != "1 подгруппа" {
+		t.Errorf("подгруппа %q, ожидалось запасное правило по имени «/1»", got)
+	}
+}
+
 func TestParseMonthSpecialDisciplines(t *testing.T) {
 	// Порядок проверок важнее факта: пустая пара первичнее самоподготовки,
 	// как в Python-версии.
@@ -417,9 +447,103 @@ func TestFlexAndFlagDecoding(t *testing.T) {
 	}
 }
 
+// TestParseGroupsOnLiveExcerpt разбирает срез живого каталога групп.
+//
+// Фикстура — не выдуманная схема: это живой ответ эндпоинта 24.10.2026, из
+// которого вырезаны лишние узлы (значения полей не тронуты). В нём есть узел
+// «Факультеты, Медицинский институт» с «items»: [] — именно он валил разбор
+// каталога целиком.
+func TestParseGroupsOnLiveExcerpt(t *testing.T) {
+	groups := parseGroupsFixture(t)
+
+	if len(groups) != 13 {
+		t.Errorf("групп %d, ожидалось 13 (срез живого ответа)", len(groups))
+	}
+
+	byID := make(map[string]Group, len(groups))
+	for _, group := range groups {
+		byID[group.ID] = group
+	}
+
+	// Пустой отдел не должен был ни уронить разбор, ни породить пустую строку.
+	for _, group := range groups {
+		if group.Name == "" || group.ID == "" {
+			t.Errorf("в каталоге пустая строка: %+v", group)
+		}
+		if group.Department == "" || group.Course == "" {
+			t.Errorf("у группы %+v не заполнена ветка каталога", group)
+		}
+	}
+
+	want := Group{
+		ID:         "494",
+		Name:       "Б-ИСиТ-22",
+		Department: "Инженерно-технологический институт",
+		Course:     "2 курс",
+	}
+	if byID[want.ID] != want {
+		t.Errorf("группа 494: %+v, ожидалось %+v", byID[want.ID], want)
+	}
+}
+
+// TestParseGroupsRejectsUnknownNodeShape — непустой список вместо словаря.
+//
+// Пустой [] мы принимаем как «узлов нет», но непустой массив — уже другая форма
+// ответа, содержимое которой пришлось бы молча выбросить. Ошибка здесь честнее:
+// админ увидит «источник не ответил», а не расписание с потерянной половиной.
+func TestParseGroupsRejectsUnknownNodeShape(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload map[string]any
+	}{
+		{"курсы пришли списком", map[string]any{
+			"groups": map[string]any{
+				"1": map[string]any{"name": "Институт", "items": []any{
+					map[string]any{"name": "Курс", "items": map[string]any{"494": map[string]any{"id": 494, "name": "Б-ИСиТ-22"}}},
+				}},
+			},
+		}},
+		{"группы пришли списком", map[string]any{
+			"groups": map[string]any{
+				"1": map[string]any{"name": "Институт", "items": map[string]any{
+					"11": map[string]any{"name": "Курс", "items": []any{map[string]any{"id": 494, "name": "Б-ИСиТ-22"}}},
+				}},
+			},
+		}},
+	}
+
+	for _, tc := range tests {
+		raw, err := json.Marshal(tc.payload)
+		if err != nil {
+			t.Fatalf("%s: собрать фикстуру: %v", tc.name, err)
+		}
+		if _, err := ParseGroups(raw); err == nil {
+			t.Errorf("%s: неизвестная форма принята без ошибки", tc.name)
+		}
+	}
+}
+
 // ---------- вспомогательное ----------
 
 func fixturePath() string { return filepath.Join("testdata", "apeks-2026-10-week.json") }
+
+// groupsFixturePath — срез живого каталога групп (24.10.2026).
+func groupsFixturePath() string { return filepath.Join("testdata", "apeks-groups-tree.json") }
+
+func parseGroupsFixture(t *testing.T) []Group {
+	t.Helper()
+
+	raw, err := os.ReadFile(groupsFixturePath())
+	if err != nil {
+		t.Fatalf("фикстура %s не читается: %v", groupsFixturePath(), err)
+	}
+
+	groups, err := ParseGroups(raw)
+	if err != nil {
+		t.Fatalf("разбор фикстуры каталога: %v", err)
+	}
+	return groups
+}
 
 func parseFixture(t *testing.T) *Month {
 	t.Helper()

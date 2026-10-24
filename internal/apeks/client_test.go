@@ -207,6 +207,45 @@ func TestGetGroupsWalksThreeLevels(t *testing.T) {
 	}
 }
 
+// TestGetGroupsSurvivesEmptyLevels — пустые уровни дерева не роняют каталог.
+//
+// Поймано живой проверкой 24.10.2026: источник сериализует пустой словарь как
+// [], и у 14 узлов из 659 «items» — пустой массив. Разбор с map[string]groupNode
+// спотыкался на первом же таком узле и выдавал «каталог групп пришёл в
+// неизвестном формате», то есть импорт каталога не работал вообще, хотя данные
+// в ответе были полные.
+func TestGetGroupsSurvivesEmptyLevels(t *testing.T) {
+	cfg, _ := stubSource(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, envelope(t, map[string]any{
+			"groups": map[string]any{
+				// Отдел без курсов: ровно та форма, на которой разбор падал.
+				"51": map[string]any{"name": "Факультеты, Медицинский институт", "items": []any{}},
+				"1": map[string]any{
+					"name": "Инженерно-технологический институт",
+					"items": map[string]any{
+						// Курс без групп — тот же quirk на уровень ниже.
+						"8":  map[string]any{"name": "Аспирантура", "items": []any{}},
+						"11": map[string]any{"name": "Информатика", "items": map[string]any{"494": map[string]any{"id": 494, "name": "Б-ИСиТ-22"}}},
+					},
+				},
+			},
+		}))
+	})
+
+	client, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	groups, err := client.GetGroups(context.Background())
+	if err != nil {
+		t.Fatalf("пустой уровень обнулил каталог: %v", err)
+	}
+	if len(groups) != 1 || groups[0].ID != "494" {
+		t.Fatalf("группы %+v, ожидалась одна 494", groups)
+	}
+}
+
 func TestGetGroupsRejectsEmptyCatalogue(t *testing.T) {
 	// Пустой каталог — не «данных нет», а сломанный источник: страница после
 	// такой синхронизации потеряла бы все группы.

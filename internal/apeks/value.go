@@ -2,6 +2,7 @@ package apeks
 
 import (
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"unicode"
@@ -152,6 +153,36 @@ func (l *list) UnmarshalJSON(data []byte) error {
 
 // Values — содержимое списка.
 func (l list) Values() []string { return []string(l) }
+
+// named — словарь источника, пустой уровень которого приходит списком.
+//
+// Тот же quirk сериализатора, что и в дереве групп (см. nodes в client.go):
+// пустой словарь у АПЭКС-ВУЗа — это [], а не {}. Он встречается в groupNames,
+// subgroupNames и groupsList, когда месячный ответ никуда не ссылается. На
+// map[string]string Go роняет разбор всего месяца из-за поля, которое только
+// и ожидалось бы «словарь пуст».
+//
+// Непустой список не принимается: значения из такого поля мы бы просто потеряли,
+// а подпись подгруппы, выдуманная из пустоты, хуже отсутствующей.
+type named[V any] map[string]V
+
+// UnmarshalJSON принимает объект, пустой список и null.
+func (m *named[V]) UnmarshalJSON(data []byte) error {
+	switch trimmed := strings.TrimSpace(string(data)); {
+	case trimmed == "" || trimmed == "null" || trimmed == "[]" || trimmed == "{}":
+		*m = nil
+		return nil
+	case trimmed[0] == '[':
+		return errors.New("apeks: словарь источника пришёл непустым списком")
+	default:
+		var raw map[string]V
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return err
+		}
+		*m = raw
+		return nil
+	}
+}
 
 // norm — пробелы в один, без BOM и по краям (аналог _norm из parser.py).
 //

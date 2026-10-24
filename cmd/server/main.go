@@ -301,7 +301,7 @@ func newLogger() *slog.Logger {
 	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 }
 
-// newScheduleSourceClient собирает клиента АПЭКС-ВУЗ из окружения.
+// newScheduleSourceClient собирает доступ к источнику расписания из окружения.
 //
 // nil — штатный ответ, а не аварийный: без токена платформа продолжает
 // работать (лента, курсы, задания), а страница расписания показывает «данные
@@ -310,7 +310,13 @@ func newLogger() *slog.Logger {
 // из-за недоступного чужого сайта неправильно.
 //
 // Значение APEKS_TOKEN не печатается ни в одном из сообщений.
-func newScheduleSourceClient() *apeks.Client {
+//
+// Движок выбирает оператор: SCHEDULE_SOURCE=python разбирает ответ приложенным
+// парсером из tools/schedule-parser (по умолчанию), SCHEDULE_SOURCE=go —
+// кодом репозитория. Выбор пишется в лог старта вместе с адресом источника,
+// потому что вывод импорта выглядит одинаково в обоих случаях, а различается
+// тем, чей код смотрел в ответ вуза.
+func newScheduleSourceClient() apeks.Backend {
 	token := strings.TrimSpace(os.Getenv("APEKS_TOKEN"))
 	if token == "" {
 		slog.Info("внешнее расписание отключено: APEKS_TOKEN не задан",
@@ -319,23 +325,60 @@ func newScheduleSourceClient() *apeks.Client {
 		return nil
 	}
 
-	client, err := apeks.New(apeks.Config{
-		Token:   token,
-		BaseURL: os.Getenv("APEKS_API_URL"),
-	})
-	if err != nil {
+	switch engine := strings.ToLower(strings.TrimSpace(envOr("SCHEDULE_SOURCE", apeks.EnginePython))); engine {
+	case apeks.EnginePython:
+		parser, err := apeks.NewPython(apeks.PythonConfig{
+			Token:   token,
+			BaseURL: os.Getenv("APEKS_API_URL"),
+			Script:  os.Getenv("SCHEDULE_PARSER"),
+			Python:  os.Getenv("PYTHON_BIN"),
+		})
+		if err != nil {
+			slog.Error("источник расписания не настроен",
+				slog.String("engine", apeks.EnginePython),
+				slog.String("hint", "путь к парсеру: SCHEDULE_PARSER, интерпретатор: PYTHON_BIN; "+
+					"запасной путь — SCHEDULE_SOURCE=go"),
+				slog.Any("error", err),
+			)
+			return nil
+		}
+
+		slog.Info("источник расписания подключён",
+			slog.String("source", apeks.Source),
+			slog.String("engine", apeks.EnginePython),
+			slog.String("endpoint", parser.Endpoint()),
+			slog.String("parser", parser.Script()),
+		)
+		return parser
+
+	case apeks.EngineGo:
+		client, err := apeks.New(apeks.Config{
+			Token:   token,
+			BaseURL: os.Getenv("APEKS_API_URL"),
+		})
+		if err != nil {
+			slog.Error("источник расписания не настроен",
+				slog.String("engine", apeks.EngineGo),
+				slog.String("hint", "проверьте APEKS_TOKEN и APEKS_API_URL"),
+				slog.Any("error", err),
+			)
+			return nil
+		}
+
+		slog.Info("источник расписания подключён",
+			slog.String("source", apeks.Source),
+			slog.String("engine", apeks.EngineGo),
+			slog.String("endpoint", client.Endpoint()),
+		)
+		return client
+
+	default:
 		slog.Error("источник расписания не настроен",
-			slog.String("hint", "проверьте APEKS_TOKEN и APEKS_API_URL"),
-			slog.Any("error", err),
+			slog.String("hint", "SCHEDULE_SOURCE бывает python или go"),
+			slog.String("value", engine),
 		)
 		return nil
 	}
-
-	slog.Info("источник расписания подключён",
-		slog.String("source", apeks.Source),
-		slog.String("endpoint", client.BaseURL()),
-	)
-	return client
 }
 
 func envOr(name, fallback string) string {

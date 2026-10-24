@@ -23,3 +23,8 @@ node_modules/
 cookies.txt
 SOS.zip
 SOS.tar.gz
+
+# Парсер расписания (tools/schedule-parser): Python кэширует байткод рядом с
+# исходниками, и при каждом прогоне появляется папка, которую коммитить нельзя.
+__pycache__/
+*.pyc
