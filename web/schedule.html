@@ -7,14 +7,16 @@
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body data-layout="schedule" data-brand-sub="Расписание · Ресурсы" data-footer-note="Schedule · events · resources — one place">
+    <a class="skip-link" href="#main">К основному содержимому</a>
     <header class="site-header"></header>
 
-    <main class="main">
+    <main class="main" id="main" tabindex="-1">
         <div class="container stack">
+            <h1 class="page-title">Расписание и ресурсы</h1>
 
             <section id="timetableSection" class="section">
                 <div class="section-head">
-                    <span class="section-label"><span class="section-index">01</span> Официальное расписание пар</span>
+                    <h2 class="section-label"><span class="section-index">01</span> Официальное расписание пар</h2>
                     <span class="section-rule"></span>
                     <span class="section-note" id="sourceNameNote">источник: АПЭКС-ВУЗ</span>
                 </div>
@@ -74,7 +76,7 @@
 
             <section id="sourceManageSection" class="panel hidden">
                 <div class="section-head">
-                    <span class="section-label"><span class="section-index">02</span> Источник расписания</span>
+                    <h2 class="section-label"><span class="section-index">02</span> Источник расписания</h2>
                     <span class="section-rule"></span>
                     <span class="section-note">право schedule.source.manage</span>
                 </div>
@@ -113,7 +115,7 @@
 
             <section id="feedSection" class="section hidden">
                 <div class="section-head">
-                    <span class="section-label"><span class="section-index">03</span> Моя лента · дедлайны и события</span>
+                    <h2 class="section-label"><span class="section-index">03</span> Моя лента · дедлайны и события</h2>
                     <span class="section-rule"></span>
                     <button id="refreshBtn" class="btn btn-icon" title="Обновить" aria-label="Обновить">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
@@ -145,7 +147,7 @@
 
             <section id="resourcesSection" class="section hidden">
                 <div class="section-head">
-                    <span class="section-label"><span class="section-index">04</span> Полезные ресурсы</span>
+                    <h2 class="section-label"><span class="section-index">04</span> Полезные ресурсы</h2>
                     <span class="section-rule"></span>
                     <button id="refreshResources" class="btn btn-icon" title="Обновить" aria-label="Обновить">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
@@ -161,7 +163,7 @@
 
                 <section id="createResourceSection" class="panel hidden" style="margin-top:18px;">
                     <div class="section-head">
-                        <span class="section-label"><span class="section-index">+</span> Добавить ресурс</span>
+                        <h2 class="section-label"><span class="section-index">+</span> Добавить ресурс</h2>
                         <span class="section-rule"></span>
                         <span class="section-note">POST /api/resources</span>
                     </div>
@@ -202,7 +204,7 @@
 
             <section id="eventsManageSection" class="panel hidden">
                 <div class="section-head">
-                    <span class="section-label"><span class="section-index">05</span> Добавить событие</span>
+                    <h2 class="section-label"><span class="section-index">05</span> Добавить событие</h2>
                     <span class="section-rule"></span>
                     <span class="section-note">POST /api/events</span>
                 </div>

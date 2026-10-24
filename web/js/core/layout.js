@@ -167,15 +167,18 @@
 
         const items = navItems(spec.items);
         // У гостевых страниц навигация жила в <nav>, у остальных — в
-        // <div class="top-actions">; CSS различает их, поэтому обёртка тоже в
-        // конфиге страницы, а не «одна на всех».
+        // <div class="top-actions">; CSS различает их классами, поэтому обёртка
+        // осталась в конфиге страницы. Но div landmark'ом не был: на рабочих
+        // страницах («Кабинет», «Профиль», «Админ») у списки ориентиров
+        // не появилось ничего, хотя ссылки там те же. Теперь тег один — <nav>,
+        // класс сохранён, поэтому вёрстка не сдвинулась ни на пиксель.
         const nav = spec.wrapper === "nav"
-            ? `<nav ${spec.id ? `id="${spec.id}" ` : ""}class="nav">
+            ? `<nav ${spec.id ? `id="${spec.id}" ` : ""}class="nav" aria-label="Навигация страницы">
                 ${items}
             </nav>`
-            : `<div class="top-actions">
+            : `<nav class="top-actions" aria-label="Навигация страницы">
                 ${items}
-            </div>`;
+            </nav>`;
 
         return `<div class="container header-row">
             ${brand}
@@ -210,7 +213,10 @@
             if (!spec) {
                 console.error(`core/layout.js: неизвестный data-layout="${key}" — навигация не отрисуется`);
             }
-            header.innerHTML = headerInner(body.dataset.brandSub || DEFAULT_SUB, spec || { wrapper: "nav", items: [] });
+            header.innerHTML = headerInner(
+                body.dataset.brandSub || DEFAULT_SUB,
+                spec || { wrapper: "nav", items: [] },
+            );
             header.dataset.filled = "1";
         }
 

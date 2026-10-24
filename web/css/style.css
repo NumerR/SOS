@@ -9,8 +9,20 @@
   --surface:        #efe9dc;
   --ink:            #2c2a26;
   --ink-soft:       #57534a;
-  --muted:          #8d8676;
+  /* --muted был #8d8676: 2.81:1 на parchment и 2.48:1 на parchment-deep — ниже
+     порога 4.5:1, а этот цвет несёт не декор, а текст (подсказки форм, меты
+     карточек, «Обновлено …», подписи столбцов). Значение #625b4c подобрано по
+     расчёту WCAG: 5.22:1 на parchment, 5.56:1 на surface, 4.62:1 на
+     parchment-deep, 6.73:1 на белом — то есть AA на всех подложках, где цвет
+     встречается. Тон тот же (тёплый серый), палитра не меняется. */
+  --muted:          #625b4c;
   --line:           #d3c9b4;
+  /* --line несёт разделители (линия под шапкой, линейка секции) — там он
+     декоративный. Граница поля ввода другим цветом: у контура контрола по WCAG
+     1.4.11 должна быть хотя бы 3:1 с тем, что вокруг, иначе «куда нажимать»
+     видно только по neumorphic-тени. #877f6f: 3.08:1 на parchment, 3.28:1 на
+     surface. Тон тот же, что у прежнего --muted. */
+  --line-strong:    #877f6f;
 
   --teal:        #155e5c;
   --teal-hover:  #114c4a;
@@ -18,7 +30,10 @@
   --teal-tint:   #d6e2df;
   --teal-ink:    #0f4745;
 
-  --danger:      #a8443a;
+  /* Красный был #a8443a: текст отказа на --danger-tint давал 4.38:1 — чуть ниже
+     AA, а этот текст сообщает причину отказа. #a13f35 даёт 4.74:1 на tint и
+     5.64:1 для белой подписи кнопки «удалить». */
+  --danger:      #a13f35;
   --danger-tint: #efd9d4;
   --ok:          #2f6b5e;
   --ok-tint:     #d7e6df;
@@ -96,6 +111,30 @@ button { font: inherit; }
 .nav { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .main { flex: 1; padding-block: 26px 40px; position: relative; z-index: 1; }
 
+/* Skip-link: единственный элемент на странице, который нужен только с
+   клавиатуры. Держим его вне вьюпорта, а не display:none — во втором случае
+   скринридер тоже не нашёл бы ссылки. Фокус по Tab возвращает её наверх, и
+   дальше Enter переносит фокус в <main id="main" tabindex="-1">: без tabindex
+   браузер перематывает страницу, но фокус остаётся в шапке. */
+.skip-link {
+  position: absolute; left: 12px; top: -60px; z-index: 20;
+  padding: 10px 16px; border-radius: var(--r-sm);
+  background: var(--teal); color: #f4efe4;
+  font-size: 13px; font-weight: 700; letter-spacing: 0.02em;
+  text-decoration: none; box-shadow: var(--e2);
+}
+.skip-link:focus { top: 12px; outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* Заголовок страницы. Раньше его не было вовсе: название читалось только из
+   <title> и из подписи в шапке, а структура документа начиналась с h3 карточки.
+   Размер и вес — как у .auth-title, чтобы страница входа и кабинет звучали
+   одинаково. */
+.page-title { font-size: 22px; font-weight: 800; letter-spacing: -0.015em; }
+
+/* Рамка фокуса вокруг всей области содержимого — не подсказка, а шум: фокус и
+   так оказался там, куда просили перейти. */
+.main:focus { outline: none; }
+
 .site-footer { padding-block: 22px 30px; position: relative; z-index: 1; }
 .footer-row {
   display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
@@ -170,7 +209,7 @@ button { font: inherit; }
 .control {
   width: 100%; padding: 12px 14px; font: inherit; font-size: 14px;
   color: var(--ink); background: var(--parchment);
-  border: var(--bw-thin) solid transparent; border-radius: var(--r-md);
+  border: var(--bw-thin) solid var(--line-strong); border-radius: var(--r-md);
   box-shadow: var(--inset1);
   transition: box-shadow .15s ease, border-color .15s ease, background .15s ease;
 }

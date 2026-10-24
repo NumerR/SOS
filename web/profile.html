@@ -7,15 +7,17 @@
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body data-layout="profile" data-brand-sub="Профиль" data-footer-note="Account · sessions · password">
+    <a class="skip-link" href="#main">К основному содержимому</a>
     <header class="site-header"></header>
 
-    <main class="main">
+    <main class="main" id="main" tabindex="-1">
         <div class="container stack">
+            <h1 class="page-title">Профиль</h1>
             <p id="profileStatus" class="message hidden" role="status"></p>
 
             <section class="section">
                 <div class="section-head">
-                    <span class="section-label"><span class="section-index">01</span> Идентичность</span>
+                    <h2 class="section-label"><span class="section-index">01</span> Идентичность</h2>
                     <span class="section-rule"></span>
                     <span class="section-note">GET /api/auth/me</span>
                 </div>
@@ -58,7 +60,7 @@
 
             <section class="section">
                 <div class="section-head">
-                    <span class="section-label"><span class="section-index">02</span> Доступ и пароль</span>
+                    <h2 class="section-label"><span class="section-index">02</span> Доступ и пароль</h2>
                     <span class="section-rule"></span>
                     <span class="section-note">POST /api/auth/change-password · /api/auth/logout-all</span>
                 </div>
@@ -91,7 +93,7 @@
 
             <section class="section">
                 <div class="section-head">
-                    <span class="section-label"><span class="section-index">03</span> Группа и предпочтения</span>
+                    <h2 class="section-label"><span class="section-index">03</span> Группа и предпочтения</h2>
                     <span class="section-rule"></span>
                     <span class="section-note">полей в схеме пока нет</span>
                 </div>
