@@ -76,7 +76,17 @@
             wrapper: "actions",
             items: [
                 { href: "schedule", label: "Расписание", icon: "calendar" },
+                { href: "profile", label: "Профиль" },
                 { href: "admin", label: "Админ", icon: "shield", id: "adminLink", hidden: true },
+                { user: true },
+                { action: "logout" },
+            ],
+        },
+        profile: {
+            wrapper: "actions",
+            items: [
+                { href: "dashboard", label: "В кабинет", icon: "back" },
+                { href: "schedule", label: "Расписание", icon: "calendar" },
                 { user: true },
                 { action: "logout" },
             ],
@@ -85,6 +95,7 @@
             wrapper: "actions",
             items: [
                 { href: "dashboard", label: "В кабинет", icon: "back" },
+                { href: "profile", label: "Профиль" },
                 { action: "logout" },
             ],
         },

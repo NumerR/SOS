@@ -106,7 +106,10 @@ function page(htmlFile, scripts, { url, cookie, csrf }) {
     // DOMContentLoaded не диспатчим руками: jsdom сам стреляет им на следующем
     // тике после разбора (проверено), а ручной диспатч запускает обработчик
     // страницы дважды и ломает счётчик навигаций ниже.
-    const dash = page("dashboard.html", ["modals.js", "dashboard.js", "account.js"], {
+    // account.js из набора убран: панель доступа переехала на /profile, и на
+    // кабинете она больше не нужна (проверка истечения на /profile — в
+    // profile-page.cjs, офлайном).
+    const dash = page("dashboard.html", ["modals.js", "dashboard.js"], {
         url: "/dashboard",
         cookie: dead.cookie,
         csrf: dead.csrf,

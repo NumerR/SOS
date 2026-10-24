@@ -94,39 +94,6 @@
                     <p id="message" class="message hidden" role="status"></p>
                 </form>
             </section>
-
-            <section class="section">
-                <div class="section-head">
-                    <span class="section-label"><span class="section-index">04</span> Аккаунт и доступ</span>
-                    <span class="section-rule"></span>
-                    <span class="section-note">POST /api/auth/change-password · /api/auth/logout-all</span>
-                </div>
-
-                <form id="passwordForm" class="form" novalidate>
-                    <label class="field">
-                        <span class="field-label">Текущий пароль</span>
-                        <input class="control" type="password" name="current_password" required autocomplete="current-password">
-                    </label>
-
-                    <label class="field">
-                        <span class="field-label">Новый пароль</span>
-                        <input class="control" type="password" name="new_password" required minlength="8" maxlength="200" autocomplete="new-password">
-                        <span class="helper">Минимум 8 символов. После смены все остальные устройства разлогинятся, это останется только вы.</span>
-                    </label>
-
-                    <label class="field">
-                        <span class="field-label">Повторите новый пароль</span>
-                        <input class="control" type="password" name="repeat_password" required minlength="8" maxlength="200" autocomplete="new-password">
-                    </label>
-
-                    <div class="form-actions">
-                        <button type="submit" class="btn">Изменить пароль</button>
-                        <button id="logoutAllBtn" type="button" class="btn btn-secondary">Выйти везде</button>
-                    </div>
-
-                    <p id="passwordMessage" class="message hidden" role="status"></p>
-                </form>
-            </section>
         </div>
     </main>
 
@@ -153,6 +120,5 @@
     <script src="js/common.js"></script>
     <script src="js/modals.js"></script>
     <script src="js/dashboard.js"></script>
-    <script src="js/account.js"></script>
 </body>
 </html>

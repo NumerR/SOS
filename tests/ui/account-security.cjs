@@ -1,5 +1,5 @@
-// Проверка панели «Аккаунт и доступ» (dashboard.html + account.js) в jsdom
-// против живого сервера: смена пароля и «выйти везде».
+// Проверка страницы профиля (profile.html + account.js + profile.js) в jsdom
+// против живого сервера: блок идентичности, смена пароля и «выйти везде».
 //
 // Требования: сервер на :8080 и выполненный ../seed.sh (студент s_stud / password123).
 // Запуск: cd tests/ui && SOS_BASE_URL=http://localhost:8080 node account-security.cjs
@@ -76,7 +76,7 @@ async function restoreSeedPassword() {
         console.error("ВНИМАНИЕ: seed-ный пароль НЕ восстановлен (вход под временным — код "
             + lastLoginStatus + loginHint(lastLoginStatus) + ").");
         console.error("Пароль s_stud сейчас = " + TEMP_PASS + ". Вернуть seed-ный можно через UI");
-        console.error("панели «Аккаунт и доступ» или прямо в локальной базе:");
+        console.error("панели «Доступ и пароль» на /profile или прямо в локальной базе:");
         console.error('  sqlite3 data/app.db "update users set password_hash=(select password_hash');
         console.error("    from users where username='t_teacher') where username='s_stud';\"");
         return false;
@@ -111,8 +111,8 @@ async function restoreSeedPassword() {
     check("вторая сессия того же аккаунта создана", Boolean(second) && second.cookie !== first.cookie);
     if (!second) throw new Error("вторая сессия не создана (код " + lastLoginStatus + loginHint(lastLoginStatus) + ")");
 
-    const html = fs.readFileSync(path.join(REPO, "web/dashboard.html"), "utf8");
-    const dom = new JSDOM(html, { url: BASE + "/dashboard", runScripts: "outside-only", pretendToBeVisual: true });
+    const html = fs.readFileSync(path.join(REPO, "web/profile.html"), "utf8");
+    const dom = new JSDOM(html, { url: BASE + "/profile", runScripts: "outside-only", pretendToBeVisual: true });
     const { window } = dom;
     const doc = window.document;
 
@@ -127,9 +127,9 @@ async function restoreSeedPassword() {
     window.alert = (m) => { window.__alerts = (window.__alerts || []).concat(m); };
     doc.cookie = "csrf_token=" + first.csrf;
 
-    // Только common.js + account.js: dashboard.js тянет курсы и задания,
+    // Только profile.js + account.js: dashboard.js тянет курсы и задания,
     // это проверено в assignments-modal.cjs.
-    const bundle = ["config.js", "core/api-client.js", "core/format.js", "core/layout.js", "common.js", "account.js"]
+    const bundle = ["config.js", "core/api-client.js", "core/format.js", "core/layout.js", "common.js", "account.js", "profile.js"]
         .map((f) => fs.readFileSync(path.join(REPO, "web/js", f), "utf8"))
         .join("\n;\n");
     window.eval(bundle);
@@ -138,7 +138,30 @@ async function restoreSeedPassword() {
     const status = doc.getElementById("passwordMessage");
     const logoutAllBtn = doc.getElementById("logoutAllBtn");
 
-    check("панель аккаунта есть в разметке", Boolean(form) && Boolean(logoutAllBtn));
+    check("панель доступа есть в разметке профиля", Boolean(form) && Boolean(logoutAllBtn));
+
+    // --- Блок идентичности: данные приходят из GET /api/auth/me. ---
+    const nameCell = doc.getElementById("profileName");
+    const loginCell = doc.getElementById("profileUsername");
+    const emailCell = doc.getElementById("profileEmail");
+    const roleCell = doc.getElementById("profileRole");
+
+    // Ждём ровно тот запрос, который делает profile.js при загрузке; без этого
+    // «загрузка» ещё не сменилась бы значением.
+    for (let i = 0; i < 120 && loginCell.textContent.trim() === "Загрузка…"; i++) await wait(25);
+
+    check("профиль прочитан из /api/auth/me", loginCell.textContent.trim() === "s_stud", loginCell.textContent.trim());
+    check("имя и почта показаны", nameCell.textContent.trim().length > 0 && /@/.test(emailCell.textContent), [nameCell.textContent, emailCell.textContent].join(" · "));
+    check("роль подписана по-русски", /студент/i.test(roleCell.textContent), roleCell.textContent.trim());
+    check("надпись «Загрузка…» не осталась", !/Загрузка/.test(doc.getElementById("profileIdentity").textContent), doc.getElementById("profileIdentity").textContent.replace(/\s+/g, " ").trim());
+    check("шапка профиля отрисована общим компонентом", Boolean(doc.getElementById("userName")) && doc.querySelector("header .brand") !== null, Boolean(doc.getElementById("userName")) && doc.getElementById("userName").textContent);
+    check("имя в шапке совпадает с именем в профиле", doc.getElementById("userName").textContent === nameCell.textContent, [doc.getElementById("userName").textContent, nameCell.textContent].join(" / "));
+    check("ссылки навигации относительные", doc.querySelector('a[href="dashboard"]') !== null && doc.querySelector('a[href="schedule"]') !== null, JSON.stringify([...doc.querySelectorAll(".top-actions a")].map((a) => a.getAttribute("href"))));
+
+    // Ждём, пока фоновый запрос профиля завершится: иначе его ответ попал бы в
+    // счётчик между «сделали клиентскую проверку» и «запросов не было».
+    const profileRequests = requests;
+    check("чтение профиля — один запрос", profileRequests === 1, profileRequests + " запросов");
 
     function fill(name, value) {
         const input = form.querySelector(`[name=${JSON.stringify(name)}]`);

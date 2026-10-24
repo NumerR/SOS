@@ -50,6 +50,21 @@ func (h *Handlers) RegisterPage(w http.ResponseWriter, r *http.Request) {
 	serveWebFile(w, r, "register.html")
 }
 
+// ProfilePage отдаёт страницу профиля только вошедшим.
+//
+// Профиль — то же, что и кабинет по модели доступа: страница не содержит
+// чужих данных, а её содержимое добирается через GET /api/auth/me. Поэтому
+// отказ здесь — redirect на вход, а не 403 в JSON (docs/02 §3: HTML-страницы
+// идут мимо Registry).
+func (h *Handlers) ProfilePage(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.authenticatedUser(r); !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+
+	serveWebFile(w, r, "profile.html")
+}
+
 // DashboardPage отдаёт личный кабинет, если пользователь авторизован.
 func (h *Handlers) DashboardPage(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.authenticatedUser(r); !ok {

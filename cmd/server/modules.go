@@ -87,6 +87,7 @@ func newRouter(h *handlers.Handlers, db *sql.DB, modules []platform.Module) (htt
 	mux.HandleFunc("/login", h.LoginPage)
 	mux.HandleFunc("/register", h.RegisterPage)
 	mux.HandleFunc("/dashboard", h.DashboardPage)
+	mux.HandleFunc("/profile", h.ProfilePage)
 	mux.HandleFunc("/admin", h.AdminPage)
 	mux.HandleFunc("/schedule", h.SchedulePage)
 

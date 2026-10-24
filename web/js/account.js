@@ -1,5 +1,6 @@
-// Панель «Аккаунт и доступ»: смена пароля и «выйти везде».
-// Обработчики вешаются на форму и кнопки, inline-обработчиков в HTML нет.
+// Панель «Доступ и пароль»: смена пароля и «выйти везде».
+// Живёт на profile.html (раньше была секцией 04 в dashboard) — обработчики
+// вешаются на форму и кнопки, inline-обработчиков в HTML нет.
 (function () {
     const form = document.getElementById("passwordForm");
     const message = document.getElementById("passwordMessage");
