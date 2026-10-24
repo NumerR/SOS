@@ -1,0 +1,511 @@
+{
+ "group": {
+  "id": 494,
+  "name": "Б-ИСиТ-22",
+  "department_id": 1,
+  "education_plan_id": 15,
+  "flow": null,
+  "people_count": 33,
+  "start_date": null,
+  "end_date": null,
+  "hide_personal": 0,
+  "active": 1,
+  "self_registration": 0,
+  "registration_end_date": null,
+  "registration_ignore_limit": 0,
+  "name_public": "Б-ИСиТ-22"
+ },
+ "group_id": 494,
+ "start_date": "01.10.2026",
+ "end_date": "31.10.2026",
+ "lessonTimes": [
+  {
+   "id": 1,
+   "hour_from": 8,
+   "minute_from": 30,
+   "hour_to": 10,
+   "minute_to": 5,
+   "lesson_time_set_id": null,
+   "fullName": "08:30 - 10:05"
+  },
+  {
+   "id": 2,
+   "hour_from": 10,
+   "minute_from": 25,
+   "hour_to": 12,
+   "minute_to": 0,
+   "lesson_time_set_id": null,
+   "fullName": "10:25 - 12:00"
+  },
+  {
+   "id": 3,
+   "hour_from": 12,
+   "minute_from": 20,
+   "hour_to": 13,
+   "minute_to": 55,
+   "lesson_time_set_id": null,
+   "fullName": "12:20 - 13:55"
+  },
+  {
+   "id": 4,
+   "hour_from": 14,
+   "minute_from": 10,
+   "hour_to": 15,
+   "minute_to": 45,
+   "lesson_time_set_id": null,
+   "fullName": "14:10 - 15:45"
+  },
+  {
+   "id": 5,
+   "hour_from": 15,
+   "minute_from": 55,
+   "hour_to": 17,
+   "minute_to": 30,
+   "lesson_time_set_id": null,
+   "fullName": "15:55 - 17:30"
+  },
+  {
+   "id": 6,
+   "hour_from": 17,
+   "minute_from": 40,
+   "hour_to": 19,
+   "minute_to": 15,
+   "lesson_time_set_id": null,
+   "fullName": "17:40 - 19:15"
+  },
+  {
+   "id": 7,
+   "hour_from": 19,
+   "minute_from": 25,
+   "hour_to": 21,
+   "minute_to": 0,
+   "lesson_time_set_id": null,
+   "fullName": "19:25 - 21:00"
+  }
+ ],
+ "lessons": [
+  {
+   "id": 178760,
+   "date": "02.10.2026",
+   "lesson_time_id": 5,
+   "subgroup_id": null,
+   "groupName": "Б-ИСиТ-21, Б-ИСиТ-22",
+   "discipline": "Базы данных",
+   "classroom": "к. 3/314",
+   "class_type_name": "Лек",
+   "staffNames": [
+    "Романов А.В."
+   ],
+   "superflowGroupsIds": [
+    494
+   ],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0,
+   "journal_lesson_id": 127233,
+   "topic_name": "",
+   "fixed": 0
+  },
+  {
+   "id": 178795,
+   "date": "03.10.2026",
+   "lesson_time_id": 2,
+   "subgroup_id": null,
+   "groupName": "Б-ИСиТ-21, Б-ИСиТ-22",
+   "discipline": "Современные языки программирования",
+   "classroom": "к. 3/314",
+   "class_type_name": "Лек",
+   "staffNames": [
+    "Чернявский И.В."
+   ],
+   "superflowGroupsIds": [
+    494
+   ],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  },
+  {
+   "id": 178895,
+   "date": "03.10.2026",
+   "lesson_time_id": 1,
+   "subgroup_id": null,
+   "groupName": "Б-ИСиТ-21, Б-ИСиТ-22",
+   "discipline": "Инфокоммуникационные системы и сети",
+   "classroom": "к. 1/704",
+   "class_type_name": "Лек",
+   "staffNames": [
+    "Раевский В.А."
+   ],
+   "superflowGroupsIds": [
+    494
+   ],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  },
+  {
+   "id": 179255,
+   "date": "02.10.2026",
+   "lesson_time_id": 4,
+   "subgroup_id": null,
+   "groupName": "Б-ИСиТ-22",
+   "discipline": "История России",
+   "classroom": "к. 2/102",
+   "class_type_name": "Пр",
+   "staffNames": [
+    "Власов А.Е."
+   ],
+   "superflowGroupsIds": [],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  },
+  {
+   "id": 201457,
+   "date": "02.10.2026",
+   "lesson_time_id": 6,
+   "subgroup_id": 633,
+   "groupName": "Б-ИСиТ-22/2",
+   "discipline": "Технологии обработки информации",
+   "classroom": "к. 1/705",
+   "class_type_name": "Лб",
+   "staffNames": [
+    "Столярова Н.Б."
+   ],
+   "superflowGroupsIds": [],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  },
+  {
+   "id": 203227,
+   "date": "02.10.2026",
+   "lesson_time_id": 3,
+   "subgroup_id": null,
+   "groupName": "Б-Арх-22, Б-Арх-21, Б-ИСиТ-21, Б-ИСиТ-22, Б-ПФМ-21, Б-Тур-21, Б-Эк-21",
+   "discipline": "Элективные курсы по физической культуре и спорту",
+   "classroom": "<i class=\"fa fa-times\"></i> без ауд.",
+   "class_type_name": "Пр",
+   "staffNames": [
+    "Бажина И.А.",
+    "Минаев  В.В.",
+    "Широкова Е.А.",
+    "Белевский В.Н.",
+    "Рожнов А.А.",
+    "Гришина Г.В.",
+    "Михеева Е.В."
+   ],
+   "superflowGroupsIds": [
+    498,
+    493,
+    494,
+    669,
+    490,
+    508
+   ],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  },
+  {
+   "id": 212877,
+   "date": "05.10.2026",
+   "lesson_time_id": 2,
+   "subgroup_id": null,
+   "groupName": "Б-Арх-21, Б-Арх-22, Б-ИСиТ-21, Б-ИСиТ-22",
+   "discipline": "История России",
+   "classroom": "к. 2/320",
+   "class_type_name": "Лек",
+   "staffNames": [
+    "Панасюк В.В."
+   ],
+   "superflowGroupsIds": [
+    493,
+    509,
+    494
+   ],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  },
+  {
+   "id": 213972,
+   "date": "06.10.2026",
+   "lesson_time_id": 6,
+   "subgroup_id": 632,
+   "groupName": "Б-ИСиТ-22/1",
+   "discipline": "Современные языки программирования",
+   "classroom": "к. 3/306",
+   "class_type_name": "Лб",
+   "staffNames": [
+    "Чернявский И.В."
+   ],
+   "superflowGroupsIds": [],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  },
+  {
+   "id": 213973,
+   "date": "06.10.2026",
+   "lesson_time_id": 7,
+   "subgroup_id": 633,
+   "groupName": "Б-ИСиТ-22/2",
+   "discipline": "Современные языки программирования",
+   "classroom": "к. 3/306",
+   "class_type_name": "Лб",
+   "staffNames": [
+    "Чернявский И.В."
+   ],
+   "superflowGroupsIds": [],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  },
+  {
+   "id": 213974,
+   "date": "06.10.2026",
+   "lesson_time_id": 6,
+   "subgroup_id": 633,
+   "groupName": "Б-ИСиТ-22/2",
+   "discipline": "Алгоритмы и структуры данных",
+   "classroom": "к. 3/401",
+   "class_type_name": "Лб",
+   "staffNames": [
+    "Виноградская М.Ю."
+   ],
+   "superflowGroupsIds": [],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  },
+  {
+   "id": 213975,
+   "date": "06.10.2026",
+   "lesson_time_id": 7,
+   "subgroup_id": 632,
+   "groupName": "Б-ИСиТ-22/1",
+   "discipline": "Алгоритмы и структуры данных",
+   "classroom": "к. 3/401",
+   "class_type_name": "Лб",
+   "staffNames": [
+    "Виноградская М.Ю."
+   ],
+   "superflowGroupsIds": [],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  },
+  {
+   "id": 213976,
+   "date": "05.10.2026",
+   "lesson_time_id": 4,
+   "subgroup_id": 633,
+   "groupName": "Б-ИСиТ-22/2",
+   "discipline": "Технологии обработки информации",
+   "classroom": "к. 3/111",
+   "class_type_name": "Лб",
+   "staffNames": [
+    "Столярова Н.Б."
+   ],
+   "superflowGroupsIds": [],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  },
+  {
+   "id": 213979,
+   "date": "05.10.2026",
+   "lesson_time_id": 1,
+   "subgroup_id": null,
+   "groupName": "Б-ИСиТ-22",
+   "discipline": "История России",
+   "classroom": "к. 3/412",
+   "class_type_name": "Пр",
+   "staffNames": [
+    "Власов А.Е."
+   ],
+   "superflowGroupsIds": [],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  },
+  {
+   "id": 213980,
+   "date": "08.10.2026",
+   "lesson_time_id": 6,
+   "subgroup_id": 632,
+   "groupName": "Б-ИСиТ-22/1",
+   "discipline": "Базы данных",
+   "classroom": "к. 3/306",
+   "class_type_name": "Лб",
+   "staffNames": [
+    "Кривченков  Г.М."
+   ],
+   "superflowGroupsIds": [],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  },
+  {
+   "id": 213981,
+   "date": "08.10.2026",
+   "lesson_time_id": 6,
+   "subgroup_id": 633,
+   "groupName": "Б-ИСиТ-22/2",
+   "discipline": "Инфокоммуникационные системы и сети",
+   "classroom": "к. 3/111",
+   "class_type_name": "Лб",
+   "staffNames": [
+    "Виноградская М.Ю."
+   ],
+   "superflowGroupsIds": [],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  },
+  {
+   "id": 213983,
+   "date": "07.10.2026",
+   "lesson_time_id": 2,
+   "subgroup_id": null,
+   "groupName": "Б-ИСиТ-22",
+   "discipline": "Ораторское искусство",
+   "classroom": "к. 2/111",
+   "class_type_name": "Инд",
+   "staffNames": [
+    "Садовникова Ю.М."
+   ],
+   "superflowGroupsIds": [],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  },
+  {
+   "id": 213987,
+   "date": "05.10.2026",
+   "lesson_time_id": 3,
+   "subgroup_id": 632,
+   "groupName": "Б-ИСиТ-22/1",
+   "discipline": "Основы информационной безопасности",
+   "classroom": "к. 3/111",
+   "class_type_name": "Лб",
+   "staffNames": [
+    "Кряжева Е.В."
+   ],
+   "superflowGroupsIds": [],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  },
+  {
+   "id": 213988,
+   "date": "05.10.2026",
+   "lesson_time_id": 3,
+   "subgroup_id": 633,
+   "groupName": "Б-ИСиТ-22/2",
+   "discipline": "Основы информационной безопасности",
+   "classroom": "к. 1/711",
+   "class_type_name": "Лб",
+   "staffNames": [
+    "Виноградская М.Ю."
+   ],
+   "superflowGroupsIds": [],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  },
+  {
+   "id": 213989,
+   "date": "08.10.2026",
+   "lesson_time_id": 5,
+   "subgroup_id": 632,
+   "groupName": "Б-ИСиТ-22/1",
+   "discipline": "Технологии обработки информации",
+   "classroom": "к. 3/113",
+   "class_type_name": "Лб",
+   "staffNames": [
+    "Столярова Н.Б."
+   ],
+   "superflowGroupsIds": [],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  },
+  {
+   "id": 213990,
+   "date": "08.10.2026",
+   "lesson_time_id": 7,
+   "subgroup_id": 633,
+   "groupName": "Б-ИСиТ-22/2",
+   "discipline": "Базы данных",
+   "classroom": "к. 3/306",
+   "class_type_name": "Лб",
+   "staffNames": [
+    "Кривченков  Г.М."
+   ],
+   "superflowGroupsIds": [],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  },
+  {
+   "id": 213991,
+   "date": "08.10.2026",
+   "lesson_time_id": 7,
+   "subgroup_id": 632,
+   "groupName": "Б-ИСиТ-22/1",
+   "discipline": "Инфокоммуникационные системы и сети",
+   "classroom": "к. 3/401",
+   "class_type_name": "Лб",
+   "staffNames": [
+    "Соколов  Н.В."
+   ],
+   "superflowGroupsIds": [],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  },
+  {
+   "id": 238997,
+   "date": "07.10.2026",
+   "lesson_time_id": 3,
+   "subgroup_id": null,
+   "groupName": "Б-ИСиТ-22",
+   "discipline": "Основы информационной безопасности",
+   "classroom": "к. 1/710, к. 1/711",
+   "class_type_name": "Пр",
+   "staffNames": [
+    "Виноградская М.Ю."
+   ],
+   "superflowGroupsIds": [],
+   "superflowSubgroupsIds": [],
+   "is_empty": 0,
+   "self_work": 0
+  }
+ ],
+ "groupNames": {
+  "508": "Б-Арх-21",
+  "509": "Б-Арх-22",
+  "493": "Б-ИСиТ-21",
+  "494": "Б-ИСиТ-22",
+  "498": "Б-ПФМ-21",
+  "669": "Б-Тур-21",
+  "490": "Б-Эк-21"
+ },
+ "subgroupNames": {
+  "632": "Б-ИСиТ-22/1",
+  "633": "Б-ИСиТ-22/2"
+ },
+ "groupsList": {
+  "Группы": {
+   "group-494": "Б-ИСиТ-22"
+  },
+  "Подгруппы": {
+   "subgroup-632": "Б-ИСиТ-22/1",
+   "subgroup-633": "Б-ИСиТ-22/2"
+  }
+ },
+ "source_note": "Срез живого ответа АПЭКС-ВУЗ 2026-10-24: группа 494 (Б-ИСиТ-22), 02.10.2026-08.10.2026. Поля оставлены только те, что читает парсер, плюс три неизвестных в первой паре. Токена нет."
+}

@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/NumerR/SOS/internal/apeks"
 	"github.com/NumerR/SOS/internal/database"
 	"github.com/NumerR/SOS/internal/handlers"
 	"github.com/NumerR/SOS/internal/store"
@@ -105,6 +106,7 @@ func main() {
 	resourceStore := store.NewResourceStore(db)
 	eventStore := store.NewEventStore(db)
 	auditStore := store.NewAuditStore(db)
+	scheduleSourceStore := store.NewScheduleSourceStore(db)
 
 	// Сборщик протухших сессий. Первый проход — сразу, чтобы после рестарта
 	// база не осталась с мусором; дальше раз в sessionCleanupInterval.
@@ -119,17 +121,19 @@ func main() {
 	seedAdmin(userStore)
 
 	h := handlers.New(handlers.Deps{
-		Users:       userStore,
-		Sessions:    sessionStore,
-		Courses:     courseStore,
-		Enrollments: enrollmentStore,
-		Assignments: assignmentStore,
-		Submissions: submissionStore,
-		Schedule:    scheduleStore,
-		Resources:   resourceStore,
-		Events:      eventStore,
-		Audit:       auditStore,
-		Limits:      handlers.NewLimiters(),
+		Users:          userStore,
+		Sessions:       sessionStore,
+		Courses:        courseStore,
+		Enrollments:    enrollmentStore,
+		Assignments:    assignmentStore,
+		Submissions:    submissionStore,
+		Schedule:       scheduleStore,
+		Resources:      resourceStore,
+		Events:         eventStore,
+		Audit:          auditStore,
+		ScheduleSource: scheduleSourceStore,
+		Apeks:          newScheduleSourceClient(),
+		Limits:         handlers.NewLimiters(),
 	})
 
 	// Модули платформы: список в cmd/server/modules.go.
@@ -295,6 +299,43 @@ func newLogger() *slog.Logger {
 	}
 
 	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+}
+
+// newScheduleSourceClient собирает клиента АПЭКС-ВУЗ из окружения.
+//
+// nil — штатный ответ, а не аварийный: без токена платформа продолжает
+// работать (лента, курсы, задания), а страница расписания показывает «данные
+// ещё не импортированы» вместо выдуманного расписания. Ошибку конфигурации
+// (например, http-адрес источника) логируем и тоже продолжаем — ронять сервис
+// из-за недоступного чужого сайта неправильно.
+//
+// Значение APEKS_TOKEN не печатается ни в одном из сообщений.
+func newScheduleSourceClient() *apeks.Client {
+	token := strings.TrimSpace(os.Getenv("APEKS_TOKEN"))
+	if token == "" {
+		slog.Info("внешнее расписание отключено: APEKS_TOKEN не задан",
+			slog.String("hint", "задайте токен источника — тогда появится импорт пар и каталог групп"),
+		)
+		return nil
+	}
+
+	client, err := apeks.New(apeks.Config{
+		Token:   token,
+		BaseURL: os.Getenv("APEKS_API_URL"),
+	})
+	if err != nil {
+		slog.Error("источник расписания не настроен",
+			slog.String("hint", "проверьте APEKS_TOKEN и APEKS_API_URL"),
+			slog.Any("error", err),
+		)
+		return nil
+	}
+
+	slog.Info("источник расписания подключён",
+		slog.String("source", apeks.Source),
+		slog.String("endpoint", client.BaseURL()),
+	)
+	return client
 }
 
 func envOr(name, fallback string) string {

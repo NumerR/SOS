@@ -86,7 +86,7 @@ func (h *Handlers) RequireCSRF(next http.Handler) http.Handler {
 }
 
 // clearCSRFCookie снимает csrf-cookie — вместе с отзывом сессий она больше
-// не должна留在 браузере.
+// не должна оставаться в браузере.
 func clearCSRFCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     csrfCookieName,

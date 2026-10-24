@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/NumerR/SOS/internal/apeks"
 	"github.com/NumerR/SOS/internal/authz"
 	"github.com/NumerR/SOS/internal/models"
 	"github.com/NumerR/SOS/internal/store"
@@ -59,6 +60,21 @@ type Deps struct {
 	// а состояние, на которое опираются unit-тесты пакетов без журнала.
 	Audit  *store.AuditStore
 	Limits Limiters
+
+	// ScheduleSource — таблицы внешнего расписания (T4.1): каталог групп и
+	// импортированные пары.
+	ScheduleSource *store.ScheduleSourceStore
+
+	// Apeks — клиент источника расписания. nil означает «источник не
+	// настроен» (APEKS_TOKEN пуст), и это рабочее состояние, а не ошибка
+	// сборки: чтение уже импортированных данных при nil работает, а запросы
+	// управления отвечают 503 с внятной подсказкой.
+	//
+	// Конкретный тип, а не интерфейс: единственному потребителю не нужен второй
+	// реализатор, а тесты проверяют маршрут целиком через httptest-сервер
+	// источника — с заглушкой вместо клиента проверка «мы реально умеем
+	// разбирать ответ вуза» исчезла бы.
+	Apeks *apeks.Client
 }
 
 // Handlers — HTTP-обработчики. Поля Deps доступны напрямую: h.Users, h.Sessions…

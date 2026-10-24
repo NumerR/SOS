@@ -12,37 +12,108 @@
     <main class="main">
         <div class="container stack">
 
-            <section class="section">
+            <section id="timetableSection" class="section">
                 <div class="section-head">
-                    <span class="section-label"><span class="section-index">01</span> Официальное расписание ТКСУ</span>
+                    <span class="section-label"><span class="section-index">01</span> Официальное расписание пар</span>
                     <span class="section-rule"></span>
+                    <span class="section-note" id="sourceNameNote">источник: АПЭКС-ВУЗ</span>
                 </div>
 
-                <div class="panel sched-embed-card">
-                    <span class="sched-embed-icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
-                    </span>
-                    <div class="sched-embed-body">
-                        <h3 class="sched-embed-title">Расписание обучающихся</h3>
-                        <p class="sched-embed-note">
-                            Сайт вуза запрещает встраивание на чужие страницы (заголовок безопасности
-                            <code>X-Frame-Options</code>), поэтому показать его прямо здесь нельзя —
-                            это ограничение tksu.ru, а не ошибка платформы. Открывайте в новой вкладке.
-                        </p>
-                        <div class="form-actions">
-                            <a class="btn" target="_blank" rel="noopener noreferrer"
-                               href="https://tksu.ru/bitrix/js/api-apeks-vuz/rasp-stud/rasp-stud.html">
-                                Открыть официальное расписание
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6M10 14 21 3"/></svg>
-                            </a>
+                <div class="panel">
+                    <div class="sched-controls">
+                        <label class="field sched-group-field">
+                            <span class="field-label">Группа</span>
+                            <input class="control" type="search" id="groupInput" list="groupOptions"
+                                   maxlength="200" autocomplete="off" placeholder="Например: Б-ИСиТ-22">
+                            <datalist id="groupOptions"></datalist>
+                            <span class="helper" id="groupHelper">Каталог групп загружается…</span>
+                        </label>
+
+                        <div class="sched-month">
+                            <button id="prevMonth" class="btn btn-icon" type="button" title="Предыдущий месяц" aria-label="Предыдущий месяц">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+                            </button>
+                            <span class="sched-month-label" id="monthLabel">—</span>
+                            <button id="nextMonth" class="btn btn-icon" type="button" title="Следующий месяц" aria-label="Следующий месяц">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+                            </button>
                         </div>
+
+                        <span class="spacer"></span>
+
+                        <button id="currentMonth" class="btn btn-secondary" type="button">Текущий месяц</button>
+                        <button id="refreshTimetable" class="btn btn-icon" type="button" title="Обновить" aria-label="Обновить расписание">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+                        </button>
+                    </div>
+
+                    <div id="timetable" class="sched-days">
+                        <div class="empty-state plain">
+                            <span class="spinner" aria-hidden="true"></span>
+                            <span class="empty-hint">Загрузка расписания…</span>
+                        </div>
+                    </div>
+
+                    <p class="sched-updated" id="updatedNote"></p>
+
+                    <div class="sched-source-line">
+                        <span class="sched-source-text">
+                            Это копия, импортированная из <span id="sourceName">АПЭКС-ВУЗ</span>. Сайт вуза
+                            запрещает встраивание на чужие страницы (заголовок безопасности
+                            <code>X-Frame-Options</code>), поэтому показать оригинал здесь нельзя — открывайте
+                            его по ссылке и сверяйтесь по нему.
+                        </span>
+                        <a class="btn btn-outline" id="sourceLink" target="_blank" rel="noopener noreferrer"
+                           href="https://tksu.ru/bitrix/js/api-apeks-vuz/rasp-stud/rasp-stud.html">
+                            Первоисточник
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6M10 14 21 3"/></svg>
+                        </a>
                     </div>
                 </div>
             </section>
 
+            <section id="sourceManageSection" class="panel hidden">
+                <div class="section-head">
+                    <span class="section-label"><span class="section-index">02</span> Источник расписания</span>
+                    <span class="section-rule"></span>
+                    <span class="section-note">право schedule.source.manage</span>
+                </div>
+
+                <div class="source-stats">
+                    <span class="stat"><span class="stat-label">групп в каталоге</span><strong class="stat-value" id="statGroups">—</strong></span>
+                    <span class="stat"><span class="stat-label">пар в базе</span><strong class="stat-value" id="statLessons">—</strong></span>
+                    <span class="stat"><span class="stat-label">групп с расписанием</span><strong class="stat-value" id="statImportedGroups">—</strong></span>
+                </div>
+
+                <p class="card-text" id="sourceHint">Читаем состояние источника…</p>
+
+                <div class="source-actions">
+                    <button id="syncGroupsBtn" class="btn btn-secondary" type="button">
+                        Синхронизировать группы
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+                    </button>
+
+                    <label class="field source-count">
+                        <span class="field-label">Месяцев подряд</span>
+                        <select class="control control-small" id="importCount">
+                            <option value="1">1 — только текущий</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                        </select>
+                    </label>
+
+                    <button id="importMonthBtn" class="btn" type="button">
+                        Импортировать месяц
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+                    </button>
+                </div>
+
+                <p id="sourceMsg" class="message hidden" role="status"></p>
+            </section>
+
             <section id="feedSection" class="section hidden">
                 <div class="section-head">
-                    <span class="section-label"><span class="section-index">02</span> Моя лента · дедлайны и события</span>
+                    <span class="section-label"><span class="section-index">03</span> Моя лента · дедлайны и события</span>
                     <span class="section-rule"></span>
                     <button id="refreshBtn" class="btn btn-icon" title="Обновить" aria-label="Обновить">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
@@ -74,7 +145,7 @@
 
             <section id="resourcesSection" class="section hidden">
                 <div class="section-head">
-                    <span class="section-label"><span class="section-index">03</span> Полезные ресурсы</span>
+                    <span class="section-label"><span class="section-index">04</span> Полезные ресурсы</span>
                     <span class="section-rule"></span>
                     <button id="refreshResources" class="btn btn-icon" title="Обновить" aria-label="Обновить">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
@@ -131,7 +202,7 @@
 
             <section id="eventsManageSection" class="panel hidden">
                 <div class="section-head">
-                    <span class="section-label"><span class="section-index">04</span> Добавить событие</span>
+                    <span class="section-label"><span class="section-index">05</span> Добавить событие</span>
                     <span class="section-rule"></span>
                     <span class="section-note">POST /api/events</span>
                 </div>
@@ -166,7 +237,7 @@
 
             <div id="guestNotice" class="alert hidden" role="note">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-                <span>Войдите, чтобы видеть персональную ленту дедлайнов и событий и полезные ресурсы по вашим курсам.</span>
+                <span>Расписание групп смотрите без входа — оно публичное. Лента ваших дедлайнов, ресурсы курсов и добавление событий откроются после входа.</span>
             </div>
 
         </div>

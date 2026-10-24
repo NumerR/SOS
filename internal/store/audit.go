@@ -86,6 +86,11 @@ const (
 	AuditRegister       AuditAction = "auth.register"        // саморегистрация
 	AuditRoleChange     AuditAction = "admin.role_change"    // админ назначил роль
 	AuditGrade          AuditAction = "submission.grade"     // выставлена оценка
+	// Действия источника расписания (T4.1): оба запускаются только админом и
+	// оба обращаются к чужому сайту, поэтому журнал обязан показывать кто,
+	// когда и по какой группе это делал.
+	AuditScheduleGroupsSync AuditAction = "schedule.groups_sync" // каталог групп обновлён из АПЭКС
+	AuditScheduleImport     AuditAction = "schedule.import"      // месяц расписания импортирован
 )
 
 // auditActions — все известные действия. Нужно фильтру чтения: опечатка в
@@ -98,6 +103,8 @@ var auditActions = []AuditAction{
 	AuditRegister,
 	AuditRoleChange,
 	AuditGrade,
+	AuditScheduleGroupsSync,
+	AuditScheduleImport,
 }
 
 // ValidAuditAction — объявлено ли такое действие в системе.
