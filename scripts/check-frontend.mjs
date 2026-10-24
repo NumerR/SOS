@@ -20,7 +20,11 @@
 //      фокусируемый id, `scope` у каждого `<th>`;
 //   6. контраст текстовых пар токенов — пороги WCAG 2.1 (4.5:1 для текста,
 //      3:1 для границы поля). Проверка считает отношения по формуле sRGB, а не
-//      сверяет с журналом: иначе правка цвета в :root прошла бы незаметно;
+//      сверяет с журналом: иначе правка цвета в :root прошла бы незаметно.
+//      Дополнительно считается покрытие (остаток ADR-0016): каждая пара
+//      «текст + подложка», которую задаёт правило style.css или инлайновый
+//      style="" в HTML, обязана быть в списке измеренных или в именованном
+//      исключении с причиной (ADR-0019);
 //   7. общий submit-механизм форм создания: определение GS.bindCreateForm одно,
 //      страницы его вызывают, и копий этого обработчика в страничных скриптах
 //      не появилось (класс багов T0.1);
@@ -266,20 +270,42 @@ for (const m of css.matchAll(/(--[a-z-]+):\s*(#[0-9a-fA-F]{6})\s*;/g)) {
 
 // Пары, где цвет действительно несёт текст (или границу контрола). Новый член
 // списка добавляется вместе с комментарием в CSS, объясняющим выбор значения.
+// Ниже есть проверка покрытия: пара, которую задаёт правило style.css, обязана
+// оказаться здесь или в CONTRAST_EXEMPT — список нельзя «забыть дополнить».
 const CONTRAST_PAIRS = [
   ["--muted", "--parchment", 4.5, "подсказки, меты карточек, «Обновлено»"],
   ["--muted", "--surface", 4.5, "то же внутри панелей"],
   ["--muted", "--parchment-deep", 4.5, "бейдж «без оценки»"],
-  ["--ink-soft", "--parchment", 4.5, "подписи секций"],
   ["--ink-soft", "--parchment-deep", 4.5, "chip-muted"],
+  ["--ink-soft", "--parchment", 4.5, "подписи секций"],
+  ["--ink-soft", "--surface", 3.0, "пиктограмма `.btn-icon` (1.4.11 — как граница компонента)"],
   ["--ink", "--parchment", 4.5, "основной текст"],
+  ["--ink", "--surface", 4.5, "текст на панелях и светлых кнопках `.btn-secondary`"],
   ["--teal", "--parchment", 4.5, "ссылки и номер секции"],
+  ["--teal", "--surface", 4.5, "ссылка на панели"],
+  ["--teal", "--teal-tint", 4.5, "`.section-index` (10px) и `.btn-icon:hover`"],
+  ["--teal-ink", "--teal-tint", 4.5, "аватары, `.card-icon`, `.lesson-num`, статус «сдано», `.btn-outline:hover`"],
+  ["--teal-ink", "--parchment-deep", 4.5, "моноширинный `code`"],
+  ["--teal-ink", "--surface", 4.5, "текст `.btn-outline`"],
   ["--ok", "--ok-tint", 4.5, "текст успеха"],
   ["--danger", "--danger-tint", 4.5, "текст отказа"],
+  ["--danger", "--parchment", 4.5, "красный текст на фоне страницы (`.modal-close:hover` — на tint)"],
   ["#f5f0e6", "--teal", 4.5, "подпись синей кнопки"],
   ["#f5f0e6", "--danger", 4.5, "подпись кнопки удаления"],
+  ["#f5f0e6", "--teal-hover", 4.5, "подпись синей кнопки в `:hover`"],
+  ["#f5f0e6", "--teal-press", 4.5, "подпись синей кнопки в `:active`"],
+  ["#f4efe4", "--teal", 4.5, "логотип в шапке и skip-link в фокусе"],
+  ["#f3eee3", "--teal", 4.5, "подпись чипа `.chip`"],
+  ["#f1ece1", "--teal", 4.5, "текст баннера `.alert`"],
   ["--line-strong", "--parchment", 3.0, "граница поля ввода"],
   ["--line-strong", "--surface", 3.0, "граница поля ввода на панели"],
+];
+
+// Пары, которые сознательно не держат порог. Причина обязана быть проверяемой:
+// WCAG освобождает неактивные компоненты (1.4.3), а не «не понравилось значение».
+const CONTRAST_EXEMPT = [
+  ["#b3aa97", "--parchment-deep", "текст отключённой кнопки: 1,58:1, но `disabled` в этом проекте — " +
+    "только состояние отправки, где `.btn.is-loading { color: transparent }` и спиннер вместо подписи"],
 ];
 
 const contrastNotes = [];
@@ -307,6 +333,102 @@ for (const [fg, bg, min, why] of CONTRAST_PAIRS) {
     contrastNotes.push(`контраст ${fg} на ${bg} = ${value.toFixed(2)}:1 (порог ${min}) — ${why}`);
   }
 }
+
+// Покрытие списка пар самим CSS. Пока список пополняют «по мере надобности»,
+// новая подложка появляется в правиле, никто не считает её с текстом, и проверка
+// остаётся зелёной — тот же молчаливый дрейф, что с копиями обработчиков.
+// Здесь три замыкающих правила:
+//   а) правило, задающее в одном блоке и текст, и подложку (в том числе через
+//      --btn-fg/--btn-bg), обязано попасть в CONTRAST_PAIRS или CONTRAST_EXEMPT;
+//   б) цвет подложки в состоянии (:hover, :active, :focus, [disabled]) обязан
+//      встречаться в измеренных парах — иначе состояние никто не считал;
+//   в) то же требование к парам, собранным инлайновым style="" в HTML.
+const INDIRECT = new Set(["--btn-fg", "--btn-bg"]);
+function normalizeColor(raw) {
+  const value = raw.trim().split(/\s+/)[0];
+  const via = /^var\((--[a-zA-Z-]+)\)$/.exec(value);
+  // var(--btn-fg) — это ссылка на вариант кнопки, а не цвет: конкретное значение
+  // стоит в том же или в родственном блоке, и мы считаем пару именно по нему.
+  if (via) return INDIRECT.has(via[1].toLowerCase()) ? null : via[1].toLowerCase();
+  if (/^#[0-9a-fA-F]{6}$/.test(value)) return value.toLowerCase();
+  return null; // transparent, rgba(), inherit, градиенты — не пара «текст → подложка»
+}
+
+function pairOf(chunk) {
+  const grab = (names) => {
+    const m = new RegExp(`(?:^|[;\\s])(?:${names})\\s*:\\s*([^;]+)`).exec(chunk);
+    return m ? normalizeColor(m[1]) : null;
+  };
+  const fg = grab("color|--btn-fg");
+  const bg = grab("background|background-color|--btn-bg");
+  return fg && bg ? [fg, bg] : null;
+}
+
+const measuredPairs = new Set();
+const measuredBackgrounds = new Set();
+for (const [fg, bg] of [...CONTRAST_PAIRS, ...CONTRAST_EXEMPT]) {
+  measuredPairs.add(`${fg.toLowerCase()}|${bg.toLowerCase()}`);
+  measuredBackgrounds.add(bg.toLowerCase());
+}
+
+const usedPairs = new Map();
+let inlinePairs = 0;
+
+function requirePair(fg, bg, where, label) {
+  const key = `${fg}|${bg}`;
+  if (!usedPairs.has(key)) usedPairs.set(key, label);
+  if (!measuredPairs.has(key)) {
+    fail(where, `пара ${fg} на ${bg} задана правилом «${label}», но её нет в CONTRAST_PAIRS — ` +
+      "посчитай контраст и добавь пару (или исключение в CONTRAST_EXEMPT с причиной)");
+  }
+}
+
+const bareCss = css.replace(/\/\*[\s\S]*?\*\//g, "");
+for (const block of bareCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+  const selector = block[1].trim().replace(/\s+/g, " ");
+  if (selector.startsWith(":root") || selector.startsWith("@")) continue;
+  const pair = pairOf(block[2]);
+  if (pair) requirePair(pair[0], pair[1], "css/style.css", selector);
+  const bg = pair ? pair[1] : (() => {
+    const m = /(?:^|[;\s])(?:background|background-color)\s*:\s*([^;]+)/.exec(block[2]);
+    return m ? normalizeColor(m[1]) : null;
+  })();
+  if (bg && /:hover|:active|:focus|\[disabled\]/.test(selector) && !measuredBackgrounds.has(bg)) {
+    fail("css/style.css", `состояние «${selector}» красит подложку ${bg}, которой нет ни в одной измеренной паре`);
+  }
+}
+
+// Постраничные inline-стили: три исключения в HTML (transparent-подложки у
+// .empty-state) ничего не красят, но правило то же — пара из style="" обязана быть
+// измерена. Иначе «one-off блок на одной странице» остаётся зоной без проверки.
+for (const file of htmlFiles(WEB)) {
+  const html = readFileSync(join(WEB, file), "utf8");
+  for (const attr of html.matchAll(/style="([^"]*)"/g)) {
+    const pair = pairOf(attr[1]);
+    if (!pair) continue;
+    inlinePairs++;
+    requirePair(pair[0], pair[1], file, `style="${attr[1].trim()}"`);
+  }
+}
+
+// Стражи вырождения (тот же класс риска, что в группах 7 и 8): пустой список —
+// это не «зелёный CI», а пропавшая проверка.
+if (CONTRAST_PAIRS.length === 0) {
+  fail("css/style.css", "список контрастных пар пуст — проверке контраста нечего считать");
+}
+if (usedPairs.size === 0) {
+  fail("css/style.css", "в style.css не найдено ни одного правила с парой «текст + подложка» — проверка покрытия стала пустой");
+}
+// Исключение без пары в CSS — устаревшая договорённость, а не освобождённый цвет.
+for (const [fg, bg] of CONTRAST_EXEMPT) {
+  if (!usedPairs.has(`${fg.toLowerCase()}|${bg.toLowerCase()}`)) {
+    fail("css/style.css", `исключение ${fg} на ${bg} больше не встречается в правилах style.css — убери его из CONTRAST_EXEMPT`);
+  }
+}
+
+contrastNotes.push(`покрытие: уникальных пар «текст + подложка» в CSS и inline-стилях ${usedPairs.size}, ` +
+  `из них инлайновых в HTML ${inlinePairs}, измеренных пар ${CONTRAST_PAIRS.length}, ` +
+  `исключений ${CONTRAST_EXEMPT.length} — все покрыты`);
 
 // ---------- 7. общий submit-механизм форм создания ----------
 //
@@ -475,6 +597,6 @@ if (problems.length > 0) {
   process.exit(1);
 }
 
-console.log(`check-frontend: ок — страниц ${htmlFiles(WEB).length}, проверены подключения скриптов, стилей, id, инлайновые обработчики, структура заголовков, skip-link, scope у таблиц, контраст токенов, общность submit-механизма и ссылки aria-describedby`);
+console.log(`check-frontend: ок — страниц ${htmlFiles(WEB).length}, проверены подключения скриптов, стилей, id, инлайновые обработчики, структура заголовков, skip-link, scope у таблиц, контраст токенов и его покрытие, общность submit-механизма и ссылки aria-describedby`);
 for (const n of notes) console.log("  ok  " + n);
 for (const n of contrastNotes) console.log("  ok  " + n);

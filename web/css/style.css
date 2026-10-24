@@ -24,6 +24,10 @@
      surface. Тон тот же, что у прежнего --muted. */
   --line-strong:    #877f6f;
 
+  /* Состояния кнопки: подпись #f5f0e6 на этих подложках посчитана и держит AA с
+     запасом — 8.57:1 на hover и 10.30:1 на press (база --teal — 6.63:1). Держится
+     проверкой покрытия в scripts/check-frontend.mjs: новый оттенок без расчёта CI
+     краснит, а не тихо меняет картинку. */
   --teal:        #155e5c;
   --teal-hover:  #114c4a;
   --teal-press:  #0d3f3d;
@@ -98,6 +102,8 @@ button { font: inherit; }
   box-shadow: var(--e1);
   text-decoration: none;
 }
+/* #f4efe4 на --teal = 6.57:1 (тот же приём, что у подписи кнопок: литерал, а не
+   белый, и он тоже в списке измеренных пар). */
 .brand-mark {
   width: 30px; height: 30px; display: grid; place-items: center;
   border-radius: var(--r-sm); background: var(--teal); color: #f4efe4;
@@ -188,6 +194,11 @@ button { font: inherit; }
 .btn-icon:hover { background: var(--parchment); color: var(--teal); }
 .btn-icon:active { box-shadow: var(--inset1); }
 
+/* Подпись отключённой кнопки #b3aa97 на --parchment-deep даёт 1.58:1 — ниже AA, но
+   WCAG 1.4.3 освобождает неактивные компоненты, и в этом проекте disabled — это почти
+   всегда отправка: .btn.is-loading ниже прячет текст совсем (color: transparent) и
+   показывает спиннер. Исключение занесено в CONTRAST_EXEMPT проверкой — если цвет
+   поедет, CI об этом спросит. */
 .btn[disabled] { cursor: not-allowed; --btn-bg: var(--parchment-deep); --btn-fg: #b3aa97; box-shadow: var(--e1); opacity: .85; }
 .btn[disabled]:hover { background: var(--parchment-deep); }
 
@@ -292,6 +303,9 @@ select.control { appearance: none; cursor: pointer; padding-right: 34px; }
 .card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
 .card-actions .btn { padding: 8px 14px; font-size: 12px; }
 
+/* Подписи на бирюзовом: #f3eee3 у чипа — 6.51:1, #f1ece1 у баннера — 6.39:1,
+   #f5f0e6 у кнопки — 6.63:1. Три разных литерала вместо одного токена; все три
+   стоят в списке измеренных пар, поэтому правка любого замечается CI. */
 .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; padding: 4px 10px; border-radius: var(--r-pill); background: var(--teal); color: #f3eee3; box-shadow: inset 0 1px 0 rgba(255,255,255,.2); }
 .chip-outline { background: transparent; color: var(--teal-ink); box-shadow: inset 0 0 0 1.5px var(--teal); }
 .chip-muted { background: var(--parchment-deep); color: var(--ink-soft); box-shadow: var(--inset1); }
