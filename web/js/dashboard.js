@@ -280,34 +280,26 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (closeStudentsBtn) closeStudentsBtn.addEventListener("click", () => courseStudentsPanel && courseStudentsPanel.classList.add("hidden"));
     if (refreshButton) refreshButton.addEventListener("click", loadAll);
 
-    if (courseForm) {
-        courseForm.addEventListener("submit", async (event) => {
-            event.preventDefault();
-            GS.hideMessage(messageElement);
-            const formData = new FormData(courseForm);
-            const payload = {
-                title: String(formData.get("title") || "").trim(),
-                teacher: String(formData.get("teacher") || "").trim(),
-                description: String(formData.get("description") || "").trim(),
-            };
-            if (!payload.title) { GS.showMessage(messageElement, "Название курса обязательно", "error"); return; }
-
-            const submitButton = courseForm.querySelector('button[type="submit"]');
-            const original = submitButton ? submitButton.innerHTML : "";
-            if (submitButton) { submitButton.classList.add("is-loading"); submitButton.disabled = true; }
-
-            try {
-                await GS.fetchJSON("/api/courses", { method: "POST", body: JSON.stringify(payload) });
-                GS.showMessage(messageElement, "Курс успешно добавлен", "success");
-                courseForm.reset();
-                await loadAll();
-            } catch (error) {
-                GS.showMessage(messageElement, error.message || "Ошибка при создании курса", "error");
-            } finally {
-                if (submitButton) { submitButton.classList.remove("is-loading"); submitButton.disabled = false; submitButton.innerHTML = original; }
-            }
-        });
-    }
+    // Курс создаётся тем же механизмом, что ресурс и событие на расписании
+    // (GS.bindCreateForm, common.js). До этого здесь лежала третья копия
+    // обработчика — дословно общие блокировка кнопки, «is-loading», сброс формы
+    // и сообщение об ошибке при своём адресе и своих текстах. Отставала она не
+    // только по форме: ошибка печаталась как `error.message`, поэтому подпись
+    // поля из конверта 422 (ADR-0003) на кабинете терялась.
+    GS.bindCreateForm({
+        form: courseForm,
+        message: messageElement,
+        endpoint: "/api/courses",
+        buildPayload: (fd) => ({
+            title: String(fd.get("title") || "").trim(),
+            teacher: String(fd.get("teacher") || "").trim(),
+            description: String(fd.get("description") || "").trim(),
+        }),
+        requiredText: "Название курса обязательно",
+        successText: "Курс успешно добавлен",
+        errorText: "Ошибка при создании курса",
+        reload: loadAll,
+    });
 
     await loadAll();
 });

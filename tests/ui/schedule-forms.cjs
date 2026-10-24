@@ -1,12 +1,18 @@
-// Приёмка T3.1: формы расписания (ресурс и событие) живут на одном общем
-// обработчике отправки.
+// Приёмка T3.1: формы создания живут на одном общем обработчике отправки.
 //
 // Зачем отдельный тест: до T3.1 в schedule.js было два дословно одинаковых
-// submit-хэндлера, и правка, внесённая в один, молча оставляла второй старым —
-// ровно тот класс багов, из-за которого модалки в T0.1 не работали. Теперь
-// механизм один (bindCreateForm), а тест закрепляет его поведение с обеих сторон:
-// валидация до запроса, блокировка кнопки, сброс формы только при успехе,
-// перезагрузка списка, восстановление подписи кнопки с иконкой.
+// submit-хэндлера, а в dashboard.js — третий такой же, отличавшийся адресом,
+// полями и текстами. Правка, внесённая в один, молча оставляла другие старыми —
+// ровно тот класс багов, из-за которого модалки в T0.1 не работали. Механизм
+// теперь один (GS.bindCreateForm в common.js), и тест закрепляет его поведение со
+// всех трёх сторон: валидация до запроса, блокировка кнопки, сброс формы только
+// при успехе, перезагрузка списка, восстановление подписи кнопки с иконкой,
+// подпись поля из конверта 422 и редирект при истёкшей сессии.
+//
+// Страница кабинета добавлена не «для охвата»: её копия обработчика была самой
+// старой по поведению — она печатала error.message и теряла «— поле: …», которое
+// ADR-0003 добавляет к серверному тексту. Пока проверка не гонялась на /dashboard,
+// это было не видно.
 //
 // Тест полностью офлайновый: fetch подменяется роутером-заглушкой. Сервер на
 // :8080 не нужен, и лимитер входов (20 попыток на IP за 10 минут, ADR-0006) не
@@ -56,12 +62,12 @@ function splitUrl(url) {
     };
 }
 
-// Страница расписания с подставленным API. Правила ответа задаёт вызывающий
-// тест через routes: ключ "GET /api/resources", значение — функция или готовое
-// тело. calls пишет историю запросов в порядке их фактической отправки.
-function boot({ role = "teacher", routes = {} } = {}) {
-    const html = fs.readFileSync(path.join(REPO, "web", "schedule.html"), "utf8");
-    const dom = new JSDOM(html, { url: BASE + "/schedule", runScripts: "outside-only", pretendToBeVisual: true });
+// Общая часть запуска страницы: jsdom с подменённым fetch и подключенным
+// бандлом GS. Страницы различаются разметкой, набором скриптов и телами
+// ответов по умолчанию — их задаёт вызывающий код.
+function bootPage({ page, scripts, role, routes, defaults }) {
+    const html = fs.readFileSync(path.join(REPO, "web", page), "utf8");
+    const dom = new JSDOM(html, { url: BASE + "/" + page.replace(".html", ""), runScripts: "outside-only", pretendToBeVisual: true });
     const { window } = dom;
 
     const calls = [];
@@ -81,12 +87,12 @@ function boot({ role = "teacher", routes = {} } = {}) {
 
         const rule = routes[key];
         const decided = typeof rule === "function" ? rule({ record, hits }) : rule;
-        return Promise.resolve(decided === undefined ? defaultBody(key, role, hits[key]) : decided);
+        return Promise.resolve(decided === undefined ? defaults(key, role, hits[key]) : decided);
     };
 
     window.document.cookie = "csrf_token=test-csrf-token";
 
-    const source = BUNDLE.concat(["schedule.js"])
+    const source = BUNDLE.concat(scripts)
         .map((file) => fs.readFileSync(path.join(REPO, "web/js", file), "utf8"))
         .join("\n;\n");
     window.eval(source);
@@ -95,6 +101,26 @@ function boot({ role = "teacher", routes = {} } = {}) {
     window.SOS_CONFIG.navigateTo = (target) => navigations.push(target);
 
     return { window, doc: window.document, calls, navigations, hits };
+}
+
+// Страница расписания с подставленным API. Правила ответа задаёт вызывающий
+// тест через routes: ключ "GET /api/resources", значение — функция или готовое
+// тело. calls пишет историю запросов в порядке их фактической отправки.
+function boot({ role = "teacher", routes = {} } = {}) {
+    return bootPage({ page: "schedule.html", scripts: ["schedule.js"], role, routes, defaults: defaultBody });
+}
+
+// Страница кабинета: те же заглушки, другие тела по умолчанию и modals.js —
+// dashboard.js ссылается на AssignmentsUI при открытии модального окна, и без
+// этого файла страница падала бы на первой же кнопке заданий.
+function bootDashboard({ role = "teacher", routes = {} } = {}) {
+    return bootPage({
+        page: "dashboard.html",
+        scripts: ["modals.js", "dashboard.js"],
+        role,
+        routes,
+        defaults: defaultDashboardBody,
+    });
 }
 
 function defaultBody(key, role, hit) {
@@ -126,6 +152,30 @@ function defaultBody(key, role, hit) {
     return json({});
 }
 
+function defaultDashboardBody(key, role, hit) {
+    if (key === "GET /api/auth/me") {
+        if (role === "guest") {
+            return json({ error: { code: "unauthorized", message: "session expired" } }, 401);
+        }
+        return json({ id: 7, username: "проверка", full_name: "Проверка Форма", email: "f@example.test", role });
+    }
+    if (key === "GET /api/courses") {
+        return json(hit === 1
+            ? [{ id: 1, title: "Старый курс", description: "", teacher: "Иванов", created_by: 7 }]
+            : [
+                { id: 1, title: "Старый курс", description: "", teacher: "Иванов", created_by: 7 },
+                { id: 2, title: "Новый курс", description: "Основы", teacher: "Петров", created_by: 7 },
+            ]);
+    }
+    if (key === "GET /api/enrollments/mine") return json([]);
+    if (key === "POST /api/courses") return json({ id: 99, ok: true });
+    return json({});
+}
+
+// Id строки статуса у каждой формы свой: на расписании их две (resourceMsg и
+// eventMsg), в кабинете форма одна и блок называется просто message.
+const MSG_BY_FORM = { resourceForm: "resourceMsg", eventForm: "eventMsg", courseForm: "message" };
+
 // Заполняет поля и отправляет форму; ждёт, пока обработчик дойдёт до сервера
 // (или до отказа валидации, где запроса нет вовсе).
 //
@@ -137,7 +187,7 @@ function defaultBody(key, role, hit) {
 // значение). Поле как text — это ровно то, что происходит в браузере без
 // поддержки datetime-local (там тип откатывается к текстовому), и только так
 // защитный isNaN в toEventDate вообще достижим из теста.
-async function submit(page, formId, fields) {
+async function submit(page, formId, fields, msgId = MSG_BY_FORM[formId]) {
     const form = page.doc.getElementById(formId);
     if (!form) throw new Error("нет формы " + formId);
 
@@ -168,7 +218,7 @@ async function submit(page, formId, fields) {
     // Микротаски заглушки резолвятся сразу, но wait нужен: обработчик async, и
     // без тика таймера мы увидим только первую половину его работы.
     await wait(30);
-    for (let i = 0; i < 40 && page.calls.filter((c) => c.method === "POST").length === postBefore && !messageText(page.doc, formId); i++) {
+    for (let i = 0; i < 40 && page.calls.filter((c) => c.method === "POST").length === postBefore && !messageText(page.doc, msgId); i++) {
         await wait(20);
     }
     await wait(30);
@@ -176,18 +226,18 @@ async function submit(page, formId, fields) {
     return {
         form,
         thrown,
-        message: messageText(page.doc, formId),
-        messageType: messageType(page.doc, formId),
+        message: messageText(page.doc, msgId),
+        messageType: messageType(page.doc, msgId),
         posts: page.calls.filter((c) => c.method === "POST"),
     };
 }
 
-function messageText(doc, formId) {
-    const msg = doc.getElementById(formId === "resourceForm" ? "resourceMsg" : "eventMsg");
+function messageText(doc, msgId) {
+    const msg = doc.getElementById(msgId);
     return msg ? msg.textContent : "";
 }
-function messageType(doc, formId) {
-    const msg = doc.getElementById(formId === "resourceForm" ? "resourceMsg" : "eventMsg");
+function messageType(doc, msgId) {
+    const msg = doc.getElementById(msgId);
     return msg ? msg.className : "";
 }
 function button(page, formId) {
@@ -428,11 +478,128 @@ function bodyOf(post) {
     check("401 при сохранении не роняет обработчик", expiredSubmit.thrown === null,
         expiredSubmit.thrown ? expiredSubmit.thrown.message : "");
 
+    // 7. Кабинет: здесь жила третья копия обработчика — самая старая по
+    // поведению. Механизм теперь общий (GS.bindCreateForm из common.js), и этот
+    // раздел проверяет именно то, чего копия не умела: подпись поля из конверта
+    // 422 и сброс/перезагрузку по тем же правилам, что на расписании.
+    const scheduleSource = fs.readFileSync(path.join(REPO, "web", "js", "schedule.js"), "utf8");
+    const dashboardSource = fs.readFileSync(path.join(REPO, "web", "js", "dashboard.js"), "utf8");
+    const commonSource = fs.readFileSync(path.join(REPO, "web", "js", "common.js"), "utf8");
+    check("механизм объявлен один раз и в common.js",
+        (commonSource.match(/function bindCreateForm\s*\(/g) || []).length === 1
+        && !/function bindCreateForm\s*\(/.test(scheduleSource)
+        && !/function bindCreateForm\s*\(/.test(dashboardSource));
+    // Статическая проверка на уровне исходника, а не только поведения: копию
+    // обработчика легко вернуть копипастой, и в рантайме она выглядит как успех.
+    check("в страничных скриптах не осталось собственного submit-слушателя",
+        !/addEventListener\(\s*["']submit["']/.test(scheduleSource)
+        && !/addEventListener\(\s*["']submit["']/.test(dashboardSource)
+        && (scheduleSource.match(/GS\.bindCreateForm\(/g) || []).length === 2
+        && (dashboardSource.match(/GS\.bindCreateForm\(/g) || []).length === 1,
+        JSON.stringify([
+            (scheduleSource.match(/GS\.bindCreateForm\(/g) || []).length,
+            (dashboardSource.match(/GS\.bindCreateForm\(/g) || []).length,
+        ]));
+
+    const dash = bootDashboard({ role: "teacher" });
+    await wait(200);
+    check("GS.bindCreateForm виден и кабинету, и расписанию",
+        dash.window.eval("typeof GS.bindCreateForm") === "function"
+        && page.window.eval("typeof GS.bindCreateForm") === "function");
+    check("преподавателю в кабинете открыта форма курса",
+        !dash.doc.getElementById("createSection").classList.contains("hidden"));
+    check("каталог курсов отрисован до отправки",
+        /Старый курс/.test(dash.doc.getElementById("courses").textContent),
+        JSON.stringify(dash.doc.getElementById("courses").textContent.replace(/\s+/g, " ").trim().slice(0, 60)));
+
+    const emptyCourse = await submit(dash, "courseForm", { title: "  ", teacher: "Петров" });
+    check("пустое название курса отсекается до запроса", emptyCourse.posts.length === 0,
+        String(emptyCourse.posts.length));
+    check("своя формулировка обязательного поля сохранена",
+        emptyCourse.message === "Название курса обязательно", JSON.stringify(emptyCourse.message));
+    check("после отказа валидации кнопка курса активна",
+        !button(dash, "courseForm").disabled && !button(dash, "courseForm").classList.contains("is-loading"));
+
+    const okCourse = await submit(dash, "courseForm", {
+        title: "  Основы Go  ",
+        teacher: "  Петров И.И. ",
+        description: "Курс для второго курса",
+    });
+    const coursePost = okCourse.posts[okCourse.posts.length - 1];
+    check("курс отправлен на /api/courses", coursePost && coursePost.pathname === "/api/courses",
+        coursePost ? coursePost.key : "нет POST");
+    const coursePayload = bodyOf(coursePost);
+    check("поля курса обрезаны, состав payload курсовой (teacher, не category)",
+        coursePayload && coursePayload.title === "Основы Go" && coursePayload.teacher === "Петров И.И."
+        && coursePayload.description === "Курс для второго курса" && !("category" in coursePayload)
+        && Object.keys(coursePayload).length === 3, JSON.stringify(coursePayload));
+    check("у POST курса есть CSRF-токен", Boolean(coursePost && coursePost.headers && coursePost.headers["X-CSRF-Token"]),
+        JSON.stringify(coursePost && coursePost.headers));
+    check("успех курса подписан своим текстом", okCourse.message === "Курс успешно добавлен",
+        JSON.stringify(okCourse.message));
+    check("форма курса очищена после сохранения",
+        dash.doc.querySelector('#courseForm [name="title"]').value === "");
+    const coursePostIndex = dash.calls.findIndex((c) => c.method === "POST");
+    const coursesReload = dash.calls.findIndex((c, i) => i > coursePostIndex && c.method === "GET" && c.pathname === "/api/courses");
+    check("каталог курсов перезапрошен после добавления", coursesReload > coursePostIndex,
+        `POST=${coursePostIndex} GET=${coursesReload}`);
+    check("перезагруженный каталог отрисован с новым курсом",
+        /Новый курс/.test(dash.doc.getElementById("courses").textContent));
+    const courseBtn = button(dash, "courseForm");
+    check("кнопка курса восстановлена вместе с иконкой", /<svg/.test(courseBtn.innerHTML) && !courseBtn.disabled
+        && !courseBtn.classList.contains("is-loading"), JSON.stringify(courseBtn.textContent.trim()));
+    check("отправка курса не роняет обработчик", okCourse.thrown === null,
+        okCourse.thrown ? okCourse.thrown.message : "");
+
+    const badCourse = bootDashboard({
+        role: "teacher",
+        routes: {
+            "POST /api/courses": () => json({
+                error: { code: "validation", message: "title is required", fields: { title: "title is required" } },
+            }, 422),
+        },
+    });
+    await wait(200);
+    const rejected = await submit(badCourse, "courseForm", { title: "Дубликат", teacher: "Петров" });
+    // Это и есть поведенческая разница, которую снял переезд: старая копия
+    // печатала error.message и на кабинете «title is required» оставалось
+    // непонятно про какое поле, а на расписании — нет.
+    check("серверное поле подписано курсовым заголовком формы",
+        rejected.message === "title is required — поле: Название курса", JSON.stringify(rejected.message));
+    check("при отказе ввод курса сохранён",
+        badCourse.doc.querySelector('#courseForm [name="title"]').value === "Дубликат");
+    const rejectedPost = badCourse.calls.findIndex((c) => c.method === "POST");
+    const rejectedReload = badCourse.calls.findIndex((c, i) => i > rejectedPost && c.method === "GET" && c.pathname === "/api/courses");
+    check("при отказе каталог не перезапрашивается", rejectedReload === -1, `POST=${rejectedPost} GET=${rejectedReload}`);
+    check("отказ 422 не роняет обработчик курса", rejected.thrown === null,
+        rejected.thrown ? rejected.thrown.message : "");
+
+    const expiredCourse = bootDashboard({
+        role: "teacher",
+        routes: { "POST /api/courses": () => json({ error: { code: "unauthorized", message: "unauthorized" } }, 401) },
+    });
+    await wait(200);
+    const expiredSubmit2 = await submit(expiredCourse, "courseForm", { title: "Когда сессия истекла" });
+    check("истёкшая сессия на курсе уводит на вход", expiredCourse.navigations.includes("login"),
+        JSON.stringify(expiredCourse.navigations));
+    check("кнопка курса разблокирована и после редиректа",
+        !button(expiredCourse, "courseForm").disabled
+        && !button(expiredCourse, "courseForm").classList.contains("is-loading"));
+    check("401 на курсе не роняет обработчик", expiredSubmit2.thrown === null,
+        expiredSubmit2.thrown ? expiredSubmit2.thrown.message : "");
+
+    // Студенту форма курса не показывается (право createCourse), и это надо
+    // видеть: общий механизм не должен случайно открывать то, что закрыто правом.
+    const dashStudent = bootDashboard({ role: "student" });
+    await wait(200);
+    check("студенту в кабинете форма курса скрыта",
+        dashStudent.doc.getElementById("createSection").classList.contains("hidden"));
+
     check("ни одна отправка не оставила необработанного отклонения", rejections.length === 0,
         JSON.stringify(rejections));
 
     const failed = results.filter((r) => !r.ok);    console.log(`\nИТОГ: ${results.length - failed.length}/${results.length} проверок пройдено`);
-    for (const p of [guest, student, page, failing, events, expired]) p.window.close();
+    for (const p of [guest, student, page, failing, events, expired, dash, badCourse, expiredCourse, dashStudent]) p.window.close();
     process.exit(failed.length ? 1 : 0);
 })().catch((error) => {
     console.error("СБОЙ ПРОВЕРКИ:", error.message || error);

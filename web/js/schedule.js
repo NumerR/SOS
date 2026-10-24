@@ -616,48 +616,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // ---------- формы создания ----------
     //
-    // Общий механизм для обеих форм. Раньше это были две копии одного
-    // обработчика, и отличались они только адресом, текстами и списком,
-    // который надо обновить: блокировка кнопки, «is-loading», сброс формы,
-    // сообщение об ошибке — всё совпадало дословно. Класс багов T0.1
-    // (модалки) вырос ровно из таких копий: правку внесли в одну, а вторая
-    // осталась старой.
-    //
-    // Хелпер приватный и живёт в этом файле: второй странице он пока не нужен,
-    // а выдумывать публичный API на одного потребителя — это ещё один контракт,
-    // который надо поддерживать. Если понадобится dashboard.js, он переедет в
-    // common.js без изменения вызовов.
-    function bindCreateForm(options) {
-        const { form, message, endpoint, buildPayload, successText, errorText, reload } = options;
-        if (!form) return;
-
-        form.addEventListener("submit", async (event) => {
-            event.preventDefault();
-            GS.hideMessage(message);
-
-            const payload = buildPayload(new FormData(form));
-            if (!payload.title) {
-                GS.showMessage(message, "Название обязательно", "error");
-                return;
-            }
-
-            const btn = form.querySelector('button[type="submit"]');
-            const original = btn ? btn.innerHTML : "";
-            if (btn) { btn.classList.add("is-loading"); btn.disabled = true; }
-            try {
-                await GS.fetchJSON(endpoint, { method: "POST", body: JSON.stringify(payload) });
-                GS.showMessage(message, successText, "success");
-                form.reset();
-                await reload();
-            } catch (error) {
-                // Сервер назвал поле — к тексту добавится его подпись из формы
-                // («Название обязательно» уходит как текст, поля знает сервер).
-                GS.showMessage(message, GS.describeServerError(error, form, errorText), "error");
-            } finally {
-                if (btn) { btn.classList.remove("is-loading"); btn.disabled = false; btn.innerHTML = original; }
-            }
-        });
-    }
+    // Общий механизм — GS.bindCreateForm в common.js. Здесь он был приватной
+    // копией с 8b3a027 (ADR-0013), пока третья такая же копия не нашлась в
+    // dashboard.js: тогда хелпер переехал в GS без изменения вызовов, как этот
+    // переезд и был запланирован комментарием на месте. Разбор даты события
+    // (toEventDate) остаётся страничным — он нужен только здесь.
 
     // Дата события: поле свободное ввода, поэтому пустая строка и нечитаемая
     // дата дают одинаковый результат — пустое значение, сервер трактует его как
@@ -670,7 +633,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         return isNaN(date.getTime()) ? "" : date.toISOString();
     }
 
-    bindCreateForm({
+    GS.bindCreateForm({
         form: resourceForm,
         message: resourceMsg,
         endpoint: "/api/resources",
@@ -685,7 +648,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         reload: loadResources,
     });
 
-    bindCreateForm({
+    GS.bindCreateForm({
         form: eventForm,
         message: eventMsg,
         endpoint: "/api/events",

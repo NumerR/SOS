@@ -20,7 +20,10 @@
 //      фокусируемый id, `scope` у каждого `<th>`;
 //   6. контраст текстовых пар токенов — пороги WCAG 2.1 (4.5:1 для текста,
 //      3:1 для границы поля). Проверка считает отношения по формуле sRGB, а не
-//      сверяет с журналом: иначе правка цвета в :root прошла бы незаметно.
+//      сверяет с журналом: иначе правка цвета в :root прошла бы незаметно;
+//   7. общий submit-механизм форм создания: определение GS.bindCreateForm одно,
+//      страницы его вызывают, и копий этого обработчика в страничных скриптах
+//      не появилось (класс багов T0.1).
 //
 // Запуск локально: node scripts/check-frontend.mjs
 // Код выхода 0 — всё в порядке, 1 — есть находки (они печатаются списком).
@@ -301,12 +304,58 @@ for (const [fg, bg, min, why] of CONTRAST_PAIRS) {
   }
 }
 
+// ---------- 7. общий submit-механизм форм создания ----------
+//
+// Проверка про класс багов, из-за которого T0.1 и сломался: один и тот же
+// обработчик, продублированный в двух файлах, один из которых потом правят.
+// Формы «что-то создать» (POST + перезагрузка списка) до этого шага существовали
+// тремя копиями — две в schedule.js и одна в dashboard.js, отличавшиеся адресом,
+// полями и текстами. Теперь они идут через GS.bindCreateForm (common.js), и вот
+// что закреплено:
+//   · определение bindCreateForm ровно одно и лежит оно в common.js;
+//   · ни одна страница не перестала его вызывать (мёртвый механизм — тот же род
+//     бага, что неподключённый modals.js до T0.1);
+//   · копия механизма не завелась снова: submit-слушатель с блокировкой кнопки
+//     («is-loading») разрешён общему определению и modals.js, где делегирование
+//     устроено иначе — одна точка на весь документ с разбором по data-атрибутам,
+//     а не привязка к конкретной форме.
+const SUBMIT_DELEGATION_EXCEPTION = "modals.js";
+const definitions = [];
+const users = [];
+const copies = [];
+
+for (const file of jsFiles(JS_DIR)) {
+  const source = readFileSync(join(JS_DIR, file), "utf8");
+  const isDefinition = /^\s*function bindCreateForm\s*\(/m.test(source);
+  if (isDefinition) definitions.push(file);
+  if (source.includes("GS.bindCreateForm(")) users.push(file);
+
+  const handRolled = /addEventListener\(\s*["']submit["']/.test(source)
+    && source.includes('classList.add("is-loading")');
+  if (handRolled && !isDefinition && posix.basename(file) !== SUBMIT_DELEGATION_EXCEPTION) {
+    copies.push(file);
+  }
+}
+
+if (definitions.length !== 1) {
+  fail("web/js", `определений bindCreateForm найдено ${definitions.length} (${definitions.join(", ") || "нет"}) — нужно ровно одно, в common.js`);
+} else if (definitions[0] !== "common.js") {
+  fail("web/js", `bindCreateForm определён в ${definitions[0]}, а общий механизм должен жить в common.js`);
+}
+if (definitions.length === 1 && users.length === 0) {
+  fail("web/js", "GS.bindCreateForm не вызывает ни одна страница — механизм мёртвый, как modals.js до T0.1");
+}
+for (const file of users) notes.push(`${file} → GS.bindCreateForm (общих форм: ${users.length})`);
+for (const file of copies) {
+  fail("web/js", `${file}: своя копия submit-механизма с блокировкой кнопки — используй GS.bindCreateForm или добавь исключение с причиной`);
+}
+
 if (problems.length > 0) {
   console.error(`check-frontend: найдено проблем — ${problems.length}`);
   for (const p of problems) console.error("  FAIL " + p);
   process.exit(1);
 }
 
-console.log(`check-frontend: ок — страниц ${htmlFiles(WEB).length}, проверены подключения скриптов, стилей, id, инлайновые обработчики, структура заголовков, skip-link, scope у таблиц и контраст токенов`);
+console.log(`check-frontend: ок — страниц ${htmlFiles(WEB).length}, проверены подключения скриптов, стилей, id, инлайновые обработчики, структура заголовков, skip-link, scope у таблиц, контраст токенов и общность submit-механизма`);
 for (const n of notes) console.log("  ok  " + n);
 for (const n of contrastNotes) console.log("  ok  " + n);
