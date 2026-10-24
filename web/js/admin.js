@@ -3,49 +3,37 @@ document.addEventListener("DOMContentLoaded", async () => {
     const refreshButton = document.getElementById("refreshBtn");
     const statusElement = document.getElementById("adminMsg");
 
-    const roleLabels = {
-        student: "студент",
-        teacher: "преподаватель",
-        admin: "администратор",
-    };
-
-    const roleChipClass = {
-        student: "chip-muted",
-        teacher: "chip-outline",
-        admin: "",
-    };
-
-    const assignableRoles = ["student", "teacher", "admin"];
+    // Подписи, классы чипов и список ролей для селекта — в core/format.js:
+    // раньше этот словарь был скопирован трижды (админка, дашборд, лента).
+    const assignableRoles = GS.assignableRoles();
 
     // Двойная защита: страница уже закрыта на сервере, но если кто-то
-    // открыл admin.html напрямую без сессии — уводим на вход.
+    // открыл admin.html напрямую без сессии — уводим на вход (401 обработает
+    // api-client), а не-администратору — в кабинет.
     let me = null;
     try {
         me = await GS.fetchJSON("/api/auth/me");
         if (me.role !== "admin") {
-            window.location.href = "/dashboard";
+            GS.api.navigate(GS.api.dashboardPath());
             return;
         }
     } catch (error) {
-        if (error.status === 401) {
-            window.location.href = "/login";
-            return;
-        }
+        if (error.status === 401) return;
         if (usersBody) {
             usersBody.innerHTML = errorRow(GS.escapeHtml(error.message || "Ошибка загрузки профиля"));
         }
         return;
     }
 
-    GS.bindLogout("logoutBtn", "/login");
+    GS.bindLogout("logoutBtn");
 
     function errorRow(message) {
         return `<tr><td colspan="5"><p class="message message-error">${message}</p></td></tr>`;
     }
 
     function roleControl(user) {
-        const chipClass = roleChipClass[user.role] !== undefined ? roleChipClass[user.role] : "chip-muted";
-        const label = roleLabels[user.role] || user.role;
+        const chipClass = GS.roleChipClass(user.role);
+        const label = GS.roleLabel(user.role);
 
         // Собственную роль менять нельзя: сервер ответит 409, а админ лишится
         // доступа к этой странице посреди сеанса.
@@ -55,7 +43,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
 
         const options = assignableRoles.map((role) => `
-            <option value="${role}"${role === user.role ? " selected" : ""}>${GS.escapeHtml(roleLabels[role])}</option>
+            <option value="${role}"${role === user.role ? " selected" : ""}>${GS.escapeHtml(GS.roleLabel(role))}</option>
         `).join("");
 
         return `
@@ -118,7 +106,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             renderUsers(users);
         } catch (error) {
             if (error.status === 403) {
-                window.location.href = "/dashboard";
+                GS.api.navigate(GS.api.dashboardPath());
                 return;
             }
             usersBody.innerHTML = errorRow(GS.escapeHtml(error.message || "Не удалось загрузить пользователей"));
@@ -157,10 +145,9 @@ document.addEventListener("DOMContentLoaded", async () => {
                 await loadUsers();
             } catch (error) {
                 GS.showMessage(statusElement, error.message || "Не удалось обновить роль", "error");
-                if (error.status === 401) {
-                    window.location.href = "/login";
-                    return;
-                }
+                // 401 = собственная сессия истекла: на вход уводит api-client,
+                // здесь только не пытаемся перерисовать список.
+                if (error.status === 401) return;
             } finally {
                 button.disabled = false;
             }

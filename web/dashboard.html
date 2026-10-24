@@ -4,12 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Личный кабинет · SOS</title>
-    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
     <header class="site-header">
         <div class="container header-row">
-            <a href="/" class="brand">
+            <a href="./" class="brand">
                 <span class="brand-mark" aria-hidden="true">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
                 </span>
@@ -20,11 +20,11 @@
             </a>
 
             <div class="top-actions">
-                <a href="/schedule" class="btn btn-secondary">
+                <a href="schedule" class="btn btn-secondary">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
                     Расписание
                 </a>
-                <a href="/admin" id="adminLink" class="btn btn-secondary hidden">
+                <a href="admin" id="adminLink" class="btn btn-secondary hidden">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                     Админ
                 </a>
@@ -193,9 +193,12 @@
         </div>
     </div>
 
-    <script src="/js/common.js"></script>
-    <script src="/js/modals.js"></script>
-    <script src="/js/dashboard.js"></script>
-    <script src="/js/account.js"></script>
+    <script src="js/config.js"></script>
+    <script src="js/core/api-client.js"></script>
+    <script src="js/core/format.js"></script>
+    <script src="js/common.js"></script>
+    <script src="js/modals.js"></script>
+    <script src="js/dashboard.js"></script>
+    <script src="js/account.js"></script>
 </body>
 </html>

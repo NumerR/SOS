@@ -38,10 +38,24 @@ function htmlFiles(dir) {
     .sort();
 }
 
-function jsFiles(dir) {
-  return readdirSync(dir)
-    .filter((name) => name.endsWith(".js"))
-    .sort();
+// JS-файлы ищем рекурсивно: с T3.1 у фронтенда есть web/js/core/, и проверка
+// «каждый скрипт подключён хотя бы одной страницей» обязана видеть файлы в
+// подпапках — иначе ровно тот баг, ради которого скрипт написан (файл есть,
+// страницы о нём не знают), снова станет невидимым.
+// Возвращаем пути относительно web/js: на них ссылается href вида
+// "/js/core/api-client.js".
+function jsFiles(dir, prefix = "") {
+  const out = [];
+
+  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    if (entry.isDirectory()) {
+      out.push(...jsFiles(join(dir, entry.name), `${prefix}${entry.name}/`));
+    } else if (entry.name.endsWith(".js")) {
+      out.push(`${prefix}${entry.name}`);
+    }
+  }
+
+  return out;
 }
 
 // href из HTML может быть абсолютным ("/js/common.js") или относительным
@@ -130,7 +144,6 @@ for (const file of jsFiles(JS_DIR)) {
     notes.push(`web/js/${file} → ${pages.join(", ")}`);
   }
 }
-
 // 3 (вторая половина): на что ссылается getElementById
 for (const [page, { declared, scripts }] of declaredIdsByPage) {
   for (const scriptPath of scripts) {

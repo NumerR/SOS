@@ -17,8 +17,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const fromDate = document.getElementById("fromDate");
     const toDate = document.getElementById("toDate");
 
-    const roleLabels = { student: "студент", teacher: "преподаватель", admin: "администратор" };
-    const canManage = new Set(["teacher", "admin"]);
+    const canManage = GS.can.manageBoard;
 
     const stateMeta = {
         none:      { label: "не сдано",    cls: "feed-state-none" },
@@ -29,21 +28,13 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     let user = null;
 
-    function pad(n) { return String(n).padStart(2, "0"); }
-    function toISODate(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
-    function dayStartUnix(iso) {
-        const [y, m, d] = iso.split("-").map(Number);
-        return Math.floor(new Date(y, m - 1, d, 0, 0, 0, 0).getTime() / 1000);
-    }
-    function dayEndUnix(iso) {
-        const [y, m, d] = iso.split("-").map(Number);
-        return Math.floor(new Date(y, m - 1, d, 23, 59, 59, 0).getTime() / 1000);
-    }
-    function formatDue(ts) {
-        const d = new Date(ts * 1000);
-        return d.toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" }) +
-            " · " + d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-    }
+    // Даты — общий модуль core/format.js: раньше эти же пять функций были
+    // написаны здесь заново (и «Без дедлайна»/«без точной даты» расходились в
+    // формулировках с дашбордом).
+    const toISODate = GS.toISODate;
+    const dayStartUnix = GS.dayStartUnix;
+    const dayEndUnix = GS.dayEndUnix;
+    const formatDue = GS.formatDateTime;
 
     const today = new Date();
     const weekLater = new Date(today.getTime() + 7 * 24 * 3600 * 1000);
@@ -109,7 +100,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         const to = dayEndUnix(toDate.value || toISODate(weekLater));
 
         try {
-            const items = await GS.fetchJSON(`/api/schedule?from=${from}&to=${to}`);
+            const items = await GS.fetchJSON(`/api/schedule?from=${from}&to=${to}`, { on401: "throw" });
             renderFeed(items);
         } catch (error) {
             if (error.status === 401) { showGuestMode(); return; }
@@ -126,7 +117,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             resourcesContainer.innerHTML = `
                 <div class="empty-state">
                     <span class="empty-text">Пока нет ни одного ресурса</span>
-                    <span class="empty-hint">${canManage.has(user.role) ? "Добавьте первый через форму ниже." : "Ресурсы появятся, когда их добавят преподаватели."}</span>
+                    <span class="empty-hint">${canManage(user.role) ? "Добавьте первый через форму ниже." : "Ресурсы появятся, когда их добавят преподаватели."}</span>
                 </div>`;
             return;
         }
@@ -155,7 +146,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (!resourcesContainer) return;
         resourcesContainer.innerHTML = `<div class="empty-state"><span class="spinner"></span><span class="empty-hint">Загрузка ресурсов…</span></div>`;
         try {
-            const resources = await GS.fetchJSON("/api/resources");
+            const resources = await GS.fetchJSON("/api/resources", { on401: "throw" });
             renderResources(resources);
         } catch (error) {
             if (error.status === 401) { showGuestMode(); return; }
@@ -178,7 +169,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (guestNotice) guestNotice.classList.add("hidden");
         if (loginLink) loginLink.classList.add("hidden");
 
-        const manage = canManage.has(user.role);
+        const manage = canManage(user.role);
         if (createResourceSection) createResourceSection.classList.toggle("hidden", !manage);
         if (eventsManageSection) eventsManageSection.classList.toggle("hidden", !manage);
     }
@@ -249,7 +240,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // ---------- инициализация ----------
     try {
-        user = await GS.fetchJSON("/api/auth/me");
+        user = await GS.fetchJSON("/api/auth/me", { on401: "throw" });
     } catch (error) {
         if (error.status === 401) { showGuestMode(); return; }
         if (feedContainer) feedContainer.innerHTML = `<p class="message message-error">${GS.escapeHtml(error.message || "Ошибка загрузки профиля")}</p>`;

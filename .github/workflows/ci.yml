@@ -66,13 +66,22 @@ jobs:
         with:
           node-version: '22'
 
-      - name: node --check по всем web/js/*.js
+      - name: node --check по всем web/js/**/*.js
         run: |
           set -e
-          for f in web/js/*.js; do
+          # find, а не glob web/js/*.js: с T3.1 часть скриптов лежит в web/js/core,
+          # и не-рекурсивная проверка молча пропускала бы подпапку.
+          found=0
+          while IFS= read -r f; do
+            found=$((found + 1))
             echo "-- $f"
             node --check "$f"
-          done
+          done < <(find web/js -name '*.js' | sort)
+          if [ "$found" -eq 0 ]; then
+            echo "в web/js нет ни одного .js — проверка сломалась, а не проект"
+            exit 1
+          fi
+          echo "проверено файлов: $found"
 
       - name: Целостность фронтенда
         run: node scripts/check-frontend.mjs

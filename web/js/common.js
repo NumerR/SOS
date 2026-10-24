@@ -1,4 +1,15 @@
-const GS = (() => {
+// GS — пространство имён интерфейса: то, что нужно каждой странице (экран
+// HTML, статусные сообщения, подписи, вызов API). Транспортом занимается
+// core/api-client.js, общими подписями и датами — core/format.js; они подключаются
+// раньше этого файла и дописывают тот же объект.
+//
+// Раньше GS объявлялся через `const` на верхнем уровне: он жил в глобальной
+// lexical-области и не был свойством window, поэтому core-файлы не могли его
+// дополнить. Теперь единственный объект висит на window, и `GS` остаётся тем же
+// именем, к которому привык код страниц.
+(function (global) {
+    "use strict";
+
     function escapeHtml(value) {
         return String(value)
             .replaceAll("&", "&amp;")
@@ -22,78 +33,33 @@ const GS = (() => {
         element.className = "message hidden";
     }
 
-    //unix-секунды -> человекочитаемая дата; 0/пусто = «без срока».
-    function formatDate(timestamp) {
-        if (!timestamp || timestamp === 0) return "Без дедлайна";
-        const date = new Date(timestamp * 1000);
-        return date.toLocaleDateString("ru-RU", { day: "numeric", month: "short", year: "numeric" });
+    // Текст для 429: страницы печатают его как есть, если не хотят показывать
+    // свою формулировку.
+    function rateLimitText(error) {
+        const seconds = error && error.retryAfter ? Math.ceil(error.retryAfter) : 0;
+        return seconds
+            ? `Слишком много попыток. Повторите через ${seconds} с.`
+            : "Слишком много попыток, повторите позже";
     }
 
-    // Инициалы для аватара: первая буква имени + первая буквы фамилии.
-    function initialsFrom(person) {
-        const source = String((person && (person.full_name || person.username)) || "?").trim();
-        if (!source) return "?";
-        const parts = source.split(/\s+/).filter(Boolean);
-        if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-        return source.slice(0, 2).toUpperCase();
-    }
-
-    // Читает csrf-токен из cookie (выставляется сервером при входе/регистрации
-    // и пополняется в RequireAuth).
-    function getCSRFToken() {
-        const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
-        return match ? decodeURIComponent(match[1]) : "";
-    }
-
-    async function fetchJSON(url, options = {}) {
-        const method = (options.method || "GET").toUpperCase();
-
-        const headers = {
-            "Content-Type": "application/json",
-            ...(options.headers || {}),
-        };
-
-        // Для mutate-запросов прикладываем двойной токен (заголовок == cookie).
-        if (method !== "GET" && method !== "HEAD") {
-            const token = getCSRFToken();
-            if (token) {
-                headers["X-CSRF-Token"] = token;
-            }
+    // Единственная точка, через которую страницы ходят в API. Параметры:
+    //   method/body/headers — как в fetch;
+    //   on401: "redirect" (по умолчанию) | "throw" — "throw" нужен формам, где
+    //   401 является штатным ответом (вход с неверным паролем, смена пароля с
+    //   неверным текущим), и страницам с гостевым режимом.
+    // Бросает ApiError с status/message/retryAfter/data — см. core/api-client.js.
+    function fetchJSON(url, options = {}) {
+        if (!global.GS.api) {
+            throw new Error("Не подключён core/api-client.js — запросы к API недоступны");
         }
 
-        const response = await fetch(url, {
-            credentials: "same-origin",
-            ...options,
-            headers,
-        });
-
-        const contentType = response.headers.get("content-type");
-
-        let data = null;
-
-        if (contentType && contentType.includes("application/json")) {
-            data = await response.json();
-        } else {
-            data = await response.text();
-        }
-
-        if (!response.ok) {
-            const message =
-                (data && typeof data === "object" && data.error) ||
-                response.statusText ||
-                "Request failed";
-
-            const error = new Error(message);
-            error.status = response.status;
-            error.data = data;
-
-            throw error;
-        }
-
-        return data;
+        return global.GS.api.request(url, options);
     }
 
-    function bindLogout(buttonId, redirectTo = "/login") {
+    // Выход из текущей сессии. Путь указываем относительно страницы
+    // ("login", а не "/login"): так же, как и src у скриптов, это даёт работе
+    // под каталогом GitHub Pages без отдельной настройки base.
+    function bindLogout(buttonId, redirectTo = "login") {
         const button = document.getElementById(buttonId);
         if (!button) return;
 
@@ -102,26 +68,47 @@ const GS = (() => {
             button.textContent = "Выходим...";
 
             try {
-                await fetchJSON("/api/auth/logout", {
-                    method: "POST",
-                });
+                await fetchJSON("/api/auth/logout", { method: "POST" });
 
-                window.location.href = redirectTo;
+                if (global.GS.api) global.GS.api.navigate(redirectTo);
+                else global.location.href = redirectTo;
             } catch (error) {
-                alert(error.message || "Не удалось выйти");
+                global.alert(error.message || "Не удалось выйти");
                 button.disabled = false;
                 button.textContent = "Выйти";
             }
         });
     }
 
-    return {
+    let format = global.GS.format;
+    if (!format) {
+        // Не падаем сразу: странице ещё может хватить fetchJSON. Но и молча
+        // undefined вместо roleLabel оставлять нельзя — это ровно тот класс
+        // поломки (неподключённый скрипт), который ловит check-frontend.mjs.
+        console.error("common.js: не подключён core/format.js — подписи ролей и даты будут пустыми");
+        format = {};
+    }
+
+    Object.assign(global.GS, {
         escapeHtml,
         showMessage,
         hideMessage,
-        formatDate,
-        initialsFrom,
         fetchJSON,
         bindLogout,
-    };
-})();
+        rateLimitText,
+
+        // Подписи и данные-помощники живут в core/format.js; здесь они
+        // переэкспортируются под короткими именами, чтобы страницам не
+        // приходилось знать, в каком файле что лежит.
+        formatDate: format.formatDate,
+        formatDateTime: format.formatDateTime,
+        initialsFrom: format.initialsFrom,
+        roleLabel: format.roleLabel,
+        roleChipClass: format.roleChipClass,
+        assignableRoles: format.assignableRoles,
+        can: format.can,
+        toISODate: format.toISODate,
+        dayStartUnix: format.dayStartUnix,
+        dayEndUnix: format.dayEndUnix,
+    });
+})(window);

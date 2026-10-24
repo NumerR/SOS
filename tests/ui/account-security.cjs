@@ -3,6 +3,13 @@
 //
 // Требования: сервер на :8080 и выполненный ../seed.sh (студент s_stud / password123).
 // Запуск: cd tests/ui && SOS_BASE_URL=http://localhost:8080 node account-security.cjs
+//
+// Ограничение, о котором легко споткнуться: вход ограничен 20 попытками на IP за
+// 10 минут (internal/ratelimit). Полный `npm run test:all` — это ~16 входов, и
+// повторный прогон «поверх» предыдущего упирается в 429 уже на первом логине.
+// Поэтому у login() есть lastLoginStatus, а восстановление seed-ного пароля
+// вынесено в finally-ветку: иначе сорванный прогон оставляет s_stud с
+// временным паролем, и следующий запуск падает с невнятным «s_stud не входит».
 const fs = require("fs");
 const path = require("path");
 const { JSDOM } = require("jsdom");
@@ -16,12 +23,22 @@ const RUN_TAG = Date.now().toString(36).slice(-5);
 const TEMP_PASS = "temp-" + RUN_TAG + "-pass1";
 const SEED_PASS = "password123";
 
+let lastLoginStatus = 0;
+// true с момента, когда пароль реально изменён, и до успешного возврата.
+let tempPasswordActive = false;
+
 const results = [];
 function check(name, ok, detail = "") {
     results.push({ name, ok, detail });
     console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? " — " + detail : ""}`);
 }
 function wait(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+function loginHint(status) {
+    if (status === 429) return " — лимит входов 20 на IP за 10 минут, подождите и повторите";
+    if (status === 401 || status === 400) return " — неверный логин или пароль";
+    return "";
+}
 
 async function api(pathname, { method = "GET", body, cookie = "", csrf = "" } = {}) {
     const headers = { "Content-Type": "application/json" };
@@ -43,18 +60,56 @@ function csrfOf(cookieHeader) {
 
 async function login(identifier, password) {
     const res = await api("/api/auth/login", { method: "POST", body: { identifier, password } });
+    lastLoginStatus = res.status;
     if (res.status !== 200) return null;
     const cookie = cookieOf(res.setCookie);
     return { cookie, csrf: csrfOf(cookie) };
 }
 
+// Возврат seed-ного пароля. Вызывается и при успехе, и в ветке сбоя: сорванный
+// на середине прогон иначе «отравляет» следующие.
+async function restoreSeedPassword() {
+    if (!tempPasswordActive) return true;
+
+    const session = await login("s_stud", TEMP_PASS);
+    if (!session) {
+        console.error("ВНИМАНИЕ: seed-ный пароль НЕ восстановлен (вход под временным — код "
+            + lastLoginStatus + loginHint(lastLoginStatus) + ").");
+        console.error("Пароль s_stud сейчас = " + TEMP_PASS + ". Вернуть seed-ный можно через UI");
+        console.error("панели «Аккаунт и доступ» или прямо в локальной базе:");
+        console.error('  sqlite3 data/app.db "update users set password_hash=(select password_hash');
+        console.error("    from users where username='t_teacher') where username='s_stud';\"");
+        return false;
+    }
+
+    const back = await api("/api/auth/change-password", {
+        method: "POST",
+        cookie: session.cookie,
+        csrf: session.csrf,
+        body: { current_password: TEMP_PASS, new_password: SEED_PASS },
+    });
+
+    if (back.status !== 200) {
+        console.error("ВНИМАНИЕ: возврат seed-ного пароля отклонён — код " + back.status
+            + " " + JSON.stringify(back.data));
+        return false;
+    }
+
+    tempPasswordActive = false;
+    return true;
+}
+
 (async () => {
     const first = await login("s_stud", SEED_PASS);
-    if (!first) throw new Error("s_stud не входит — выполните ./seed.sh");
+    if (!first) {
+        throw new Error("s_stud не входит (код " + lastLoginStatus + loginHint(lastLoginStatus)
+            + ") — выполните ./seed.sh" + (tempPasswordActive ? "" : ", а если пароль менялся в прошлом прогоне — верните seed-ный (см. WARNING выше)"));
+    }
 
     // «Другое устройство»: вторая сессия того же аккаунта.
     const second = await login("s_stud", SEED_PASS);
     check("вторая сессия того же аккаунта создана", Boolean(second) && second.cookie !== first.cookie);
+    if (!second) throw new Error("вторая сессия не создана (код " + lastLoginStatus + loginHint(lastLoginStatus) + ")");
 
     const html = fs.readFileSync(path.join(REPO, "web/dashboard.html"), "utf8");
     const dom = new JSDOM(html, { url: BASE + "/dashboard", runScripts: "outside-only", pretendToBeVisual: true });
@@ -74,7 +129,7 @@ async function login(identifier, password) {
 
     // Только common.js + account.js: dashboard.js тянет курсы и задания,
     // это проверено в assignments-modal.cjs.
-    const bundle = ["common.js", "account.js"]
+    const bundle = ["config.js", "core/api-client.js", "core/format.js", "common.js", "account.js"]
         .map((f) => fs.readFileSync(path.join(REPO, "web/js", f), "utf8"))
         .join("\n;\n");
     window.eval(bundle);
@@ -126,6 +181,9 @@ async function login(identifier, password) {
     fill("current_password", SEED_PASS);
     fill("new_password", TEMP_PASS);
     fill("repeat_password", TEMP_PASS);
+    // С этого момента пароль изменён: если прогон сорвётся (429, упавший
+    // сервер), finally-ветка должна вернуть seed-ный.
+    tempPasswordActive = true;
     await submit(/изменён/i, "успешная смена пароля подтверждена в интерфейсе");
     check("сообщение называет число отозванных устройств", /устройств/i.test(status.textContent), status.textContent.trim());
 
@@ -152,6 +210,7 @@ async function login(identifier, password) {
 
     // Второй клик — реальный выход со всех устройств.
     const freshSecond = await login("s_stud", TEMP_PASS);
+    if (!freshSecond) throw new Error("нет сессии «второго устройства» (код " + lastLoginStatus + loginHint(lastLoginStatus) + ")");
     logoutAllBtn.click();
     for (let i = 0; i < 80 && (await api("/api/auth/me", { cookie: first.cookie })).status === 200; i++) await wait(25);
 
@@ -165,21 +224,20 @@ async function login(identifier, password) {
     check("alert не использовался", !window.__alerts, JSON.stringify(window.__alerts || []));
 
     // --- Возврат seed-ного пароля, чтобы прогон был повторяемым. ---
-    const back = await login("s_stud", TEMP_PASS);
-    const restore = await api("/api/auth/change-password", {
-        method: "POST",
-        cookie: back.cookie,
-        csrf: back.csrf,
-        body: { current_password: TEMP_PASS, new_password: SEED_PASS },
-    });
-    check("seed-ный пароль восстановлен", restore.status === 200, "код " + restore.status + " " + JSON.stringify(restore.data));
-    check("вход по seed-ному паролю снова работает", Boolean(await login("s_stud", SEED_PASS)));
+    // Дополнительный контрольный вход не делаем: ответ 200 на
+    // change-password { new_password: SEED_PASS } — уже доказательство, что
+    // seed-ный пароль стоит (именно этот endpoint suite выше проверял на
+    // «старый пароль больше не входит»). Лишний login здесь дорогой: лимит
+    // входов 20/10 мин делится со всеми остальными прогонами.
+    const restored = await restoreSeedPassword();
+    check("seed-ный пароль восстановлен", restored && !tempPasswordActive);
 
     const failed = results.filter((r) => !r.ok);
     console.log(`\nИТОГ: ${results.length - failed.length}/${results.length} проверок пройдено`);
     window.close();
     process.exit(failed.length ? 1 : 0);
-})().catch((error) => {
+})().catch(async (error) => {
     console.error("СБОЙ ПРОВЕРКИ:", error.message || error);
+    await restoreSeedPassword();
     process.exit(2);
 });

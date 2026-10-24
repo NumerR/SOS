@@ -7,8 +7,9 @@
 
     if (!form || !logoutAllBtn) return;
 
-    // GS объявлена на верхнем уровне common.js через const — это глобальная
-    // lexical-область, а не свойство window, поэтому обращаемся по имени.
+    // GS — свойство window, которое собирают core/api-client.js, core/format.js и
+    // common.js (все три дописывают один объект). Имя GS доступно здесь просто
+    // потому, что свойства window видны как глобальные.
     const { fetchJSON, showMessage, hideMessage } = GS;
 
     function errorText(error) {
@@ -19,7 +20,6 @@
             "password must be at least 8 characters": "Новый пароль короче 8 символов.",
             "password is too long": "Новый пароль слишком длинный.",
             "new password must differ from the current one": "Новый пароль совпадает с текущим.",
-            "too many requests, try again later": "Слишком много попыток. Подождите и повторите.",
             "csrf token missing": "Сессия истекла — обновите страницу и войдите снова.",
             unauthorized: "Сессия истекла — войдите снова.",
         };
@@ -53,6 +53,9 @@
             const answer = await fetchJSON("/api/auth/change-password", {
                 method: "POST",
                 body: JSON.stringify({ current_password: current, new_password: next }),
+                // 401 здесь означает «текущий пароль не тот», а не «сессия
+                // истекла»: уводить на вход нельзя, текст показывает errorText.
+                on401: "throw",
             });
 
             const revoked = Number(answer && answer.revoked_sessions) || 0;
@@ -79,7 +82,7 @@
 
         try {
             await fetchJSON("/api/auth/logout-all", { method: "POST" });
-            window.location.href = "/login?revoked=1";
+            GS.api.navigate(GS.api.sessionRevokedPath());
         } catch (error) {
             // alert блокирует поток и не показывается в headless-проверках —
             // пишем в то же статусное сообщение, что и форма пароля.
