@@ -27,9 +27,16 @@
 - каталог курсов: читают все авторизованные, создают только `teacher`/`admin`;
 - записи на курсы (`enrollments`): студент записывается/отписывается,
   преподаватель видит список **своих** курсов, админ — любых;
-- админ-панель `/admin` (список пользователей и выдача ролей), закрыта
-  правом `admin.panel.view` / `user.list` + `RequireCSRF`;
-- права доступа описаны реестром (`internal/authz`): 22 права, у каждой роли свой
+- админ-панель `/admin` (список пользователей, выдача ролей и журнал действий),
+  закрыта правом `admin.panel.view` / `user.list` + `RequireCSRF`; сама панель
+  читает журнал отдельным правом `audit.view`;
+- журнал действий (`audit_events`): вход и выход, «выйти везде», смена пароля,
+  регистрация, смена роли и оценка работы пишутся в базу — успешно и неуспешно.
+  Читает их только администратор через `GET /api/admin/audit` (фильтры по
+  действию и автору, 50 записей по умолчанию, 200 потолок). Паролей,
+  bcrypt-хешей, токенов сессий и CSRF-токенов в журнале нет — это проверяет
+  тест, обходящий всю таблицу;
+- права доступа описаны реестром (`internal/authz`): 23 права, у каждой роли свой
   набор, маршрут декларирует право и текст отказа, а обработчик проверяет только
   «эта строка моя» (обход — отдельные права `*.any`). Ролевые сравнения вида
   `user.Role == "admin"` из обработчиков удалены;
@@ -76,6 +83,7 @@
 | `GET /api/enrollments/course?course_id=N` | 401   | 403     | ✅ свой | ✅ любой |
 | `GET /api/admin/users`                | 401       | 403     | 403     | ✅    |
 | `POST /api/admin/users/role`          | 401       | 403     | 403     | ✅ (не себе) |
+| `GET /api/admin/audit`                | 401       | 403     | 403     | ✅    |
 | `POST /api/auth/logout`               | ✅ (без куки 200) | ✅ | ✅ | ✅ |
 | `POST /api/auth/logout-all`           | 401       | ✅      | ✅      | ✅    |
 | `POST /api/auth/change-password`      | 401       | ✅      | ✅      | ✅    |
@@ -84,7 +92,7 @@
 
 Ролевые сравнения в обработчиках заменены реестром прав: маршрут декларирует
 право, `RequirePerm` проверяет вход и право, обработчик — только владельца
-строки. Всего 22 права: student 3, teacher 10, admin 21 (единственное, чего у
+строки. Всего 23 права: student 3, teacher 10, admin 22 (единственное, чего у
 админа нет — `schedule.scope.created`, потому что есть `schedule.scope.all`).
 Матрица зафиксирована тестом в обе стороны: `internal/authz/authz_test.go`.
 
@@ -100,6 +108,7 @@
 | `POST /api/submissions` | — (нужен вход) | все; без записи на курс — только admin (`submission.create.any`) |
 | `GET /api/admin/users` | `user.list` | admin |
 | `POST /api/admin/users/role` | `user.role.manage` | admin (не себе) |
+| `GET /api/admin/audit` | `audit.view` | admin (текст отказа: «only administrators can read the audit log») |
 | `/admin` (страница) | `admin.panel.view` | admin (иначе 302 на `/dashboard`) |
 | `POST /api/auth/register`, `/login`, `/logout` | — (публичные) | любой |
 | `POST /api/auth/logout-all`, `/change-password` | — (вход + CSRF) | все роли |
@@ -161,6 +170,26 @@ $env:ADMIN_FULL_NAME="Главный администратор"
 $env:ADMIN_PASSWORD="change-me-please"
 go run ./cmd/server
 ```
+
+## Журнал действий
+
+Каждый вход, выход, «выйти везде», смена пароля, регистрация, смена роли и
+оценка работы (успешно и нет) пишутся в таблицу `audit_events`; видят их только
+администраторы — на странице `/admin` (панель «Журнал действий») и через API:
+
+```bash
+curl -s -b cookies.txt "http://localhost:8080/api/admin/audit?limit=50"
+curl -s -b cookies.txt "http://localhost:8080/api/admin/audit?action=admin.role_change&actor_user_id=1"
+```
+
+Метод — GET, поэтому `X-CSRF-Token` не нужен. Неверное имя действия, нечисловой
+`actor_user_id` или `limit` дают `422` (в тексте ответа — список допустимых
+имён); 50 записей по умолчанию и потолок 200 — чтобы нельзя было выгрузить весь
+журнал одним запросом. Полей `password`, `password_hash`, токена сессии и
+CSRF-токена в ответе нет, и в базе их быть не может: это проверяет тест, обходящий
+всю таблицу (`internal/handlers/audit_test.go`). Причина отказа у события — в
+колонке `ok`, а не в отдельном имени действия: `auth.login` и `ok=0` — это
+неудачный вход.
 
 ## Сессии, «выйти везде», смена пароля
 
@@ -273,11 +302,12 @@ internal/platform/ ядро: Module/Migration/Route, Registry с валидац�
 internal/authz/    реестр прав: роль → набор прав, Can, ValidPermission,
                    ScheduleScope (для ленты расписания)
 internal/modules/  модули: accounts, courses, assignments, resources, events,
-                   schedule — в каждом объявлены его маршруты
+                   schedule, audit — в каждом объявлены его маршруты
 internal/database/ открытие SQLite + миграции схемы
 internal/models/   доменные типы (User, Course, ...)
 internal/store/    доступ к БД (users, sessions, courses, enrollments,
-                   assignments, submissions, resources, events, schedule) + ошибки
+                   assignments, submissions, resources, events, schedule,
+                   audit) + ошибки
 internal/ratelimit/ токен-бакет: лимиты на IP и счётчик неудачных входов
 internal/handlers/ HTTP-обработчики и middleware: RequireAuth / RequirePerm /
                    RequireCSRF / RateLimit, логи + request id (logging.go),
@@ -304,6 +334,8 @@ submissions(id, assignment_id FK->assignments, user_id FK->users, content, score
 resources(id, title, category, url, description, created_by FK->users, created_at int)
 events(id, title, description, event_date int, created_by FK->users, created_at int)
 platform_module_migrations(module, version, applied_at, PK(module, version))  -- журнал runner'а T1.1
+audit_events(id, at int, actor_user_id FK->users NULL, action, target_type, target_id,
+             detail, ok int, ip, user_agent)   -- журнал действий (T1.2)
 ```
 
 Миграции — `CREATE TABLE IF NOT EXISTS` в `internal/database/db.go`, применяются
@@ -311,12 +343,14 @@ platform_module_migrations(module, version, applied_at, PK(module, version))  --
 миграций и PostgreSQL пока нет — это T2.1 (ADR-0002). Путь к файлу базы —
 `DB_PATH` (по умолчанию `data/app.db`).
 
-Таблица `platform_module_migrations` — единственная, которую создаёт общий runner
-(`internal/platform/migrations.go`): модуль заявляет `Migrations()` с номером
-версии и SQL, runner применяет каждую в отдельной транзакции, повторяющий
+`platform_module_migrations` — журнал самого runner'а (`internal/platform/migrations.go`):
+модуль заявляет `Migrations()` с
+номером версии и SQL, runner применяет каждую в отдельной транзакции, повторяющий
 запуск пропускает уже применённые, ошибка SQL откатывает миграцию и не даёт
-серверу стартовать. Сейчас `Migrations()` пусты у всех шести модулей — их
-таблицы относятся к core-схеме выше.
+серверу стартовать. Из семи модулей `Migrations()` пусты у шести — их таблицы
+относятся к core-схеме выше. У модуля `audit` миграция реальная
+(`2026-10-24_audit_events`), и `audit_events` создаёт именно она, а не
+`internal/database/db.go`.
 
 ## Шрифт
 
@@ -365,13 +399,14 @@ go test ./...                            # лимитер + аутентифик
 cd tests/ui && npm install
 npm run test:account                     # панель «Аккаунт и доступ» в jsdom
 npm run test:session                     # истечение сессии: редирект, а не spinner
-npm run test:all                         # все четыре сьюта (20 + 11 + 21 + 14)
+npm run test:all                         # все четыре сьюта (20 + 24 + 21 + 14)
 ```
 
 Go-тесты: `internal/ratelimit/limiter_test.go` (8 сценариев),
 `internal/handlers/auth_test.go`, `account_test.go`, `fields_test.go`,
-`logging_test.go`, `cookie_test.go` — 33 верхнеуровневых сценария и 23 подкейса
-в `internal/handlers`; из них 15 сценариев (29 проверок) добавлены в T0.3.
+`logging_test.go`, `cookie_test.go` — 45 верхнеуровневых сценария и 23 подкейса
+в `internal/handlers`; из них 15 сценариев (29 проверок) добавлены в T0.3,
+12 — журнал действий в T1.2.
 Добавлены в T1.1: `internal/authz/authz_test.go` (6 — матрица «роль × право» в
 обе стороны, отказ неизвестному праву, целостность реестра, `ScheduleScope`),
 `internal/platform/platform_test.go` (10 + 9 подтестов — диспетчер по методам,
@@ -379,12 +414,21 @@ Go-тесты: `internal/ratelimit/limiter_test.go` (8 сценариев),
 `cmd/server/modules_test.go` (2 — 14 живых проверок на настоящем списке модулей:
 401 анониму, 403 студенту с текстом отказа, 201 преподавателю, 403 чужому
 преподавателю, 201 админу через `*.any`, 405 на PUT, 404 на неизвестный путь,
-CSRF 403→201). Всего по репозиторию: 59 верхнеуровневых тестов и 32 подтеста.
+CSRF 403→201).
+Добавлены в T1.2: `internal/store/audit_test.go` (8 — первые store-тесты в
+репозитории: порядок, NULL-актор, фильтры, пагинация при одинаковом `at`,
+не-положительный `limit`, обрезка по рунам, `ON DELETE SET NULL` после удаления
+учётки, валидация имён действий), `internal/handlers/audit_test.go` (12 — точка
+записи на каждый случай, «сбой записи не меняет ответ запроса», «в журнале нет
+паролей, хешей и токенов»), `cmd/server/audit_test.go` (4 — доступ только
+администратору, цепочка оценки, фильтры и потолок `limit`, маршрут объявлен
+модулем). Всего по репозиторию: 83 верхнеуровневых теста и 32 подтеста.
 UI-тесты гоняют jsdom против живого сервера, поэтому требуют запущенного
 `go run ./cmd/server`, `ADMIN_USERNAME`/`ADMIN_PASSWORD` в окружении
 (иначе `admin-roles.cjs` не сможет войти) и применённого `tests/ui/seed.sh`
-(см. его шапку — сид выдаёт роль `teacher` админом). Всего 66 проверок:
-`assignments-modal.cjs` 20, `admin-roles.cjs` 11, `account-security.cjs` 21,
+(см. его шапку — сид выдаёт роль `teacher` админом). Всего 79 проверок:
+`assignments-modal.cjs` 20, `admin-roles.cjs` 24 (13 из них — журнал: доступ,
+отрисовка, запись смены роли, отсутствие секретов), `account-security.cjs` 21,
 `session-expiry.cjs` 14.
 
 Про `429` при повторном прогоне: вход ограничен 20 попытками на IP за 10 минут
@@ -433,22 +477,32 @@ SQL-пакета нет, схему применяет код (`internal/databas
 Первый прогон на GitHub — [run 40037668304](https://github.com/NumerR/SOS/actions/runs/40037668304),
 `success`, все три работы зелёные (Go / Фронтенд / UI на `ubuntu-latest`).
 Последующие прогоны той же ветки: [40038860104](https://github.com/NumerR/SOS/actions/runs/40038860104)
-(документация, `2f79eb8`) и [40041370917](https://github.com/NumerR/SOS/actions/runs/40041370917)
-(T1.1, `439a08b`) — оба `completed / success`.
+(документация, `2f79eb8`), [40041370917](https://github.com/NumerR/SOS/actions/runs/40041370917)
+(T1.1, `439a08b`), [40042500419](https://github.com/NumerR/SOS/actions/runs/40042500419)
+(документация, `7796033`), [40044462737](https://github.com/NumerR/SOS/actions/runs/40044462737)
+(T3.1, `8fef933`), [40045063515](https://github.com/NumerR/SOS/actions/runs/40045063515)
+(документация, `20055c5`) и [40047906544](https://github.com/NumerR/SOS/actions/runs/40047906544)
+(T1.2, `26066e8`) — все `completed / success`.
 
 ## Что дальше (не реализовано)
 
 - PostgreSQL и версионируемые миграции core-таблиц — T2.1 (ADR-0002), после него —
   сервис-контейнер PostgreSQL и dry-run миграций в CI, пересмотр дедлайна БД
   и размера пула; runner модульных миграций уже есть (`internal/platform`), но
-  `Migrations()` у всех шести модулей пусты, а SQL написан под SQLite;
-- `audit_events` (запись входа/выхода/оценки/смены роли в базу, а не в лог) — T1.2;
+  `Migrations()` пусты у шести модулей из семи, а SQL написан под SQLite —
+  и `audit_events` вместе с остальной схемой переедет в T2.1;
+- у журнала действий (T1.2 закрыт — `26066e8`, ADR-0012: `audit_events` пишется
+  из 15 точек обработчиков и читается администратором) осталось два пункта, и оба
+  не технические: срок хранения записей — в них идентификаторы, `ip` и
+  `user_agent`, то есть персональные данные, — ждёт решения владельца (`docs/03`
+  §3); и пагинация с фильтрами в панели администратора — API их отдаёт, страница
+  показывает первые 50;
 - раздача фронтенда через GitHub Pages и `deploy-frontend.yml` — остаток T3.1
   (ADR-0001, пункт 5: при публикации выбрать каталоги `login/index.html` или
   `404.html`-роутер); клиент, конфиг, политика 401 и относительные пути
   реализованы в `8fef933` (ADR-0011);
-- общий шапка/футер (`web/js/core/layout.js`), `profile.html` и страница 404,
-  повторяющийся submit-обработчик в `schedule.js` — остаток T3.1;
+- шапка и футер в одном компоненте (`web/js/core/layout.js`), `profile.html` и
+  страница 404, повторяющийся submit-обработчик в `schedule.js` — остаток T3.1;
 - модуль расписания по группе/дате и импорт из официального источника — T4.1,
   заблокирован: источник не предоставлен (ADR-0004);
 - восстановление пароля, подтверждение email;
@@ -460,3 +514,8 @@ SQL-пакета нет, схему применяет код (`internal/databas
 сравнений, реестр маршрутов `internal/platform`, шесть модулей в
 `internal/modules/*` — см. раздел «Права (`authz`)» и
 [docs/how-to-add-a-module.md](docs/how-to-add-a-module.md).
+
+Реализовано в T1.2 (`26066e8`): седьмой модуль `audit` — первый, который сам
+приносит схему (миграция `2026-10-24_audit_events`) и маршрут
+`GET /api/admin/audit` с правом `audit.view`; 15 точек записи в обработчиках,
+панель «Журнал действий» в `/admin`. Ядро под это не правилось — см. ADR-0012.
