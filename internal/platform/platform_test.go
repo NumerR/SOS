@@ -3,11 +3,13 @@ package platform_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/NumerR/SOS/internal/apierror"
 	"github.com/NumerR/SOS/internal/authz"
 	"github.com/NumerR/SOS/internal/database"
 	"github.com/NumerR/SOS/internal/platform"
@@ -126,10 +128,42 @@ func TestMountDispatchesByMethod(t *testing.T) {
 	}
 }
 
+// errorCode — код отказа из конверта ADR-0003.
+//
+// Тест разбирает JSON, а не ищет подстроку «"error"»: проверка-подстрока
+// прошла бы и на старом плоском {"error": "текст"}, из-за чего возврат к нему
+// в транспорте остался бы незамеченным.
+func errorCode(t *testing.T, body string) string {
+	t.Helper()
+
+	var raw struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(body), &raw); err != nil {
+		t.Fatalf("отказ не является JSON: %v (%s)", err, body)
+	}
+	if len(raw.Error) == 0 {
+		t.Fatalf("в отказе нет поля error: %s", body)
+	}
+	if raw.Error[0] == '"' {
+		t.Fatalf("отказ вернулся в старом плоском виде: %s", body)
+	}
+
+	var decoded apierror.Body
+	if err := json.Unmarshal(raw.Error, &decoded); err != nil {
+		t.Fatalf("разобрать объект ошибки: %v (%s)", err, body)
+	}
+	if decoded.Code == "" {
+		t.Fatalf("у отказа нет кода: %s", body)
+	}
+	return decoded.Code
+}
+
 // TestUnknownMethodIs405 — у пути есть обработчики, но не для этого метода.
 //
 // 405, а не 404: клиенту важно различать «такого ресурса нет» и «ресурс есть,
-// но так с ним не обращаются». Ответ в том же JSON-формате, что и у обработчиков.
+// но так с ним не обращаются». Ответ — тот же конверт, что пишут обработчики:
+// у транспорта нет причины отвечать иначе.
 func TestUnknownMethodIs405(t *testing.T) {
 	reg := platform.NewRegistry()
 	reg.Add(platform.Route{Path: "/api/courses", Method: "GET", Handler: okHandler("list")})
@@ -145,8 +179,8 @@ func TestUnknownMethodIs405(t *testing.T) {
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("код %d, ожидалось 405", rec.Code)
 	}
-	if body := rec.Body.String(); !strings.Contains(body, `"error"`) {
-		t.Errorf("тело ответа не в формате API: %s", body)
+	if code := errorCode(t, rec.Body.String()); code != apierror.ErrMethod {
+		t.Errorf("код отказа %q, ожидалось %q", code, apierror.ErrMethod)
 	}
 
 	// Незнакомый путь обязан остаться за mux-ом (404), а не превратиться в 405.
@@ -154,6 +188,31 @@ func TestUnknownMethodIs405(t *testing.T) {
 	mux.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/api/unknown", nil))
 	if missing.Code != http.StatusNotFound {
 		t.Errorf("несуществующий путь отдал %d, ожидалось 404", missing.Code)
+	}
+}
+
+// TestDefaultErrorWriterKeepsTheEnvelope — отказ транспорта без переданного
+// Middleware.Error.
+//
+// Поле Error можно не заполнять (тесты ядра его не заполняют), но форма отказа
+// от этого меняться не должна: клиент не обязан знать, кто именно ему отказал.
+func TestDefaultErrorWriterKeepsTheEnvelope(t *testing.T) {
+	reg := platform.NewRegistry()
+	reg.Add(platform.Route{Path: "/api/thing", Method: "GET", Public: true, Handler: okHandler("thing")})
+
+	mux := http.NewServeMux()
+	if err := platform.Mount(mux, reg, platform.Middleware{}); err != nil {
+		t.Fatalf("Mount: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/thing", nil))
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("код %d, ожидалось 405", rec.Code)
+	}
+	if code := errorCode(t, rec.Body.String()); code != apierror.ErrMethod {
+		t.Errorf("код отказа %q, ожидалось %q", code, apierror.ErrMethod)
 	}
 }
 

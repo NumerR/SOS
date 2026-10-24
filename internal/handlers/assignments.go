@@ -26,12 +26,12 @@ func (h *Handlers) ListAssignments(w http.ResponseWriter, r *http.Request) {
 
 	courseIDStr := r.URL.Query().Get("course_id")
 	if courseIDStr == "" {
-		writeError(w, http.StatusBadRequest, "course_id is required")
+		writeFieldError(w, http.StatusBadRequest, "course_id", "course_id is required")
 		return
 	}
 	courseID, err := strconv.ParseInt(courseIDStr, 10, 64)
 	if err != nil || courseID <= 0 {
-		writeError(w, http.StatusBadRequest, "invalid course_id")
+		writeFieldError(w, http.StatusBadRequest, "course_id", "invalid course_id")
 		return
 	}
 
@@ -103,7 +103,7 @@ func (h *Handlers) CreateAssignment(w http.ResponseWriter, r *http.Request) {
 
 	req.Title = strings.TrimSpace(req.Title)
 	if req.Title == "" {
-		writeError(w, http.StatusUnprocessableEntity, "title is required")
+		writeFieldError(w, http.StatusUnprocessableEntity, "title", "title is required")
 		return
 	}
 

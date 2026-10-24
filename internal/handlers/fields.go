@@ -47,7 +47,7 @@ func runeLen(value string) int {
 // чтобы фронтенд и тесты не пришлось переписывать.
 func validateLength(w http.ResponseWriter, field, value string, limit int) bool {
 	if runeLen(value) > limit {
-		writeError(w, http.StatusUnprocessableEntity, field+" is too long")
+		writeFieldError(w, http.StatusUnprocessableEntity, field, field+" is too long")
 		return false
 	}
 	return true
@@ -58,7 +58,7 @@ func validateLength(w http.ResponseWriter, field, value string, limit int) bool 
 // раньше, чем мы увидим req.Score.
 func validateScore(w http.ResponseWriter, score float64) bool {
 	if score < minScore || score > maxScore {
-		writeError(w, http.StatusUnprocessableEntity, "score must be between 0 and 10")
+		writeFieldError(w, http.StatusUnprocessableEntity, "score", "score must be between 0 and 10")
 		return false
 	}
 	return true

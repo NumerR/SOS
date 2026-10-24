@@ -132,7 +132,7 @@ async function settled(page, limit = 160) {
     check("чип преподавателя отличается от студенческого", noNameCells.roleClass === "chip chip-outline", noNameCells.roleClass);
 
     // --- 3. 500: «Загрузка…» не остаётся, текст ошибки виден. ---
-    const broken = boot({ me: () => json({ error: "server exploded" }, 500) });
+    const broken = boot({ me: () => json({ error: { code: "internal", message: "server exploded" } }, 500) });
     const brokenCells = await settled(broken);
     check("при 500 надписи «Загрузка…» нет", brokenCells.username === "—" && !/Загрузка/.test(broken.doc.getElementById("profileIdentity").textContent), brokenCells.username);
     check("при 500 показан текст ошибки", Boolean(brokenCells.statusText) && /error/.test(brokenCells.statusClass), brokenCells.statusClass + " · " + brokenCells.statusText);
@@ -145,7 +145,7 @@ async function settled(page, limit = 160) {
     check("при сетевом сбое есть сообщение", /Нет связи/.test(offlineCells.statusText), offlineCells.statusText);
 
     // --- 5. 401 без сессии: уводим на вход ровно один раз. ---
-    const expired = boot({ me: () => json({ error: "unauthorized" }, 401) });
+    const expired = boot({ me: () => json({ error: { code: "unauthorized", message: "unauthorized" } }, 401) });
     await settled(expired);
     check("при 401 навигация ровно одна", expired.navigations.length === 1, JSON.stringify(expired.navigations));
     check("при 401 уходим на вход", expired.navigations[0] === "login", String(expired.navigations[0]));

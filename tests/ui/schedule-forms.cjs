@@ -100,7 +100,7 @@ function boot({ role = "teacher", routes = {} } = {}) {
 function defaultBody(key, role, hit) {
     if (key === "GET /api/auth/me") {
         if (role === "guest") {
-            return json({ error: "session expired" }, 401);
+            return json({ error: { code: "unauthorized", message: "session expired" } }, 401);
         }
         return json({ id: 7, name: "Проверка Форма", email: "f@example.test", role });
     }
@@ -325,11 +325,14 @@ function bodyOf(post) {
     // 3. Ошибка сервера: форма НЕ сбрасывается, список НЕ перезагружается.
     const failing = boot({
         role: "teacher",
-        routes: { "POST /api/resources": () => json({ error: "title is required" }, 400) },
+        routes: { "POST /api/resources": () => json({ error: { code: "validation", message: "title is required", fields: { title: "title is required" } } }, 422) },
     });
     await wait(150);
     const badSubmit = await submit(failing, "resourceForm", { title: "Дубликат", category: "Материалы" });
-    check("серверная ошибка показана пользователю", badSubmit.message === "title is required", JSON.stringify(badSubmit.message));
+    check("серверная ошибка показана текстом сервера",
+        badSubmit.message.startsWith("title is required"), JSON.stringify(badSubmit.message));
+    check("названное сервером поле подписано по-человечески",
+        badSubmit.message.includes("Название"), JSON.stringify(badSubmit.message));
     check("ошибочный ответ не назван успехом", /error/.test(badSubmit.messageType) && !/success/.test(badSubmit.messageType),
         badSubmit.messageType);
     check("при ошибке форма не очищена — пользователь не теряет ввод",
@@ -405,7 +408,7 @@ function bodyOf(post) {
     // 6. Истёкшая сессия при сохранении: редирект на вход, но без зависшей кнопки.
     const expired = boot({
         role: "teacher",
-        routes: { "POST /api/resources": () => json({ error: "unauthorized" }, 401) },
+        routes: { "POST /api/resources": () => json({ error: { code: "unauthorized", message: "unauthorized" } }, 401) },
     });
     await wait(150);
     const expiredSubmit = await submit(expired, "resourceForm", { title: "Когда сессия истекла" });

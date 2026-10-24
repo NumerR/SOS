@@ -57,7 +57,7 @@ func (h *Handlers) Enroll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.CourseID <= 0 {
-		writeError(w, http.StatusBadRequest, "course_id is required")
+		writeFieldError(w, http.StatusBadRequest, "course_id", "course_id is required")
 		return
 	}
 
@@ -103,7 +103,7 @@ func (h *Handlers) CancelEnrollment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.CourseID <= 0 {
-		writeError(w, http.StatusBadRequest, "course_id is required")
+		writeFieldError(w, http.StatusBadRequest, "course_id", "course_id is required")
 		return
 	}
 
@@ -138,7 +138,7 @@ func (h *Handlers) CourseStudents(w http.ResponseWriter, r *http.Request) {
 
 	courseID, err := strconv.ParseInt(r.URL.Query().Get("course_id"), 10, 64)
 	if err != nil || courseID <= 0 {
-		writeError(w, http.StatusBadRequest, "valid course_id is required")
+		writeFieldError(w, http.StatusBadRequest, "course_id", "valid course_id is required")
 		return
 	}
 

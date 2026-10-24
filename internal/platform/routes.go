@@ -1,13 +1,13 @@
 package platform
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"sort"
 	"strings"
 
+	"github.com/NumerR/SOS/internal/apierror"
 	"github.com/NumerR/SOS/internal/authz"
 )
 
@@ -97,8 +97,12 @@ func Mount(mux *http.ServeMux, reg *Registry, mw Middleware) error {
 			len(reg.problems), strings.Join(reg.problems, "\n  - "))
 	}
 
+	// Отказ транспорта по умолчанию пишется тем же конвертом, что и отказы
+	// обработчиков (см. ADR-0003). Именно поэтому default здесь, а не в
+	// вызывающем коде: боевой роутер передаёт свой Error, а тест ядра может
+	// его не передавать — и форма ответа у них всё равно одна.
 	if mw.Error == nil {
-		mw.Error = writeDefaultError
+		mw.Error = apierror.Write
 	}
 
 	// Один путь может состоять из нескольких методов (GET листает, POST
@@ -195,17 +199,4 @@ func checkMiddleware(byPath map[string][]Route, mw Middleware) error {
 	sort.Strings(names)
 
 	return fmt.Errorf("platform: Middleware не заполнен: %s", strings.Join(names, ", "))
-}
-
-// writeDefaultError — формат ошибки по умолчанию: тот же JSON, что отдают
-// обработчики ({"error": "..."}), чтобы клиент не встречал два разных контракта
-// в зависимости от того, кто отказал — маршрутизатор или тело обработчика
-// (см. docs/02 §4 о переходе на code/message).
-func writeDefaultError(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-
-	// Encoder, а не ручная склейка строк: сообщение может содержать кавычку
-	// или перевод строки, а JSON обязан оставаться валидным.
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
 }

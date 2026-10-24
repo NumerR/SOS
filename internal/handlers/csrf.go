@@ -73,11 +73,14 @@ func (h *Handlers) RequireCSRF(next http.Handler) http.Handler {
 		headerToken := r.Header.Get(csrfHeaderName)
 
 		if cookieToken == "" {
-			writeError(w, http.StatusForbidden, "csrf token missing")
+			// Отдельный код, а не forbidden: фронтенд на csrf_failed знает,
+			// что нужно перезагрузить токен (кука живёт дольше, чем её копия в
+			// памяти страницы), и не показывает пользователю «недостаточно прав».
+			writeCodeError(w, http.StatusForbidden, ErrCSRF, "csrf token missing")
 			return
 		}
 		if headerToken == "" || !constantTimeEqual(headerToken, cookieToken) {
-			writeError(w, http.StatusForbidden, "invalid csrf token")
+			writeCodeError(w, http.StatusForbidden, ErrCSRF, "invalid csrf token")
 			return
 		}
 

@@ -42,7 +42,7 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.AssignmentID <= 0 {
-		writeError(w, http.StatusBadRequest, "assignment_id is required")
+		writeFieldError(w, http.StatusBadRequest, "assignment_id", "assignment_id is required")
 		return
 	}
 
@@ -105,12 +105,12 @@ func (h *Handlers) ListSubmissionsForAssignment(w http.ResponseWriter, r *http.R
 
 	aidStr := r.URL.Query().Get("assignment_id")
 	if aidStr == "" {
-		writeError(w, http.StatusBadRequest, "assignment_id is required")
+		writeFieldError(w, http.StatusBadRequest, "assignment_id", "assignment_id is required")
 		return
 	}
 	aid, err := strconv.ParseInt(aidStr, 10, 64)
 	if err != nil || aid <= 0 {
-		writeError(w, http.StatusBadRequest, "invalid assignment_id")
+		writeFieldError(w, http.StatusBadRequest, "assignment_id", "invalid assignment_id")
 		return
 	}
 
@@ -178,7 +178,7 @@ func (h *Handlers) GradeSubmission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.SubmissionID <= 0 {
-		writeError(w, http.StatusBadRequest, "submission_id is required")
+		writeFieldError(w, http.StatusBadRequest, "submission_id", "submission_id is required")
 		return
 	}
 

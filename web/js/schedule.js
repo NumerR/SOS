@@ -650,7 +650,9 @@ document.addEventListener("DOMContentLoaded", async () => {
                 form.reset();
                 await reload();
             } catch (error) {
-                GS.showMessage(message, error.message || errorText, "error");
+                // Сервер назвал поле — к тексту добавится его подпись из формы
+                // («Название обязательно» уходит как текст, поля знает сервер).
+                GS.showMessage(message, GS.describeServerError(error, form, errorText), "error");
             } finally {
                 if (btn) { btn.classList.remove("is-loading"); btn.disabled = false; btn.innerHTML = original; }
             }

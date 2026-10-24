@@ -291,7 +291,9 @@ const AssignmentsUI = (() => {
         try {
             return await GS.fetchJSON(url);
         } catch (error) {
-            return { error: GS.escapeHtml(error.message || "Не удалось загрузить данные") };
+            // Текст оставляем как есть: errorBlock экранирует его сам, и
+            // повторное экранирование здесь дало бы &amp;#039; на экране.
+            return { error: error.message || "Не удалось загрузить данные" };
         }
     }
 
@@ -460,7 +462,10 @@ const AssignmentsUI = (() => {
                 ModalManager.close();
             }, 700);
         } catch (error) {
-            GS.showMessage(statusEl, error.message || "Не удалось сохранить", "error");
+            // Подпись поля из error.fields: модалка создания задания и форма
+            // сдачи — те же формы, что и на странице, и серверное «title is
+            // required» человек должен видеть как «Название».
+            GS.showMessage(statusEl, GS.describeServerError(error, form, "Не удалось сохранить"), "error");
         } finally {
             if (submitButton) {
                 submitButton.classList.remove("is-loading");

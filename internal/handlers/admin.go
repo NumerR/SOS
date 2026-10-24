@@ -66,12 +66,12 @@ func (h *Handlers) AdminSetRole(w http.ResponseWriter, r *http.Request) {
 
 	role := strings.ToLower(strings.TrimSpace(req.Role))
 	if !assignableRoles[role] {
-		writeError(w, http.StatusUnprocessableEntity, "role must be student, teacher or admin")
+		writeFieldError(w, http.StatusUnprocessableEntity, "role", "role must be student, teacher or admin")
 		return
 	}
 
 	if req.UserID <= 0 {
-		writeError(w, http.StatusUnprocessableEntity, "user_id is required")
+		writeFieldError(w, http.StatusUnprocessableEntity, "user_id", "user_id is required")
 		return
 	}
 

@@ -42,7 +42,7 @@ func (h *Handlers) EventsAPI(w http.ResponseWriter, r *http.Request) {
 		req.Description = strings.TrimSpace(req.Description)
 
 		if req.Title == "" {
-			writeError(w, http.StatusUnprocessableEntity, "title is required")
+			writeFieldError(w, http.StatusUnprocessableEntity, "title", "title is required")
 			return
 		}
 		if !validateLength(w, "title", req.Title, maxTitleLength) ||

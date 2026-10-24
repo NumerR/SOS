@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NumerR/SOS/internal/apierror"
 	"github.com/NumerR/SOS/internal/database"
 	"github.com/NumerR/SOS/internal/handlers"
 	"github.com/NumerR/SOS/internal/platform"
@@ -126,16 +127,25 @@ func TestRouterFromModuleList(t *testing.T) {
 	}
 
 	// 11. Недекларированный метод даёт 405 в формате API, а не html-текст:
-	//     раньше за это отвечал switch внутри обработчика.
+	//     раньше за это отвечал switch внутри обработчика. Проверяется код, а не
+	//     наличие слова error: плоский {"error": "текст"} содержал его тоже, и
+	//     именно поэтому транспорт до сих пор мог отвечать по-старому.
 	resp, body = do(srv, http.MethodPut, "/api/courses", `{}`, student)
-	if resp.StatusCode != http.StatusMethodNotAllowed || !strings.Contains(body, `"error"`) {
-		t.Errorf("PUT /api/courses: %d %s, ожидалось 405 + JSON", resp.StatusCode, body)
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("PUT /api/courses: %d %s, ожидалось 405", resp.StatusCode, body)
+	}
+	if code := errorCode(t, body); code != apierror.ErrMethod {
+		t.Errorf("PUT /api/courses: код отказа %q, ожидалось %q", code, apierror.ErrMethod)
 	}
 
-	// 12. Незнакомый API-путь остаётся 404 — и отвечает JSON, а не текстом
-	//     (T3.1: страница 404 положена только HTML-путям).
-	if resp, body = get(srv, "/api/definitely-not-here", student); resp.StatusCode != http.StatusNotFound || !strings.Contains(body, `"error"`) {
-		t.Errorf("несуществующий API-путь: %d %s, ожидалось 404 + JSON", resp.StatusCode, body)
+	// 12. Незнакомый API-путь остаётся 404 — и отвечает конвертом ошибки, а не
+	//     текстом (T3.1: страница 404 положена только HTML-путям).
+	resp, body = get(srv, "/api/definitely-not-here", student)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("несуществующий API-путь: %d %s, ожидалось 404", resp.StatusCode, body)
+	}
+	if code := errorCode(t, body); code != apierror.ErrNotFound {
+		t.Errorf("несуществующий API-путь: код отказа %q, ожидалось %q", code, apierror.ErrNotFound)
 	}
 
 	// 13. POST без CSRF-токена не проходит, с токеном — создаёт запись в
@@ -361,6 +371,37 @@ func do(srv *httptest.Server, method, path, body string, user *session) (*http.R
 	}
 
 	return resp, string(raw)
+}
+
+// errorCode — код отказа из конверта ADR-0003.
+//
+// Разбирает JSON, а не ищет подстроку: «в ответе есть слово error» осталось бы
+// справедливым и для старого плоского формата, а значит, и для любого ответа,
+// вернувшегося к нему.
+func errorCode(t *testing.T, body string) string {
+	t.Helper()
+
+	var raw struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(body), &raw); err != nil {
+		t.Fatalf("отказ не является JSON: %v (%s)", err, body)
+	}
+	if len(raw.Error) == 0 {
+		t.Fatalf("в отказе нет поля error: %s", body)
+	}
+	if raw.Error[0] == '"' {
+		t.Fatalf("отказ вернулся к старому плоскому виду: %s", body)
+	}
+
+	var decoded apierror.Body
+	if err := json.Unmarshal(raw.Error, &decoded); err != nil {
+		t.Fatalf("разобрать объект ошибки: %v (%s)", err, body)
+	}
+	if decoded.Code == "" {
+		t.Fatalf("у отказа нет кода: %s", body)
+	}
+	return decoded.Code
 }
 
 // notesModule — пример модуля, который принёс и свою таблицу, и свои маршруты.

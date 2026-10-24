@@ -120,7 +120,7 @@ func (h *Handlers) AdminAudit(w http.ResponseWriter, r *http.Request) {
 
 	if action := strings.TrimSpace(query.Get("action")); action != "" {
 		if !store.ValidAuditAction(action) {
-			writeError(w, http.StatusUnprocessableEntity,
+			writeFieldError(w, http.StatusUnprocessableEntity, "action",
 				"action must be one of: "+strings.Join(store.AuditActions(), ", "))
 			return
 		}
@@ -130,7 +130,7 @@ func (h *Handlers) AdminAudit(w http.ResponseWriter, r *http.Request) {
 	if raw := strings.TrimSpace(query.Get("actor_user_id")); raw != "" {
 		actorID, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || actorID <= 0 {
-			writeError(w, http.StatusUnprocessableEntity, "actor_user_id must be a positive number")
+			writeFieldError(w, http.StatusUnprocessableEntity, "actor_user_id", "actor_user_id must be a positive number")
 			return
 		}
 		filter.ActorID = actorID
@@ -139,7 +139,7 @@ func (h *Handlers) AdminAudit(w http.ResponseWriter, r *http.Request) {
 	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
 		limit, err := strconv.Atoi(raw)
 		if err != nil || limit <= 0 {
-			writeError(w, http.StatusUnprocessableEntity, "limit must be a positive number")
+			writeFieldError(w, http.StatusUnprocessableEntity, "limit", "limit must be a positive number")
 			return
 		}
 		if limit > maxAuditLimit {
@@ -151,7 +151,7 @@ func (h *Handlers) AdminAudit(w http.ResponseWriter, r *http.Request) {
 	if raw := strings.TrimSpace(query.Get("offset")); raw != "" {
 		offset, err := strconv.Atoi(raw)
 		if err != nil || offset < 0 {
-			writeError(w, http.StatusUnprocessableEntity, "offset must be 0 or greater")
+			writeFieldError(w, http.StatusUnprocessableEntity, "offset", "offset must be 0 or greater")
 			return
 		}
 		filter.Offset = offset

@@ -42,12 +42,48 @@
             : "Слишком много попыток, повторите позже";
     }
 
+    // Подпись поля по ключу из error.fields (ADR-0003).
+    //
+    // Сервер называет поле как он его читает в JSON — `title`, `group`,
+    // `course_id`. Человек видит в форме «Название», «Группа». Подпись берём у
+    // самой формы: ищем input по name и читаем текст его label. Если поля в
+    // форме нет (или label нет), возвращаем ключ как есть — лучше незнакомое
+    // слово, чем молчание.
+    function fieldLabel(form, key) {
+        if (!form || !key) return key || "";
+        const control = form.elements ? form.elements[key] : null;
+        if (!control) return key;
+        const label = control.labels && control.labels.length ? control.labels[0] : null;
+        if (!label) return key;
+        // Внутренний <span class="field-label"> несёт подпись, а в label может
+        // быть ещё и подсказка-«helper» — берём именно подпись, если она есть.
+        const caption = label.querySelector(".field-label");
+        return (caption ? caption.textContent : label.textContent).trim() || key;
+    }
+
+    // Единый пересказ ошибки API для блока формы: текст сервера плюс подпись
+    // поля, если сервер назвал поле. Pages-совместимый и без предположений о
+    // формате: у ошибки без конверта (старый сервер, прокси, обрыв сети)
+    // остаётся просто message.
+    function describeServerError(error, form, fallback) {
+        const message = (error && error.message) || fallback || "Запрос не удался";
+        const fields = error && error.fields ? error.fields : null;
+        if (!fields) return message;
+
+        const keys = Object.keys(fields);
+        if (!keys.length) return message;
+
+        const labels = keys.map((key) => fieldLabel(form, key)).join(", ");
+        return `${message} — поле: ${labels}`;
+    }
+
     // Единственная точка, через которую страницы ходят в API. Параметры:
     //   method/body/headers — как в fetch;
     //   on401: "redirect" (по умолчанию) | "throw" — "throw" нужен формам, где
     //   401 является штатным ответом (вход с неверным паролем, смена пароля с
     //   неверным текущим), и страницам с гостевым режимом.
-    // Бросает ApiError с status/message/retryAfter/data — см. core/api-client.js.
+    // Бросает ApiError с status/message/retryAfter/data плюс code и fields из
+    // серверного конверта — см. core/api-client.js.
     function fetchJSON(url, options = {}) {
         if (!global.GS.api) {
             throw new Error("Не подключён core/api-client.js — запросы к API недоступны");
@@ -96,6 +132,8 @@
         fetchJSON,
         bindLogout,
         rateLimitText,
+        describeServerError,
+        fieldLabel,
 
         // Подписи и данные-помощники живут в core/format.js; здесь они
         // переэкспортируются под короткими именами, чтобы страницам не

@@ -97,27 +97,30 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 
 	role, ok := normalizeRole(req.Role)
 	if !ok {
-		writeError(w, http.StatusUnprocessableEntity, "role is assigned by an administrator; register as a student")
+		writeFieldError(w, http.StatusUnprocessableEntity, "role",
+			"role is assigned by an administrator; register as a student")
 		return
 	}
 
 	if !usernamePattern.MatchString(req.Username) {
-		writeError(w, http.StatusUnprocessableEntity, "username must contain 3-32 letters, digits, dots, dashes or underscores")
+		writeFieldError(w, http.StatusUnprocessableEntity, "username",
+			"username must contain 3-32 letters, digits, dots, dashes or underscores")
 		return
 	}
 
 	if !emailPattern.MatchString(req.Email) {
-		writeError(w, http.StatusUnprocessableEntity, "invalid email")
+		writeFieldError(w, http.StatusUnprocessableEntity, "email", "invalid email")
 		return
 	}
 
 	if n := utf8.RuneCountInString(req.Password); n < minPasswordLength || n > maxPasswordLength {
-		writeError(w, http.StatusUnprocessableEntity, "password must be between 8 and 200 characters")
+		writeFieldError(w, http.StatusUnprocessableEntity, "password",
+			"password must be between 8 and 200 characters")
 		return
 	}
 
 	if utf8.RuneCountInString(req.FullName) > 100 {
-		writeError(w, http.StatusUnprocessableEntity, "full name is too long")
+		writeFieldError(w, http.StatusUnprocessableEntity, "full_name", "full name is too long")
 		return
 	}
 
@@ -389,11 +392,12 @@ func (h *Handlers) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if utf8.RuneCountInString(req.NewPassword) < minPasswordLength {
-		writeError(w, http.StatusUnprocessableEntity, "password must be at least 8 characters")
+		writeFieldError(w, http.StatusUnprocessableEntity, "new_password",
+			"password must be at least 8 characters")
 		return
 	}
 	if utf8.RuneCountInString(req.NewPassword) > maxPasswordLength {
-		writeError(w, http.StatusUnprocessableEntity, "password is too long")
+		writeFieldError(w, http.StatusUnprocessableEntity, "new_password", "password is too long")
 		return
 	}
 
@@ -418,12 +422,13 @@ func (h *Handlers) ChangePassword(w http.ResponseWriter, r *http.Request) {
 			detail:     "invalid current password",
 			ok:         false,
 		})
-		writeError(w, http.StatusUnauthorized, "current password is incorrect")
+		writeCodeError(w, http.StatusUnauthorized, ErrUnauthorized, "current password is incorrect")
 		return
 	}
 
 	if req.CurrentPassword == req.NewPassword {
-		writeError(w, http.StatusUnprocessableEntity, "new password must differ from the current one")
+		writeFieldError(w, http.StatusUnprocessableEntity, "new_password",
+			"new password must differ from the current one")
 		return
 	}
 

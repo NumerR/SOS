@@ -45,7 +45,7 @@ func (h *Handlers) CoursesAPI(w http.ResponseWriter, r *http.Request) {
 		req.Teacher = strings.TrimSpace(req.Teacher)
 
 		if req.Title == "" {
-			writeError(w, http.StatusUnprocessableEntity, "title is required")
+			writeFieldError(w, http.StatusUnprocessableEntity, "title", "title is required")
 			return
 		}
 

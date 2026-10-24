@@ -159,7 +159,7 @@ function boot({ role = "teacher", routes = {}, seed = null } = {}) {
 
 function defaultBody(key, role, hit) {
     if (key === "GET /api/auth/me") {
-        return role === "guest" ? json({ error: "session expired" }, 401)
+        return role === "guest" ? json({ error: { code: "unauthorized", message: "session expired" } }, 401)
             : json({ id: 7, name: "Проверка", email: "p@example.test", role });
     }
     if (key === "GET /api/schedule/groups") return json(hit === 1 ? GROUPS : GROUPS);
@@ -318,7 +318,7 @@ async function until(page, predicate, tries = 60) {
     const broken = boot({
         role: "guest",
         seed: { group: "494", name: "Б-ИСиТ-22", month: 10, year: 2026 },
-        routes: { "GET /api/schedule/lessons": json({ error: "Источник АПЭКС-ВУЗ не ответил (пары 10.2026)." }, 502) },
+        routes: { "GET /api/schedule/lessons": json({ error: { code: "source_unavailable", message: "Источник АПЭКС-ВУЗ не ответил (пары 10.2026)." } }, 502) },
     });
     await until(broken, () => /не ответил/.test(text(broken.doc, "timetable")));
     check("сбой источника показан текстом сервера", /не ответил/.test(text(broken.doc, "timetable")), text(broken.doc, "timetable").slice(0, 80));
@@ -327,7 +327,7 @@ async function until(page, predicate, tries = 60) {
     const gone = boot({
         role: "guest",
         seed: { group: "999", name: "НЕТ-ТАКОЙ-22", month: 10, year: 2026 },
-        routes: { "GET /api/schedule/lessons": json({ error: "group not found in the group catalogue: sync it first" }, 404) },
+        routes: { "GET /api/schedule/lessons": json({ error: { code: "not_found", message: "group not found in the group catalogue: sync it first", fields: { group: "group not found in the group catalogue: sync it first" } } }, 404) },
     });
     await until(gone, () => /нет в импортированном каталоге/.test(text(gone.doc, "timetable")));
     check("несуществующая группа объяснена по-русски", /Нет такой группы|такой группы нет/i.test(text(gone.doc, "timetable")),
@@ -386,7 +386,7 @@ async function until(page, predicate, tries = 60) {
     const failed = boot({
         role: "admin",
         seed: { group: "494", name: "Б-ИСиТ-22", month: 10, year: 2026 },
-        routes: { "POST /api/schedule/source/lessons": json({ error: "Источник АПЭКС-ВУЗ не ответил (пары 10.2026). Проверьте APEKS_TOKEN и попробуйте позже." }, 502) },
+        routes: { "POST /api/schedule/source/lessons": json({ error: { code: "source_unavailable", message: "Источник АПЭКС-ВУЗ не ответил (пары 10.2026). Проверьте APEKS_TOKEN и попробуйте позже." } }, 502) },
     });
     // ждём статуса источника: он приходит в самом конце инициализации, и клик
     // раньше этого момента уткнулся бы в кнопку без обработчика (страница

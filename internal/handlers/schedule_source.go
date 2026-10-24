@@ -109,7 +109,7 @@ func (h *Handlers) ScheduleLessonsAPI(w http.ResponseWriter, r *http.Request) {
 
 	groupRef := strings.TrimSpace(r.URL.Query().Get("group"))
 	if groupRef == "" {
-		writeError(w, http.StatusUnprocessableEntity, "group is required")
+		writeFieldError(w, http.StatusUnprocessableEntity, "group", "group is required")
 		return
 	}
 
@@ -331,7 +331,7 @@ func (h *Handlers) ScheduleImportAPI(w http.ResponseWriter, r *http.Request) {
 
 	groupRef := strings.TrimSpace(req.Group)
 	if groupRef == "" {
-		writeError(w, http.StatusUnprocessableEntity, "group is required")
+		writeFieldError(w, http.StatusUnprocessableEntity, "group", "group is required")
 		return
 	}
 
@@ -560,7 +560,8 @@ func queryInt(r *http.Request, name string, fallback int) int {
 func (h *Handlers) writeScheduleSourceError(w http.ResponseWriter, r *http.Request, field string, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		writeError(w, http.StatusNotFound, fmt.Sprintf("%s not found in the group catalogue: sync it first", field))
+		writeFieldError(w, http.StatusNotFound, "group",
+			fmt.Sprintf("%s not found in the group catalogue: sync it first", field))
 	case errors.Is(err, store.ErrAmbiguousGroup):
 		// Текст собран в store и уже содержит список id: он для человека,
 		// который будет выбирать группу вручную.
