@@ -252,6 +252,11 @@ func TestLoginBruteForceIsLockedPerAccount(t *testing.T) {
 	if rec.Header().Get("Retry-After") == "" {
 		t.Fatal("429 обязан сопровождаться Retry-After")
 	}
+	// Форма отказа та же, что у остальных: клиент различает «заблокирован» и
+	// «неверный пароль» по коду, а не по наличию заголовка.
+	if decoded := decodeError(t, rec); decoded.Code != ErrRateLimited {
+		t.Errorf("код отказа %q, ожидалось %q", decoded.Code, ErrRateLimited)
+	}
 
 	// Верный пароль тоже не должен проходить, пока аккаунт под блокировкой.
 	rec = callLogin(h, `{"identifier":"bob","password":"rightpass1"}`, addr, nil)

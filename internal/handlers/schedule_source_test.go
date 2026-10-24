@@ -756,6 +756,11 @@ func TestImportWhenSourceIsNotConfigured(t *testing.T) {
 	if !strings.Contains(body, "APEKS_TOKEN") {
 		t.Errorf("ответ не говорит, чего не хватает: %s", body)
 	}
+	// Отказ источника различим кодом, а не только текстом: страница решает по
+	// нему «показать кнопку повтора», а не «показать красную строку».
+	if decoded := decodeError(t, rec); decoded.Code != ErrSourceUnavailable {
+		t.Errorf("код отказа %q, ожидалось %q", decoded.Code, ErrSourceUnavailable)
+	}
 
 	event := lastAudit(t, e.h, store.AuditScheduleImport)
 	if event.OK {
@@ -791,6 +796,11 @@ func TestImportWhenSourceFailsHidesDetails(t *testing.T) {
 	}
 	if !strings.Contains(body, apeks.DisplayName) {
 		t.Errorf("ответ не называет источник: %s", body)
+	}
+	// 502 и 503 для клиента — один код: «источник сейчас не даст данных».
+	// Различать «не настроен» и «не ответил» приходится по тексту, а не по коду.
+	if decoded := decodeError(t, rec); decoded.Code != ErrSourceUnavailable {
+		t.Errorf("код отказа %q, ожидалось %q", decoded.Code, ErrSourceUnavailable)
 	}
 
 	// Ничего не записано: отказ источника не должен оставлять половину месяца в
