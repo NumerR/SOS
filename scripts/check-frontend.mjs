@@ -31,7 +31,11 @@
 //   8. связь «поле → подсказка / строка сообщения» через aria-describedby:
 //      ссылки ведут на существующие id, каждое поле формы со статус-строкой на
 //      неё ссылается, подсказка с id подключена, и сгенерированные в JS поля не
-//      исключение (остаток T0.5, ADR-0018).
+//      исключение (остаток T0.5, ADR-0018);
+//   9. индикатор фокуса (остаток доступности, ADR-0020): каждое правило с
+//      :focus/:focus-visible/:focus-within, которое снимает системный контур или
+//      рисует свой, обязано показать цвет с контрастом >= 3:1 против каждой
+//      подложки проекта — «фокус есть, но не виден» теперь красное.
 //
 // Запуск локально: node scripts/check-frontend.mjs
 // Код выхода 0 — всё в порядке, 1 — есть находки (они печатаются списком).
@@ -591,12 +595,169 @@ if (statusForms === 0) {
   fail("web/", "ни одна форма не содержит строку с role=\"status\" — правилу про ссылку на сообщение нечего проверять");
 }
 
+// ---------- 9. индикатор фокуса обязан быть чем-то показан ----------
+//
+// WCAG 2.4.7 требует, чтобы элемент, получивший фокус, был виден, а 1.4.11 —
+// чтобы сам индикатор держал 3:1 с тем, что вокруг него. До ADR-0020 этот пункт
+// был единственной закрытой договорённостью доступности без замка: кольца в
+// style.css существовали, но их цвет никто не считал. Живой замер
+// (scripts/check-focus.mjs, ADR-0020) нашёл реальную дыру: у радиокнопки кольцо
+// рисовал только --teal-tint (#d6e2df) — 1.10:1 к подложке панели #efe9dc и
+// 1.03:1 к фону страницы, а в кадре элемента 211 изменившихся пикселей из 8464,
+// из них ни одного с контрастом ≥3:1 (максимум 1.33:1). Фокус был, но не виделся
+// — глазами это выглядит как «Tab провалился в никуда».
+//
+// Скриншоты — это живая приёмка: нужен браузер и запущенный сервер, поэтому в CI
+// check-focus.mjs не стоит (обоснование — ADR-0020). Здесь статический замок на
+// тот же дефект, чтобы новое «мягкое» кольцо не вернулось незаметно:
+//   · правило с :focus / :focus-visible / :focus-within, которое снимает
+//     системный контур или рисует свой (outline, box-shadow, border), обязано
+//     задать хотя бы один цвет с контрастом >= 3:1 против каждой подложки;
+//   · правило, снявшее контур и не показавшее ничего вместо него, красное —
+//     кроме именованного исключения с проверяемой причиной;
+//   · стражи: ни одного фокус-правила в CSS или ни одного посчитанного кольца —
+//     это не «зелёный CI», а пропавшая проверка (тот же класс риска, что в
+//     группах 6-8); неиспользуемое исключение тоже красное.
+//
+
+// Кольцо фокуса должно быть видно на любой подложке, а не на «ту, что была
+// под рукой при замере»: компонент стоит то на фоне страницы, то на панели, то
+// на утопленном поле. Статически мы не знаем, какая из трёх, поэтому держим
+// худшую — цвет обязан пройти 3:1 (WCAG 1.4.11) против каждой.
+const FOCUS_SURFACES = ["--parchment", "--parchment-deep", "--surface"];
+const MIN_FOCUS_RATIO = 3.0;
+
+// Единственное освобождённое правило. Причина проверяемая: `.main` — цель
+// skip-link (у контейнера tabindex="-1"), а не компонент управления; WCAG 2.4.7
+// требует индикатор у того, чем можно управлять. Без этой строки браузер рисовал
+// бы рамку вокруг половины страницы, а переход и так виден по смещению содержимого.
+const FOCUS_EXEMPT = new Map([
+  [".main:focus", "у контейнера нет собственной рамки, и снимает он только системный контур; " +
+    "сам переход виден по сместившемуся содержимому и по focus на skip-link"],
+]);
+
+// Свойства, которыми в этом проекте рисуют индикатор. `border-radius` в список
+// не входит намеренно: скругление цвета не задаёт, и считать по нему нечего.
+const INDICATOR_DECL = /(?:^|[;\s])(outline|outline-color|box-shadow|border|border-color|border-(?:top|right|bottom|left)(?:-(?:color|width))?)\s*:\s*([^;]+)/g;
+const COLOR_REF = /var\((--[a-zA-Z-]+)\)|(#[0-9a-fA-F]{6})/g;
+
+// Токенизированные тени (--e1, --inset1) разворачиваются в rgba-список, не в
+// цвет: они в кадре есть, но контрастом не считаются — несущий цвет кольца всегда
+// стоит отдельным var() или hex.
+function colorRefs(value) {
+  const out = [];
+  for (const m of value.matchAll(COLOR_REF)) {
+    const ref = (m[1] || m[2]).toLowerCase();
+    const hex = resolveColor(ref);
+    if (hex) out.push({ ref, hex });
+  }
+  return out;
+}
+
+const focusSurfaces = [];
+for (const name of FOCUS_SURFACES) {
+  const hex = tokens[name];
+  if (!hex) {
+    fail("css/style.css", `контраст-проверка: подложка ${name} не найдена в :root — список FOCUS_SURFACES устарел`);
+    continue;
+  }
+  focusSurfaces.push({ name, hex });
+}
+
+// Для каждого нарисованного цвета считаем худшую из подложек: кольцо пригодно,
+// только если проходит и на светлой панели, и на утопленном поле.
+function worstSurface(color) {
+  let worst = Infinity;
+  let where = null;
+  for (const surface of focusSurfaces) {
+    const value = ratio(color.hex, surface.hex);
+    if (value === null) return null;
+    if (value < worst) {
+      worst = value;
+      where = surface.name;
+    }
+  }
+  return { worst, where };
+}
+
+let focusRules = 0;
+let focusRings = 0;
+let focusWorst = null;
+const seenExempts = new Set();
+
+for (const block of bareCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+  const selector = block[1].trim().replace(/\s+/g, " ");
+  if (selector.startsWith(":root") || selector.startsWith("@")) continue;
+  if (!/:focus(-visible|-within)?\b/.test(selector)) continue;
+  focusRules += 1;
+  if (FOCUS_EXEMPT.has(selector)) {
+    seenExempts.add(selector);
+    continue;
+  }
+
+  const drawn = [];
+  let indicatorDecls = 0;
+  let removesOutline = false;
+  for (const m of block[2].matchAll(INDICATOR_DECL)) {
+    indicatorDecls += 1;
+    if (m[1] === "outline" && /^\s*(?:none|0)\b/.test(m[2])) removesOutline = true;
+    drawn.push(...colorRefs(m[2]));
+  }
+
+  // Правило не трогало ни контур, ни тень, ни рамку — системный индикатор
+  // остался на месте, рисовать нечего.
+  if (!indicatorDecls) continue;
+
+  if (!drawn.length) {
+    fail("css/style.css", `правило «${selector}» ${removesOutline ? "снимает системный контур и не задаёт ни одного посчитаемого цвета" : "рисует индикатор фокуса без цвета из токенов или hex"} — чем показан фокус, непонятно`);
+    continue;
+  }
+  focusRings += 1;
+
+  let best = null;
+  for (const color of drawn) {
+    const candidate = worstSurface(color);
+    if (!candidate) continue;
+    if (!best || candidate.worst > best.worst) best = { ...candidate, ref: color.ref };
+  }
+  if (!best) {
+    fail("css/style.css", `правило «${selector}»: цвета индикатора (${drawn.map((c) => c.ref).join(", ")}) не sRGB hex — контраст кольца посчитать нечем`);
+    continue;
+  }
+  if (best.worst < MIN_FOCUS_RATIO) {
+    fail("css/style.css", `правило «${selector}»: самый контрастный цвет индикатора ${best.ref} даёт ${best.worst.toFixed(2)}:1 против ${best.where} — нужно ${MIN_FOCUS_RATIO}:1, кольцо фокуса на этой подложке не видно (WCAG 1.4.11/2.4.7)`);
+    continue;
+  }
+  if (!focusWorst || best.worst < focusWorst.worst) focusWorst = { ...best, selector };
+}
+
+// Стражи вырождения: пустая проверка выглядит как зелёный CI.
+if (focusRules === 0) {
+  fail("css/style.css", "в style.css не найдено ни одного правила с :focus — проверке индикатора фокуса нечего считать");
+}
+if (focusRings === 0) {
+  fail("css/style.css", "ни одно правило фокуса не рисует индикатора с посчитанным цветом — кольцам проверять нечего");
+}
+for (const [selector, reason] of FOCUS_EXEMPT) {
+  if (!seenExempts.has(selector)) {
+    fail("css/style.css", `исключение «${selector}» больше не встречается в правилах style.css — убери его из FOCUS_EXEMPT (${reason})`);
+  }
+}
+
+contrastNotes.push(`фокус: правил ${focusRules}, колец с посчитанным контрастом ${focusRings}, ` +
+  `порог ${MIN_FOCUS_RATIO}:1 против каждой из подложек (${FOCUS_SURFACES.join(", ")}), ` +
+  `исключений ${FOCUS_EXEMPT.size}` +
+  (focusWorst ? ` — самое слабое проходящее кольцо: ${focusWorst.ref} в «${focusWorst.selector}», ${focusWorst.worst.toFixed(2)}:1 против ${focusWorst.where}` : ""));
+for (const [selector, reason] of FOCUS_EXEMPT) {
+  if (seenExempts.has(selector)) contrastNotes.push(`фокус: освобождено «${selector}» — ${reason}`);
+}
+
 if (problems.length > 0) {
   console.error(`check-frontend: найдено проблем — ${problems.length}`);
   for (const p of problems) console.error("  FAIL " + p);
   process.exit(1);
 }
 
-console.log(`check-frontend: ок — страниц ${htmlFiles(WEB).length}, проверены подключения скриптов, стилей, id, инлайновые обработчики, структура заголовков, skip-link, scope у таблиц, контраст токенов и его покрытие, общность submit-механизма и ссылки aria-describedby`);
+console.log(`check-frontend: ок — страниц ${htmlFiles(WEB).length}, проверены подключения скриптов, стилей, id, инлайновые обработчики, структура заголовков, skip-link, scope у таблиц, контраст токенов и его покрытие, общность submit-механизма, ссылки aria-describedby и различимость колец фокуса`);
 for (const n of notes) console.log("  ok  " + n);
 for (const n of contrastNotes) console.log("  ok  " + n);

@@ -274,7 +274,19 @@ select.control { appearance: none; cursor: pointer; padding-right: 34px; }
   background: var(--surface);
   box-shadow: var(--e1), inset 0 0 0 1.5px var(--teal);
 }
-.radio-card input:focus-visible ~ .radio-dot { box-shadow: var(--inset1), 0 0 0 3px var(--teal-tint); }
+/* Кольцо фокуса у радиокнопки: сам input невидим (width:0, opacity:0), и всё
+   «куда попал Tab» рисует эта тень. До ADR-0020 здесь был только --teal-tint:
+   живой замер (scripts/check-focus.mjs, /register, кадр элемента ±18px) дал 211
+   изменившихся пикселей из 8464 и НОЛЬ из них с контрастом хотя бы 3:1 —
+   максимум 1.33:1, потому что подложка вокруг --surface (1.10:1 к tint), а на
+   фоне страницы было бы 1.03:1. То есть фокус существовал, но не виделся.
+   Кольцо то же, что у кнопки: светлая подложка плюс внешний --teal
+   (6.23:1 к surface, 5.17:1 к parchment-deep — худшая из подложек проекта);
+   после правки тот же кадр даёт 148 пикселей ≥3:1. Выбор цвета держит группа 9
+   scripts/check-frontend.mjs: он считает кольцо против каждой из трёх подложек. */
+.radio-card input:focus-visible ~ .radio-dot {
+  box-shadow: var(--inset1), 0 0 0 3px var(--teal-tint), 0 0 0 5px var(--teal);
+}
 
 .radio-body { display: flex; flex-direction: column; gap: 2px; }
 .radio-title { font-size: 14px; font-weight: 700; }
