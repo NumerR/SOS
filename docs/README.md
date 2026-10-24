@@ -43,7 +43,12 @@ T3.1 закрыт почти полностью. Первая половина �
 `/api/*`), один `bindCreateForm` вместо двух копий submit-обработчика и офлайн-сьют
 `tests/ui/schedule-forms.cjs` (54 проверки)
 ([run 40053487121](https://github.com/NumerR/SOS/actions/runs/40053487121), `completed / success`).
-В остатке по T3.1 — `profile.html` и публикация на Pages (`deploy-frontend.yml`
+Остаток T3.1 закрыт коммитом `ae291e8` (ADR-0014): страница `/profile` из тех
+полей, которые реально хранятся, панель смены пароля и «выйти везде» переехала на
+неё с кабинета, седьмой вариант навигации в `core/layout.js`, три теста на уровне
+маршрутизатора и офлайн-сьют `tests/ui/profile-page.cjs` (35 проверок) —
+[run 40055769250](https://github.com/NumerR/SOS/actions/runs/40055769250), `completed / success`.
+В остатке по T3.1 осталась только публикация на Pages (`deploy-frontend.yml`
 + собственный 404 с base-относительными путями).
 T1.2 (журнал действий `audit_events`: таблица от модуля `audit`, 15 точек записи
 в обработчиках, `GET /api/admin/audit` с правом `audit.view`, панель в `/admin`)
