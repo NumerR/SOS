@@ -11,7 +11,8 @@
 //   1. каждый <script src> и <link href> из HTML указывает на существующий файл;
 //   2. каждый JS-файл в web/js подключён хотя бы одной страницей;
 //   3. все getElementById-мишени объявлены на той странице, где запускается
-//      скрипт (в HTML или в разметке, которую этот скрипт сам и вставляет);
+//      скрипт (в HTML, в разметке, которую этот скрипт сам и вставляет, или в
+//      конфиге core/layout.js — см. LAYOUT_ID_FIELD);
 //   4. в HTML нет инлайновых обработчиков (onclick="...") — они и привели к
 //      хранящемуся XSS, когда имя задания подставлялось в строку JS.
 //
@@ -72,6 +73,14 @@ function resolveLocalHref(href) {
 const ID_DECLARATION = /\bid=["']([A-Za-z0-9_:.#$%&+*~=@-]+)["']/g;
 const GET_ELEMENT = /getElementById\(\s*["']([^"']+)["']\s*\)/g;
 
+// Исключение для core/layout.js: этот файл объявляет идентификаторы шапки не
+// разметкой, а данными (`id: "adminLink"` в конфиге страницы), и литеральной
+// формы id="..." у них нет. Разрешаем эту форму только для этого файла: если
+// открыть её для всех скриптов, любое поле `id` в любом объекте данных
+// (строка курса, запись журнала) стало бы «объявлением» — и проверка «мишени
+// getElementById нет на странице» молча перестала бы что-то ловить.
+const LAYOUT_ID_FIELD = /\bid:\s*["']([A-Za-z0-9_-]+)["']/g;
+
 function matches(re, text) {
   const out = new Set();
   for (const m of text.matchAll(re)) out.add(m[1]);
@@ -131,6 +140,9 @@ for (const page of pages) {
     const source = readFileSync(scriptPath, "utf8");
     // Скрипт может сам создавать разметку с id — они тоже считаются объявленными.
     for (const id of matches(ID_DECLARATION, source)) declared.add(id);
+    if (scriptPath.endsWith(posix.join("core", "layout.js"))) {
+      for (const id of matches(LAYOUT_ID_FIELD, source)) declared.add(id);
+    }
   }
   declaredIdsByPage.set(page, { declared, scripts: pageScripts });
 }

@@ -132,9 +132,10 @@ func TestRouterFromModuleList(t *testing.T) {
 		t.Errorf("PUT /api/courses: %d %s, ожидалось 405 + JSON", resp.StatusCode, body)
 	}
 
-	// 12. Незнакомый API-путь остаётся 404.
-	if resp, body = get(srv, "/api/definitely-not-here", student); resp.StatusCode != http.StatusNotFound {
-		t.Errorf("несуществующий путь: %d %s, ожидалось 404", resp.StatusCode, body)
+	// 12. Незнакомый API-путь остаётся 404 — и отвечает JSON, а не текстом
+	//     (T3.1: страница 404 положена только HTML-путям).
+	if resp, body = get(srv, "/api/definitely-not-here", student); resp.StatusCode != http.StatusNotFound || !strings.Contains(body, `"error"`) {
+		t.Errorf("несуществующий API-путь: %d %s, ожидалось 404 + JSON", resp.StatusCode, body)
 	}
 
 	// 13. POST без CSRF-токена не проходит, с токеном — создаёт запись в

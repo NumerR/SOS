@@ -64,7 +64,7 @@ async function login(identifier, password) {
     window.alert = (m) => { window.__alerts = (window.__alerts || []).concat(m); };
     doc.cookie = "csrf_token=" + admin.csrf;
 
-    const bundle = ["config.js", "core/api-client.js", "core/format.js", "common.js", "admin.js"]
+    const bundle = ["config.js", "core/api-client.js", "core/format.js", "core/layout.js", "common.js", "admin.js"]
         .map((f) => fs.readFileSync(path.join(REPO, "web/js", f), "utf8"))
         .join("\n;\n");
     window.eval(bundle);

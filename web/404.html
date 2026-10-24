@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<!--
+    Страница «не найдено». Отдаётся Go-сервером для любого неизвестного
+    HTML-пути (internal/handlers/pages.go, NotFound) со статусом 404.
+
+    Здесь два отступления от правил, которым следует остальной фронтенд, и оба
+    объяснены в ADR-0013:
+
+    1. Пути абсолютные ("/css/style.css", "/login"), а не относительные.
+       Страница живёт на пути неизвестной глубины — /расписание/2026/окт —
+       и относительный href браузер разрешил бы не там, где надо.
+    2. Скриптов нет вовсе. Шапку рисует core/layout.js, а у страницы ошибки
+       задача ровно противоположная: работать тогда, когда приложение не
+       работает. Плюс так она отдаётся без JS и без запросов к API.
+
+    Путь запроса в текст не подставляется: файл статический, сервер подменяет
+    в нём ничего не может — зато в ответе гарантированно нет отражённого
+    ввода пользователя.
+-->
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex">
+    <title>Страница не найдена · SOS</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <header class="site-header">
+        <div class="container header-row">
+            <a href="/" class="brand">
+                <span class="brand-mark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+                </span>
+                <span class="brand-text">
+                    <span class="brand-title">SOS</span>
+                    <span class="brand-sub">Ошибка 404</span>
+                </span>
+            </a>
+        </div>
+    </header>
+
+    <main class="main">
+        <div class="container stack">
+            <section class="section">
+                <div class="section-head">
+                    <span class="section-label"><span class="section-index">404</span> Страница не найдена</span>
+                    <span class="section-rule"></span>
+                    <span class="section-note">HTTP 404</span>
+                </div>
+
+                <div class="panel stack">
+                    <h2>Такой страницы на сервере нет</h2>
+                    <p>
+                        Адрес мог остаться от старой ссылки или от набора букв в
+                        строке пути. Данные никуда не делись: курсы, задания и
+                        расписание доступны по ссылкам ниже.
+                    </p>
+
+                    <p>
+                        <a href="/" class="btn">На главную</a>
+                        <a href="/schedule" class="btn btn-secondary">Расписание</a>
+                        <a href="/login" class="btn btn-secondary">Войти</a>
+                    </p>
+                </div>
+            </section>
+        </div>
+    </main>
+</body>
+</html>

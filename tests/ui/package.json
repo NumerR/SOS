@@ -8,7 +8,8 @@
     "test:admin": "node admin-roles.cjs",
     "test:account": "node account-security.cjs",
     "test:session": "node session-expiry.cjs",
-    "test:all": "node assignments-modal.cjs && node admin-roles.cjs && node account-security.cjs && node session-expiry.cjs"
+    "test:forms": "node schedule-forms.cjs",
+    "test:all": "node assignments-modal.cjs && node admin-roles.cjs && node account-security.cjs && node session-expiry.cjs && node schedule-forms.cjs"
   },
   "dependencies": {
     "jsdom": "^30.1.3"

@@ -54,7 +54,7 @@ async function login(identifier, password) {
     return { cookie, csrf: csrfOf(cookie) };
 }
 
-const BUNDLE = ["config.js", "core/api-client.js", "core/format.js", "common.js"];
+const BUNDLE = ["config.js", "core/api-client.js", "core/format.js", "core/layout.js", "common.js"];
 
 // Собирает страницу в jsdom: подключаем бандл + скрипт страницы, ставим хук
 // навигации и fetch с cookie указанной сессии.
