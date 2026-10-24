@@ -49,6 +49,14 @@
   запрос к БД, `slog` JSON + `request_id`, `/api/health` с `db.PingContext`;
 - границы длины всех текстовых полей и шкала оценки 0–10 — проверка до
   обращения к БД, ответ `422` с именем поля;
+- фронтенд ходит в API через один транспорт (`web/js/core/api-client.js`,
+  252 строки): базовый URL из `web/js/config.js` (пустой = same-origin),
+  `credentials` для кросс-origin, CSRF-заголовок на небезопасных методах,
+  таймаут через `AbortController`, ошибка одной формы (`status`/`message`/
+  `retryAfter`/`code`). Политику 401 («уйти на вход») решает клиент — формы со
+  штатным 401 (вход, смена пароля, гостевые эндпоинты) передают
+  `on401: "throw"`; подписи ролей, права для кнопок и даты собраны в
+  `web/js/core/format.js`, пути страниц относительные — см. ADR-0011;
 - дизайн-система: тёплый пергамент + neumorphism + единственный акцент
   (petrol-teal), спецификационная типографика, состояния controls
   (pressed/disabled/loading/focus/error), empty-state, скелетоны, таблица.
@@ -275,7 +283,8 @@ internal/handlers/ HTTP-обработчики и middleware: RequireAuth / Requ
                    RequireCSRF / RateLimit, логи + request id (logging.go),
                    дедлайн БД (deadline.go), границы полей (fields.go),
                    куки сессии с `__Host-` (handlers.go)
-web/               статика: HTML-страницы, css/, js/
+web/               статика: HTML-страницы, css/, js/ (config.js, common.js,
+                   скрипты страниц; core/ — api-client.js и format.js)
 data/              локальная база (создаётся при старте, в git не попадает)
 tests/ui/          jsdom-тесты фронтенда против живого сервера + seed
 scripts/           check-frontend.mjs — связи HTML ↔ JS без сборки
@@ -355,7 +364,8 @@ go test ./...                            # лимитер + аутентифик
                                          # логи/дедлайн, лимиты полей, куки
 cd tests/ui && npm install
 npm run test:account                     # панель «Аккаунт и доступ» в jsdom
-npm run test:all                         # UI заданий + роли админа + аккаунт
+npm run test:session                     # истечение сессии: редирект, а не spinner
+npm run test:all                         # все четыре сьюта (20 + 11 + 21 + 14)
 ```
 
 Go-тесты: `internal/ratelimit/limiter_test.go` (8 сценариев),
@@ -373,7 +383,18 @@ CSRF 403→201). Всего по репозиторию: 59 верхнеуров
 UI-тесты гоняют jsdom против живого сервера, поэтому требуют запущенного
 `go run ./cmd/server`, `ADMIN_USERNAME`/`ADMIN_PASSWORD` в окружении
 (иначе `admin-roles.cjs` не сможет войти) и применённого `tests/ui/seed.sh`
-(см. его шапку — сид выдаёт роль `teacher` админом).
+(см. его шапку — сид выдаёт роль `teacher` админом). Всего 66 проверок:
+`assignments-modal.cjs` 20, `admin-roles.cjs` 11, `account-security.cjs` 21,
+`session-expiry.cjs` 14.
+
+Про `429` при повторном прогоне: вход ограничен 20 попытками на IP за 10 минут
+(ADR-0006), а `./seed.sh` + `npm run test:all` — это 17 POST
+`/api/auth/login` (посчитано по логу сервера: 16×200 + 1×401, неудачная попытка
+тоже расходует бакет). Запас в три входа: второй прогон «поверх» первого
+упирается в лимит на первом же логине; `account-security.cjs`
+из-за этого возвращает seed-ный пароль и в ветке сбоя (иначе сорванный прогон
+оставляет `s_stud` с временным паролем, и следующий запуск выглядит как
+«пользователь не входит»).
 
 ## CI
 
@@ -382,11 +403,13 @@ UI-тесты гоняют jsdom против живого сервера, по�
 | Работа | Команды | Что ловит |
 |---|---|---|
 | `go` | `gofmt -l .`, `go vet ./...`, `go build ./...`, `go test -race -count=1 ./...` | компиляцию, формат, гонки (в лимитере есть конкурентный тест) |
-| `frontend` | `node --check` по каждому `web/js/*.js`, `node scripts/check-frontend.mjs` | синтаксис и связи: неподключённый скрипт, несуществующий `<script src>`/`<link href>`, `getElementById` на отсутствующий id, инлайновые `on*`-обработчики |
+| `frontend` | `node --check` по каждому `web/js/**/*.js` (`find`), `node scripts/check-frontend.mjs` | синтаксис и связи: неподключённый скрипт, несуществующий `<script src>`/`<link href>`, `getElementById` на отсутствующий id, инлайновые `on*`-обработчики |
 | `ui` | сервер + `bash tests/ui/seed.sh` + `npm ci` + `npm run test:all` | поведение страниц в jsdom против живого API |
 
-Триггеры: `pull_request`, push в `main`, ручной запуск. Push в feature-ветку CI
-не гоняется — для открытого PR это был бы второй прогон того же коммита.
+Триггеры: `pull_request`, push в `main`, ручной запуск. Push в feature-ветку сам
+по себе не запускает работу — прогоны, на которые ссылки в `docs/04`, это
+события `pull_request` открытого PR #2 (для уже залитого коммита GitHub не
+дублирует прогон).
 `ADMIN_USERNAME`/`ADMIN_PASSWORD` в работе `ui` — пароль одноразовой базы внутри
 раннера, а не секрет; настоящие учётные данные (будущий `DATABASE_URL`, токен
 бота) в workflow не появляются.
@@ -395,7 +418,8 @@ UI-тесты гоняют jsdom против живого сервера, по�
 
 ```bash
 gofmt -l . && go vet ./... && go test -race -count=1 ./...
-for f in web/js/*.js; do node --check "$f"; done && node scripts/check-frontend.mjs
+found=0; while IFS= read -r f; do found=$((found+1)); node --check "$f"; done < <(find web/js -name '*.js' | sort); echo "файлов: $found"
+node scripts/check-frontend.mjs
 ```
 
 Детектор бага T0.1 работает в обе стороны: если убрать из `dashboard.html` строку
@@ -419,8 +443,12 @@ SQL-пакета нет, схему применяет код (`internal/databas
   и размера пула; runner модульных миграций уже есть (`internal/platform`), но
   `Migrations()` у всех шести модулей пусты, а SQL написан под SQLite;
 - `audit_events` (запись входа/выхода/оценки/смены роли в базу, а не в лог) — T1.2;
-- конфиг `API_BASE_URL` во фронтенде, единый API-клиент, относительные пути и
-  раздача статики через GitHub Pages — T3.1 (вариант размещения, ADR-0001);
+- раздача фронтенда через GitHub Pages и `deploy-frontend.yml` — остаток T3.1
+  (ADR-0001, пункт 5: при публикации выбрать каталоги `login/index.html` или
+  `404.html`-роутер); клиент, конфиг, политика 401 и относительные пути
+  реализованы в `8fef933` (ADR-0011);
+- общий шапка/футер (`web/js/core/layout.js`), `profile.html` и страница 404,
+  повторяющийся submit-обработчик в `schedule.js` — остаток T3.1;
 - модуль расписания по группе/дате и импорт из официального источника — T4.1,
   заблокирован: источник не предоставлен (ADR-0004);
 - восстановление пароля, подтверждение email;
