@@ -19,10 +19,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     const userAvatarElement = document.getElementById("userAvatar");
     const refreshButton = document.getElementById("refreshBtn");
 
-    const roleLabels = { student: "студент", teacher: "преподаватель", admin: "администратор" };
-    const canCreateRoles = new Set(["teacher", "admin"]);
-    const canEnrollRoles = new Set(["student", "admin"]);
-    const canViewStudentsRoles = new Set(["teacher", "admin"]);
+    // Наборы «кому показывать кнопку» живут в core/format.js (GS.can): здесь их
+    // была три копии на весь фронтенд, и пятая — в админке.
+    const can = GS.can;
 
     let user = null;
     let mySet = new Set(); 
@@ -38,7 +37,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         const actions = [];
         const enrolled = mySet.has(course.id);
 
-        if (canEnrollRoles.has(user.role)) {
+        if (can.enroll(user.role)) {
             if (enrolled) {
                 actions.push(`<button class="btn btn-secondary" data-action="unenroll" data-course-id="${course.id}">Отписаться</button>`);
             } else {
@@ -51,7 +50,7 @@ document.addEventListener("DOMContentLoaded", async () => {
              actions.push(`<button class="btn btn-outline" data-action="view-assignments-student" data-course-id="${course.id}" data-course-title="${GS.escapeHtml(course.title)}">Задания</button>`);
         }
         
-        if (canViewStudentsRoles.has(user.role) && (user.role === "admin" || course.created_by === user.id)) {
+        if (can.viewStudents(user.role) && (can.viewStudentsOfAnyCourse(user.role) || course.created_by === user.id)) {
             actions.push(`<button class="btn btn-secondary" data-action="students" data-course-id="${course.id}" data-course-title="${GS.escapeHtml(course.title)}">Студенты</button>`);
             // NEW: Manage Assignments for Owner/Admin
             actions.push(`<button class="btn btn-outline" data-action="manage-assignments" data-course-id="${course.id}" data-course-title="${GS.escapeHtml(course.title)}">Управление заданиями</button>`);
@@ -91,7 +90,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
                     </span>
                     <span class="empty-text">Пока нет ни одного курса</span>
-                    <span class="empty-hint">${canCreateRoles.has(user.role) ? "Добавьте первый курс через форму ниже." : "Курсы появятся, когда их добавят преподаватели."}</span>
+                    <span class="empty-hint">${can.createCourse(user.role) ? "Добавьте первый курс через форму ниже." : "Курсы появятся, когда их добавят преподаватели."}</span>
                 </div>`;
             return;
         }
@@ -134,15 +133,15 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         try {
             const requests = [GS.fetchJSON("/api/courses")];
-            if (canEnrollRoles.has(user.role)) requests.push(GS.fetchJSON("/api/enrollments/mine"));
+            if (can.enroll(user.role)) requests.push(GS.fetchJSON("/api/enrollments/mine"));
 
             const results = await Promise.all(requests);
             const courses = results[0];
-            const mine = canEnrollRoles.has(user.role) ? results[1] : [];
+            const mine = can.enroll(user.role) ? results[1] : [];
 
             mySet = new Set(mine.map((c) => c.id));
             renderCatalog(courses);
-            if (canEnrollRoles.has(user.role)) renderMyCourses(mine);
+            if (can.enroll(user.role)) renderMyCourses(mine);
         } catch (error) {
             if (coursesContainer) {
                 coursesContainer.innerHTML = `<p class="message message-error">${GS.escapeHtml(error.message || "Не удалось загрузить данные")}</p>`;
@@ -203,7 +202,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                             <span class="person-login">@${GS.escapeHtml(u.username)}</span>
                         </span>
                         <span class="spacer"></span>
-                        <span class="chip chip-muted">${GS.escapeHtml(roleLabels[u.role] || u.role)}</span>
+                        <span class="chip chip-muted">${GS.escapeHtml(GS.roleLabel(u.role))}</span>
                     </div>
                 `).join("");
             }
@@ -247,23 +246,30 @@ document.addEventListener("DOMContentLoaded", async () => {
     try {
         user = await GS.fetchJSON("/api/auth/me");
     } catch (error) {
-        if (error.status === 401) { window.location.href = "/login"; return; }
+        // 401 здесь означает «сессии нет»: редирект на вход уже сделал
+        // api-client (on401 по умолчанию "redirect"). Пока он выполняется,
+        // заменяем placeholder с spinner на понятную строку — «вечная загрузка»
+        // хуже, чем явно сказанное «выход, заходите заново».
+        if (error.status === 401) {
+            if (coursesContainer) coursesContainer.innerHTML = '<p class="message">Сессия истекла — переходим ко входу…</p>';
+            return;
+        }
         if (coursesContainer) coursesContainer.innerHTML = `<p class="message message-error">${GS.escapeHtml(error.message || "Ошибка загрузки профиля")}</p>`;
         return;
     }
 
     if (userNameElement) userNameElement.textContent = user.full_name || user.username;
-    if (userRoleElement) userRoleElement.textContent = roleLabels[user.role] || user.role;
+    if (userRoleElement) userRoleElement.textContent = GS.roleLabel(user.role);
     if (userAvatarElement) userAvatarElement.textContent = GS.initialsFrom(user);
 
-    const canCreate = canCreateRoles.has(user.role);
-    const canEnroll = canEnrollRoles.has(user.role);
+    const canCreate = can.createCourse(user.role);
+    const canEnroll = can.enroll(user.role);
     if (createSection) createSection.classList.toggle("hidden", !canCreate);
     if (studentNotice) studentNotice.classList.toggle("hidden", canCreate);
     if (adminLink) adminLink.classList.toggle("hidden", user.role !== "admin");
     if (myCoursesSection) myCoursesSection.classList.toggle("hidden", !canEnroll);
 
-    GS.bindLogout("logoutBtn", "/login");
+    GS.bindLogout("logoutBtn");
 
     attachDelegation(coursesContainer);
     attachDelegation(myCoursesContainer);

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NumerR/SOS/internal/authz"
 	"github.com/NumerR/SOS/internal/models"
 )
 
@@ -46,11 +47,14 @@ func (h *Handlers) ListAssignments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Видеть задания чужого курса можно, если ты его владелец или записан на
+	// него. Право assignment.view.any снимает обе проверки — оно есть только у
+	// администратора и заменяло собой сравнение user.Role == "admin".
 	isOwner := owner == user.ID
-	isAdmin := user.Role == "admin"
+	canSeeAny := canHere(user, authz.AssignmentViewAny)
 	isEnrolled := false
 
-	if !isOwner && !isAdmin {
+	if !isOwner && !canSeeAny {
 		mine, err := h.Enrollments.ListCoursesByUser(r.Context(), user.ID)
 		if err == nil {
 			for _, c := range mine {
@@ -62,7 +66,7 @@ func (h *Handlers) ListAssignments(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if !isOwner && !isAdmin && !isEnrolled {
+	if !isOwner && !canSeeAny && !isEnrolled {
 		writeError(w, http.StatusForbidden, "access denied")
 		return
 	}
@@ -77,6 +81,9 @@ func (h *Handlers) ListAssignments(w http.ResponseWriter, r *http.Request) {
 }
 
 // CreateAssignment handles POST /api/assignments
+//
+// Право assignment.create проверяет маршрутизатор; здесь остаётся проверка
+// владельца курса, для которой нужны данные из базы.
 func (h *Handlers) CreateAssignment(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w)
@@ -86,11 +93,6 @@ func (h *Handlers) CreateAssignment(w http.ResponseWriter, r *http.Request) {
 	user := h.currentUser(r)
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-
-	if !hasRole([]string{"teacher", "admin"}, user.Role) {
-		writeError(w, http.StatusForbidden, "only teachers can create assignments")
 		return
 	}
 
@@ -105,7 +107,14 @@ func (h *Handlers) CreateAssignment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if user.Role != "admin" {
+	// Описания раньше не ограничивались ничем: 1 МиБ текста в description —
+	// и страница со списком заданий отдаёт мегабайты на каждый GET.
+	if !validateLength(w, "title", req.Title, maxTitleLength) ||
+		!validateLength(w, "description", req.Description, maxDescriptionLength) {
+		return
+	}
+
+	if !canHere(user, authz.AssignmentCreateAny) {
 		owner, found, err := h.Enrollments.CourseOwner(r.Context(), req.CourseID)
 		if err != nil || !found || owner != user.ID {
 			writeError(w, http.StatusForbidden, "you can only create assignments for your own courses")

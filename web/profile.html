@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Профиль · SOS</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body data-layout="profile" data-brand-sub="Профиль" data-footer-note="Account · sessions · password">
+    <header class="site-header"></header>
+
+    <main class="main">
+        <div class="container stack">
+            <p id="profileStatus" class="message hidden" role="status"></p>
+
+            <section class="section">
+                <div class="section-head">
+                    <span class="section-label"><span class="section-index">01</span> Идентичность</span>
+                    <span class="section-rule"></span>
+                    <span class="section-note">GET /api/auth/me</span>
+                </div>
+
+                <div class="panel">
+                    <table class="table" id="profileIdentity">
+                        <thead>
+                            <tr>
+                                <th scope="col">Поле</th>
+                                <th scope="col">Значение</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Имя</td>
+                                <td id="profileName">Загрузка…</td>
+                            </tr>
+                            <tr>
+                                <td>Логин</td>
+                                <td id="profileUsername" class="t-num">—</td>
+                            </tr>
+                            <tr>
+                                <td>Электронная почта</td>
+                                <td id="profileEmail">—</td>
+                            </tr>
+                            <tr>
+                                <td>Роль</td>
+                                <td><span class="chip chip-muted" id="profileRole">—</span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+
+                    <p class="form-foot">
+                        <a href="dashboard">Курсы и задания</a>
+                        <span class="dot-sep" aria-hidden="true"></span>
+                        <a href="schedule">Расписание</a>
+                    </p>
+                </div>
+            </section>
+
+            <section class="section">
+                <div class="section-head">
+                    <span class="section-label"><span class="section-index">02</span> Доступ и пароль</span>
+                    <span class="section-rule"></span>
+                    <span class="section-note">POST /api/auth/change-password · /api/auth/logout-all</span>
+                </div>
+
+                <form id="passwordForm" class="form" novalidate>
+                    <label class="field">
+                        <span class="field-label">Текущий пароль</span>
+                        <input class="control" type="password" name="current_password" required autocomplete="current-password">
+                    </label>
+
+                    <label class="field">
+                        <span class="field-label">Новый пароль</span>
+                        <input class="control" type="password" name="new_password" required minlength="8" maxlength="200" autocomplete="new-password">
+                        <span class="helper">Минимум 8 символов. После смены все остальные устройства разлогинятся, это останется только вы.</span>
+                    </label>
+
+                    <label class="field">
+                        <span class="field-label">Повторите новый пароль</span>
+                        <input class="control" type="password" name="repeat_password" required minlength="8" maxlength="200" autocomplete="new-password">
+                    </label>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn">Изменить пароль</button>
+                        <button id="logoutAllBtn" type="button" class="btn btn-secondary">Выйти везде</button>
+                    </div>
+
+                    <p id="passwordMessage" class="message hidden" role="status"></p>
+                </form>
+            </section>
+
+            <section class="section">
+                <div class="section-head">
+                    <span class="section-label"><span class="section-index">03</span> Группа и предпочтения</span>
+                    <span class="section-rule"></span>
+                    <span class="section-note">полей в схеме пока нет</span>
+                </div>
+
+                <div class="panel">
+                    <p class="card-text">
+                        Учебная группа и настройки интерфейса здесь появятся, когда
+                        будут поля в базе и источник этих данных. Сейчас в профиле
+                        ровно то, что платформа хранит сама: имя, логин, почта и роль.
+                    </p>
+                    <p class="helper">
+                        Группа зависит от ответа владельца по источнику расписания
+                        (docs/03, пункт B2), предпочтения — от решения о том, какие
+                        настройки вообще нужны (пункт B1). Пустые поля не показываем,
+                        чтобы не выдавать догадку за данные.
+                    </p>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <footer class="site-footer"></footer>
+
+    <script src="js/config.js"></script>
+    <script src="js/core/api-client.js"></script>
+    <script src="js/core/format.js"></script>
+    <script src="js/core/layout.js"></script>
+    <script src="js/common.js"></script>
+    <script src="js/account.js"></script>
+    <script src="js/profile.js"></script>
+</body>
+</html>

@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/NumerR/SOS/internal/models"
 )
@@ -15,7 +14,8 @@ type CreateEventRequest struct {
 	EventDateStr string `json:"event_date"` // ISO8601 или пусто
 }
 
-// EventsAPI — GET (все авторизованные) / POST (teacher, admin) /api/events.
+// EventsAPI — GET (все авторизованные) / POST (право event.create,
+// проверяется маршрутизатором) /api/events.
 func (h *Handlers) EventsAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -32,10 +32,6 @@ func (h *Handlers) EventsAPI(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		if !hasRole([]string{"teacher", "admin"}, user.Role) {
-			writeError(w, http.StatusForbidden, "only teachers can add events")
-			return
-		}
 
 		var req CreateEventRequest
 		if !readJSON(w, r, &req) {
@@ -49,12 +45,8 @@ func (h *Handlers) EventsAPI(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnprocessableEntity, "title is required")
 			return
 		}
-		if utf8.RuneCountInString(req.Title) > 200 {
-			writeError(w, http.StatusUnprocessableEntity, "title is too long")
-			return
-		}
-		if utf8.RuneCountInString(req.Description) > 2000 {
-			writeError(w, http.StatusUnprocessableEntity, "description is too long")
+		if !validateLength(w, "title", req.Title, maxTitleLength) ||
+			!validateLength(w, "description", req.Description, maxDescriptionLength) {
 			return
 		}
 

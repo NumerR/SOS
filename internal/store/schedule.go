@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"sort"
 
+	"github.com/NumerR/SOS/internal/authz"
 	"github.com/NumerR/SOS/internal/models"
 )
 
@@ -67,13 +68,23 @@ func (s *ScheduleStore) eventsFor(ctx context.Context, from, to int64) ([]models
 	return items, rows.Err()
 }
 
+// deadlinesFor отдаёт дедлайны в том срезе, который положен роли.
+//
+// Раньше здесь стоял switch по строке роли — то есть стор знал имена ролей и
+// молча отдавал пустую ленту любой новой роли. Теперь он спрашивает у authz
+// область видимости (Scope), а решение «кто что видит» остаётся в реестре прав.
 func (s *ScheduleStore) deadlinesFor(ctx context.Context, user *models.User, from, to int64) ([]models.ScheduleFeedItem, error) {
-	switch user.Role {
-	case "student":
+	scope, ok := authz.ScheduleScope(authz.Role(user.Role))
+	if !ok {
+		return []models.ScheduleFeedItem{}, nil
+	}
+
+	switch scope {
+	case authz.ScopeEnrolled:
 		return s.feedForStudent(ctx, user.ID, from, to)
-	case "teacher":
+	case authz.ScopeCreated:
 		return s.feedForOwner(ctx, user.ID, from, to)
-	case "admin":
+	case authz.ScopeAll:
 		return s.feedForAll(ctx, from, to)
 	default:
 		return []models.ScheduleFeedItem{}, nil

@@ -2,13 +2,15 @@ package handlers
 
 import (
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/NumerR/SOS/internal/authz"
 
 	"github.com/NumerR/SOS/internal/models"
 	"github.com/NumerR/SOS/internal/store"
@@ -28,6 +30,23 @@ type LoginRequest struct {
 	Password   string `json:"password"`
 }
 
+// ChangePasswordRequest — смена пароля внутри авторизованной сессии.
+// Подтверждение нового пароля намеренно не запрашивается: это делает фронтенд,
+// а серверу достаточно одного поля, иначе API нельзя было бы описать честно.
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+const (
+	// minPasswordLength — то же требование, что у регистрации.
+	minPasswordLength = 8
+	// maxPasswordLength ограничен сверху, чтобы bcrypt не тра CPU на
+	// многомегабайтное тело: bcrypt обрезает вход после 72 байт, а длинные
+	// строки — удобный способ замедить обработчик.
+	maxPasswordLength = 200
+)
+
 var (
 	usernamePattern = regexp.MustCompile(`^[\p{L}\p{N}_.-]{3,32}$`)
 	emailPattern    = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
@@ -46,11 +65,15 @@ var (
 // «teacher», то есть любой посетитель получал право создавать курсы и
 // оценивать чужие работы (учётка t_teacher в тестовой базе создана именно
 // так). Роль теперь назначает администратор — см. AdminSetRole.
+//
+// Имя роли берётся из authz.RoleStudent: строка «student» в таблице users и в
+// реестре прав — одно и то же значение, а не два текста, которые можно
+// рассогласовать.
 func normalizeRole(role string) (string, bool) {
 	role = strings.ToLower(strings.TrimSpace(role))
 	switch role {
-	case "", "student":
-		return "student", true
+	case "", string(authz.RoleStudent):
+		return string(authz.RoleStudent), true
 	default:
 		return "", false
 	}
@@ -88,8 +111,8 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if utf8.RuneCountInString(req.Password) < 8 {
-		writeError(w, http.StatusUnprocessableEntity, "password must be at least 8 characters")
+	if n := utf8.RuneCountInString(req.Password); n < minPasswordLength || n > maxPasswordLength {
+		writeError(w, http.StatusUnprocessableEntity, "password must be between 8 and 200 characters")
 		return
 	}
 
@@ -126,6 +149,15 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.recordAudit(r, auditWrite{
+		action:     store.AuditRegister,
+		actor:      user,
+		targetType: "user",
+		targetID:   auditTargetID(user.ID),
+		detail:     "role=" + user.Role,
+		ok:         true,
+	})
+
 	writeJSON(w, http.StatusCreated, user)
 }
 
@@ -154,6 +186,14 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 
 	accountKey := "login:" + req.Identifier
 	if remaining := h.Limits.LoginAccount.Tokens(accountKey); remaining < 1 {
+		h.recordAudit(r, auditWrite{
+			action: store.AuditLogin,
+			// actor = nil: учётка может быть и реальной, и выдуманной, а
+			// различать их на этой ветке мы отказываемся (см. dummy-хэш).
+			targetType: "identifier",
+			detail:     "locked identifier=" + req.Identifier,
+			ok:         false,
+		})
 		h.tooManyAttempts(w, r, accountKey)
 		return
 	}
@@ -177,7 +217,29 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	// проверку бакета выше и получит 429.
 	if err := bcrypt.CompareHashAndPassword(hash, []byte(req.Password)); err != nil || userWithSecret == nil {
 		h.Limits.LoginAccount.Consume(accountKey, 1)
-		log.Printf("auth: неудачный вход identifier=%s ip=%s", redactKey(req.Identifier), LimitByIP(r))
+		requestLogger(r).Warn("auth: неудачный вход",
+			slog.String("identifier", redactKey(req.Identifier)),
+			slog.String("ip", ClientIP(r)),
+		)
+
+		// actor = найденная учётка, если она существует: «по кому именно
+		// подбирали пароль» — вопрос, на который админ отвечает по журналу.
+		// Пароль в detail не попадает ни при каком раскладе.
+		failed := auditWrite{
+			action:     store.AuditLogin,
+			targetType: "identifier",
+			detail:     "invalid credentials identifier=" + req.Identifier,
+			ok:         false,
+		}
+		if userWithSecret != nil {
+			user := userWithSecret.User
+			failed.actor = &user
+			failed.targetType = "user"
+			failed.targetID = auditTargetID(user.ID)
+			failed.detail = "invalid credentials"
+		}
+		h.recordAudit(r, failed)
+
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -188,7 +250,18 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("auth: вход выполнен user_id=%d ip=%s", userWithSecret.User.ID, LimitByIP(r))
+	h.recordAudit(r, auditWrite{
+		action:     store.AuditLogin,
+		actor:      &userWithSecret.User,
+		targetType: "user",
+		targetID:   auditTargetID(userWithSecret.User.ID),
+		ok:         true,
+	})
+
+	requestLogger(r).Info("auth: вход выполнен",
+		slog.Int64("user_id", userWithSecret.User.ID),
+		slog.String("ip", ClientIP(r)),
+	)
 	writeJSON(w, http.StatusOK, userWithSecret.User)
 }
 
@@ -200,7 +273,10 @@ func (h *Handlers) tooManyAttempts(w http.ResponseWriter, r *http.Request, accou
 	}
 	w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())))
 	writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
-	log.Printf("auth: перебор по идентификатору %s заблокирован на %s", redactKey(accountKey), retry)
+	requestLogger(r).Warn("auth: перебор по идентификатору заблокирован",
+		slog.String("identifier", redactKey(accountKey)),
+		slog.String("retry_after", retry.String()),
+	)
 }
 
 // Logout удаляет текущую сессию.
@@ -210,15 +286,205 @@ func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cookie, err := r.Cookie(sessionCookieName)
-	if err == nil && cookie.Value != "" {
-		_ = h.Sessions.Delete(r.Context(), cookie.Value)
+	var actor *models.User
+
+	if sessionID := sessionIDFromRequest(r); sessionID != "" {
+		// Кто выходил — узнаём по сессии до её удаления: маршрут публичный
+		// (кука могла протухнуть), поэтому пользователя в контексте нет, а
+		// строка журнала без автора бесполезна.
+		if session, err := h.Sessions.Get(r.Context(), sessionID); err == nil {
+			if user, err := h.Users.GetByID(r.Context(), session.UserID); err == nil {
+				actor = user
+			}
+		}
+
+		_ = h.Sessions.Delete(r.Context(), sessionID)
+
+		h.recordAudit(r, auditWrite{
+			action:     store.AuditLogout,
+			actor:      actor,
+			targetType: "session",
+			// target_id — внутренний id сессии из таблицы sessions, а не её
+			// токен: токен в журнале был бы чужим рабочим входом.
+			ok: actor != nil,
+		})
 	}
 
 	clearSessionCookie(w, r)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status": "ok",
+	})
+}
+
+// LogoutAll отзывает все сессии пользователя, включая текущую.
+//
+// Смысл в компрометации: «выйти везде» чистит чужие устройства, когда пароль
+// уже мог утечь. Кука снимается и у этого запроса, поэтому клиент после
+// ответа обязан уйти на страницу входа.
+func (h *Handlers) LogoutAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+
+	user := h.currentUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	if err := h.Sessions.DeleteAllForUser(r.Context(), user.ID); err != nil {
+		h.recordAudit(r, auditWrite{
+			action:     store.AuditLogoutAll,
+			actor:      user,
+			targetType: "user",
+			targetID:   auditTargetID(user.ID),
+			ok:         false,
+		})
+		writeError(w, http.StatusInternalServerError, "failed to revoke sessions")
+		return
+	}
+
+	// Отдельно удалять текущую сессию не нужно: DeleteAllForUser забирает и её.
+	clearSessionCookie(w, r)
+	clearCSRFCookie(w, r)
+
+	h.recordAudit(r, auditWrite{
+		action:     store.AuditLogoutAll,
+		actor:      user,
+		targetType: "user",
+		targetID:   auditTargetID(user.ID),
+		ok:         true,
+	})
+
+	requestLogger(r).Info("auth: вышли все сессии",
+		slog.Int64("user_id", user.ID),
+		slog.String("ip", ClientIP(r)),
+	)
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// ChangePassword меняет пароль по текущему паролю и отзывает остальные сессии.
+//
+// Текущая сессия сохраняется: пользователя не выбрасывает из вкладки, где он
+// только что ввёл новый пароль. Остальные устройства выходят — именно так
+// выглядит «смена пароля спасла аккаунт».
+func (h *Handlers) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+
+	user := h.currentUser(r)
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var req ChangePasswordRequest
+	if !readJSON(w, r, &req) {
+		return
+	}
+
+	if utf8.RuneCountInString(req.NewPassword) < minPasswordLength {
+		writeError(w, http.StatusUnprocessableEntity, "password must be at least 8 characters")
+		return
+	}
+	if utf8.RuneCountInString(req.NewPassword) > maxPasswordLength {
+		writeError(w, http.StatusUnprocessableEntity, "password is too long")
+		return
+	}
+
+	withSecret, err := h.Users.GetWithSecretByID(r.Context(), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load user")
+		return
+	}
+
+	// Старый пароль проверяется обязательно: без этого любой XSS или оставленная
+	// на чужом ноутбуке вкладка получила бы право менять пароль произвольно.
+	if err := bcrypt.CompareHashAndPassword([]byte(withSecret.PasswordHash), []byte(req.CurrentPassword)); err != nil {
+		requestLogger(r).Warn("auth: неверный текущий пароль при смене",
+			slog.Int64("user_id", user.ID),
+			slog.String("ip", ClientIP(r)),
+		)
+		h.recordAudit(r, auditWrite{
+			action:     store.AuditPasswordChange,
+			actor:      user,
+			targetType: "user",
+			targetID:   auditTargetID(user.ID),
+			detail:     "invalid current password",
+			ok:         false,
+		})
+		writeError(w, http.StatusUnauthorized, "current password is incorrect")
+		return
+	}
+
+	if req.CurrentPassword == req.NewPassword {
+		writeError(w, http.StatusUnprocessableEntity, "new password must differ from the current one")
+		return
+	}
+
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to hash password")
+		return
+	}
+
+	if err := h.Users.SetPassword(r.Context(), user.ID, string(passwordHash)); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update password")
+		return
+	}
+
+	revoked := int64(0)
+	current := sessionIDFromRequest(r)
+
+	if current != "" {
+		revoked, err = h.Sessions.DeleteAllForUserExcept(r.Context(), user.ID, current)
+	} else {
+		// Сессии в куке нет (например, протухла) — отзываем всё, что есть.
+		err = h.Sessions.DeleteAllForUser(r.Context(), user.ID)
+	}
+
+	if err != nil {
+		// Пароль уже новый — молчать нельзя: это ровно тот случай, когда
+		// пользователь ждёт, что чужие устройства вышли.
+		h.recordAudit(r, auditWrite{
+			action:     store.AuditPasswordChange,
+			actor:      user,
+			targetType: "user",
+			targetID:   auditTargetID(user.ID),
+			// ok=false относится к исходу целиком: пароль смены не отменили,
+			// но «остальные устройства вышли» — утверждение неверное, и
+			// администратор обязан увидеть именно это.
+			detail: "password changed, sessions not revoked",
+			ok:     false,
+		})
+		writeError(w, http.StatusInternalServerError, "password changed but other sessions could not be revoked")
+		return
+	}
+
+	h.Limits.Password.Reset(ClientIP(r))
+	h.recordAudit(r, auditWrite{
+		action:     store.AuditPasswordChange,
+		actor:      user,
+		targetType: "user",
+		targetID:   auditTargetID(user.ID),
+		detail:     "revoked_sessions=" + strconv.FormatInt(revoked, 10),
+		ok:         true,
+	})
+
+	requestLogger(r).Info("auth: пароль изменён",
+		slog.Int64("user_id", user.ID),
+		slog.Int64("revoked_sessions", revoked),
+		slog.String("ip", ClientIP(r)),
+	)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":           "ok",
+		"revoked_sessions": revoked,
 	})
 }
 
@@ -254,32 +520,36 @@ func (h *Handlers) startSession(w http.ResponseWriter, r *http.Request, user *mo
 	return true
 }
 
+// setSessionCookie выпускает сессионную куку под именем, которое соответствует
+// протоколу: на HTTPS это __Host-gs_session, на локальном HTTP — обычное имя,
+// потому что браузер префикс __Host- без Secure просто выбросил бы.
 func setSessionCookie(w http.ResponseWriter, r *http.Request, sessionID string) {
-	cookie := &http.Cookie{
-		Name:     sessionCookieName,
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieNameFor(r),
 		Value:    sessionID,
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   isSecureRequest(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(store.SessionLifetime.Seconds()),
-	}
-
-	http.SetCookie(w, cookie)
+	})
 }
 
+// clearSessionCookie снимает оба имени. Одно из них заведомо лишнее, но
+// «угадать», какое именно лежит в браузере, мы не можем: пользователь мог
+// застать переход с http на https, и тогда обе куки живут рядом.
 func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
-	cookie := &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   isSecureRequest(r),
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
+	for _, name := range sessionCookieNames() {
+		http.SetCookie(w, &http.Cookie{
+			Name:     name,
+			Value:    "",
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   isSecureRequest(r),
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   -1,
+		})
 	}
-
-	http.SetCookie(w, cookie)
 }
 
 func isSecureRequest(r *http.Request) bool {
@@ -287,7 +557,11 @@ func isSecureRequest(r *http.Request) bool {
 		return true
 	}
 
-	if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+	// X-Forwarded-Proto — заголовок, который пишет прокси. Без явного доверия
+	// ему любой клиент может подставить «https» и получить куку с Secure,
+	// или наоборот: приложение за plain HTTP начнёт выдавать незащищённую
+	// gs_session. Решение — тот же переключатель TRUST_PROXY, что и для IP.
+	if trustProxy && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
 		return true
 	}
 

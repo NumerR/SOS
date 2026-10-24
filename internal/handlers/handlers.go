@@ -4,11 +4,36 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/NumerR/SOS/internal/authz"
 	"github.com/NumerR/SOS/internal/models"
 	"github.com/NumerR/SOS/internal/store"
 )
 
 const sessionCookieName = "gs_session"
+
+// secureSessionCookieName — то же имя с префиксом __Host-.
+//
+// Браузер принимает __Host-* только по HTTPS, только с Path=/ и только без
+// Domain. Это закрывает два обхода, которые остаются у обычной куки: её
+// может подставить любой поддомен того же хоста и её может сузить/расширить
+// Path. На plain HTTP такой префикс браузер выбросил бы, поэтому локальная
+// разработка продолжает ходить под обычным именем.
+const secureSessionCookieName = "__Host-" + sessionCookieName
+
+// sessionCookieNames — порядок чтения: сначала защищённое имя, потом обычное.
+// Если в браузере остались обе (переезд на HTTPS), победит та, которую
+// подделать дешевле нельзя.
+func sessionCookieNames() []string {
+	return []string{secureSessionCookieName, sessionCookieName}
+}
+
+// sessionCookieNameFor — имя, под которым кука выпускается прямо сейчас.
+func sessionCookieNameFor(r *http.Request) string {
+	if isSecureRequest(r) {
+		return secureSessionCookieName
+	}
+	return sessionCookieName
+}
 
 type contextKey string
 
@@ -27,7 +52,13 @@ type Deps struct {
 	Schedule    *store.ScheduleStore
 	Resources   *store.ResourceStore
 	Events      *store.EventStore
-	Limits      Limiters
+
+	// Audit — журнал действий (T1.2). Отличается от остальных полей одним:
+	// отсутствие хранилища не отменяет запрос, а только лишает его строки в
+	// журнале (см. handlers.recordAudit). Поэтому nil здесь не ошибка сборки,
+	// а состояние, на которое опираются unit-тесты пакетов без журнала.
+	Audit  *store.AuditStore
+	Limits Limiters
 }
 
 // Handlers — HTTP-обработчики. Поля Deps доступны напрямую: h.Users, h.Sessions…
@@ -40,8 +71,13 @@ func New(deps Deps) *Handlers {
 	return &Handlers{Deps: deps}
 }
 
-// currentUser возвращает пользователя из контекста запроса.
-func (h *Handlers) currentUser(r *http.Request) *models.User {
+// UserFromContext — авторизованный пользователь запроса.
+//
+// Экспортировано для обработчиков модулей: middleware входа кладёт
+// пользователя в контекст, и модулю незачем знать, как устроена кука сессии —
+// ему нужен только автор. nil означает «запрос не прошёл RequireAuth или
+// RequirePerm», то есть маршрутизатор собран неправильно.
+func UserFromContext(r *http.Request) *models.User {
 	if r == nil {
 		return nil
 	}
@@ -52,14 +88,32 @@ func (h *Handlers) currentUser(r *http.Request) *models.User {
 	return user
 }
 
+// currentUser возвращает пользователя из контекста запроса.
+func (h *Handlers) currentUser(r *http.Request) *models.User {
+	return UserFromContext(r)
+}
+
+// sessionIDFromRequest берёт идентификатор сессии из куки любого из двух
+// имён. Единая точка нужна затем, чтобы чтение и отзыв сессий не разошлись:
+// «Logout» под обычным именем оставил бы __Host-* жить в браузере.
+func sessionIDFromRequest(r *http.Request) string {
+	for _, name := range sessionCookieNames() {
+		cookie, err := r.Cookie(name)
+		if err == nil && cookie.Value != "" {
+			return cookie.Value
+		}
+	}
+	return ""
+}
+
 // authenticatedUser проверяет cookie-сессию и возвращает пользователя.
 func (h *Handlers) authenticatedUser(r *http.Request) (*models.User, bool) {
-	cookie, err := r.Cookie(sessionCookieName)
-	if err != nil || cookie.Value == "" {
+	sessionID := sessionIDFromRequest(r)
+	if sessionID == "" {
 		return nil, false
 	}
 
-	session, err := h.Sessions.Get(r.Context(), cookie.Value)
+	session, err := h.Sessions.Get(r.Context(), sessionID)
 	if err != nil {
 		return nil, false
 	}
@@ -89,30 +143,51 @@ func (h *Handlers) RequireAuth(next http.Handler) http.Handler {
 	})
 }
 
-// RequireRole — middleware: доступ только указанным ролям.
-func (h *Handlers) RequireRole(roles ...string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			user, ok := h.authenticatedUser(r)
-			if !ok {
-				writeError(w, http.StatusUnauthorized, "unauthorized")
-				return
-			}
-			if !hasRole(roles, user.Role) {
-				writeError(w, http.StatusForbidden, "forbidden")
-				return
-			}
-			ctx := context.WithValue(r.Context(), userContextKey, user)
-			next.ServeHTTP(w, r.WithContext(ctx))
-		})
+// RequirePerm — middleware: вход в систему плюс право из authz.
+//
+// Это замена RequireRole(...): раньше маршрут декларировал список ролей, и
+// решение о доступе жило в двух местах — в маршруте и внутри обработчика
+// (`hasRole`). Теперь маршрут декларирует *право*, а соответствие
+// «роль → право» стоит в одной таблице (internal/authz).
+//
+// denyMessage — текст отказа: клиенту нужен внятный «only teachers can create
+// courses», а не голое «forbidden». Текст передаёт маршрутизатор, потому что
+// именно он знает, какое действие запрашивали.
+//
+// Требование к сборщику маршрутов: каждый защищённый путь обязан пройти через
+// этот middleware. Проверка «принадлежит ли объект пользователю» отсюда не
+// видна — она остаётся в обработчике, потому что требует данных из базы.
+func (h *Handlers) RequirePerm(perm authz.Permission, denyMessage string, next http.Handler) http.Handler {
+	if denyMessage == "" {
+		denyMessage = "forbidden"
 	}
+
+	return h.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := h.currentUser(r)
+		if user == nil {
+			// RequireAuth положил пользователя в контекст. nil здесь означает,
+			// что middleware собрали в неправильном порядке, — отвечаем 401 и
+			// не пытаемся угадать права.
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+
+		if !authz.Can(authz.Role(user.Role), perm) {
+			writeError(w, http.StatusForbidden, denyMessage)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	}))
 }
 
-func hasRole(allowed []string, role string) bool {
-	for _, r := range allowed {
-		if r == role {
-			return true
-		}
+// canHere — право текущего пользователя без обращения к строке роли.
+//
+// Обработчики больше не сравнивают user.Role с литералом: им нужно понять,
+// распространяется ли их действие на чужие объекты (права вида *.any).
+func canHere(user *models.User, perm authz.Permission) bool {
+	if user == nil {
+		return false
 	}
-	return false
+	return authz.Can(authz.Role(user.Role), perm)
 }

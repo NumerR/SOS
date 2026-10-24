@@ -3,7 +3,6 @@ package handlers
 import (
 	"net/http"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/NumerR/SOS/internal/models"
 )
@@ -15,7 +14,8 @@ type CreateResourceRequest struct {
 	Description string `json:"description"`
 }
 
-// ResourcesAPI — GET (все авторизованные) / POST (teacher, admin) /api/resources.
+// ResourcesAPI — GET (все авторизованные) / POST (право resource.create,
+// проверяется маршрутизатором) /api/resources.
 func (h *Handlers) ResourcesAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -30,10 +30,6 @@ func (h *Handlers) ResourcesAPI(w http.ResponseWriter, r *http.Request) {
 		user := h.currentUser(r)
 		if user == nil {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
-			return
-		}
-		if !hasRole([]string{"teacher", "admin"}, user.Role) {
-			writeError(w, http.StatusForbidden, "only teachers can add resources")
 			return
 		}
 
@@ -51,20 +47,10 @@ func (h *Handlers) ResourcesAPI(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnprocessableEntity, "title is required")
 			return
 		}
-		if utf8.RuneCountInString(req.Title) > 200 {
-			writeError(w, http.StatusUnprocessableEntity, "title is too long")
-			return
-		}
-		if utf8.RuneCountInString(req.Category) > 64 {
-			writeError(w, http.StatusUnprocessableEntity, "category is too long")
-			return
-		}
-		if utf8.RuneCountInString(req.URL) > 2000 {
-			writeError(w, http.StatusUnprocessableEntity, "url is too long")
-			return
-		}
-		if utf8.RuneCountInString(req.Description) > 2000 {
-			writeError(w, http.StatusUnprocessableEntity, "description is too long")
+		if !validateLength(w, "title", req.Title, maxTitleLength) ||
+			!validateLength(w, "category", req.Category, maxCategoryLength) ||
+			!validateLength(w, "url", req.URL, maxURLLength) ||
+			!validateLength(w, "description", req.Description, maxDescriptionLength) {
 			return
 		}
 

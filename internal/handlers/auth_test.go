@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NumerR/SOS/internal/authz"
 	"github.com/NumerR/SOS/internal/database"
 	"github.com/NumerR/SOS/internal/models"
 	"github.com/NumerR/SOS/internal/ratelimit"
@@ -25,6 +27,16 @@ import (
 func newTestHandlers(t *testing.T) *Handlers {
 	t.Helper()
 
+	h, _ := newTestEnv(t)
+	return h
+}
+
+// newTestEnv — то же, но возвращает и *sql.DB: часть проверок двигает
+// expires_at у сессии прямым запросом, а такого метода у хранилища нет —
+// и быть не должно, наружу «подделать срок» не должен уметь никто.
+func newTestEnv(t *testing.T) (*Handlers, *sql.DB) {
+	t.Helper()
+
 	db, err := database.Open(":memory:")
 	if err != nil {
 		t.Fatalf("открыть базу: %v", err)
@@ -32,13 +44,21 @@ func newTestHandlers(t *testing.T) *Handlers {
 	if err := database.Migrate(db); err != nil {
 		t.Fatalf("миграции: %v", err)
 	}
+
+	// Таблица журнала: в живом сервере её создаёт миграция модуля audit, а
+	// здесь модуля нет — иначе тесты обработчиков зависели бы от пакета,
+	// который зависит от них.
+	if _, err := db.Exec(store.AuditEventsMigration); err != nil {
+		t.Fatalf("таблица аудита: %v", err)
+	}
 	t.Cleanup(func() { _ = db.Close() })
 
 	return New(Deps{
 		Users:    store.NewUserStore(db),
 		Sessions: store.NewSessionStore(db),
+		Audit:    store.NewAuditStore(db),
 		Limits:   NewLimiters(),
-	})
+	}), db
 }
 
 func createUser(t *testing.T, h *Handlers, username, password, role string) *models.User {
@@ -78,21 +98,22 @@ func request(method, target, body, remoteAddr string, cookies []*http.Cookie) *h
 
 // call — вызов обработчика с теми же middleware, что навешаны на маршрут в main.go.
 func callLogin(h *Handlers, body, remoteAddr string, cookies []*http.Cookie) *httptest.ResponseRecorder {
-	handler := h.RateLimit(h.Limits.Login, "login", LimitByIP)(http.HandlerFunc(h.Login))
+	handler := h.RateLimit(h.Limits.Login, "login", ClientIP)(http.HandlerFunc(h.Login))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, request(http.MethodPost, "/api/auth/login", body, remoteAddr, cookies))
 	return rec
 }
 
 func callRegister(h *Handlers, body, remoteAddr string) *httptest.ResponseRecorder {
-	handler := h.RateLimit(h.Limits.Register, "register", LimitByIP)(http.HandlerFunc(h.Register))
+	handler := h.RateLimit(h.Limits.Register, "register", ClientIP)(http.HandlerFunc(h.Register))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, request(http.MethodPost, "/api/auth/register", body, remoteAddr, nil))
 	return rec
 }
 
 func callAdminSetRole(h *Handlers, body, remoteAddr string, cookies []*http.Cookie) *httptest.ResponseRecorder {
-	handler := h.RequireRole("admin")(h.RequireCSRF(http.HandlerFunc(h.AdminSetRole)))
+	handler := h.RequirePerm(authz.UserRoleManage, "only administrators can assign roles",
+		h.RequireCSRF(http.HandlerFunc(h.AdminSetRole)))
 
 	req := request(http.MethodPost, "/api/admin/users/role", body, remoteAddr, cookies)
 	// Double-submit: токен едет и в cookie, и в заголовке.
@@ -350,7 +371,8 @@ func TestAdminSetRoleRequiresCSRF(t *testing.T) {
 	target := createUser(t, h, "fred", "studentp1", "student")
 	cookies := login(t, h, "root3", "adminpass1", "10.0.8.1:1")
 
-	handler := h.RequireRole("admin")(h.RequireCSRF(http.HandlerFunc(h.AdminSetRole)))
+	handler := h.RequirePerm(authz.UserRoleManage, "only administrators can assign roles",
+		h.RequireCSRF(http.HandlerFunc(h.AdminSetRole)))
 
 	req := request(http.MethodPost, "/api/admin/users/role", `{"user_id":`+itoa(target.ID)+`,"role":"teacher"}`, "10.0.8.1:1", cookies)
 	rec := httptest.NewRecorder()

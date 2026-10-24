@@ -85,6 +85,20 @@ func (h *Handlers) RequireCSRF(next http.Handler) http.Handler {
 	})
 }
 
+// clearCSRFCookie снимает csrf-cookie — вместе с отзывом сессий она больше
+// не должна留在 браузере.
+func clearCSRFCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     csrfCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: false,
+		Secure:   isSecureRequest(r),
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+}
+
 // constantTimeEqual сравнивает строки за фиксированное время,
 // чтобы не утекать длину/содержимое по таймингу.
 func constantTimeEqual(a, b string) bool {

@@ -4,28 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SOS — Университетская платформа</title>
-    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
-    <header class="site-header">
-        <div class="container header-row">
-            <a href="/" class="brand">
-                <span class="brand-mark" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
-                </span>
-                <span class="brand-text">
-                    <span class="brand-title">SOS</span>
-                    <span class="brand-sub">Student OS · Go · SQLite</span>
-                </span>
-            </a>
-
-            <nav id="authLinks" class="nav">
-                <a href="/schedule" class="btn btn-secondary">Расписание</a>
-                <a href="/login" class="btn btn-secondary">Войти</a>
-                <a href="/register" class="btn">Регистрация</a>
-            </nav>
-        </div>
-    </header>
+<body data-layout="index" data-brand-sub="Student OS · Go · SQLite" data-footer-note="Design · Parchment / Neumorphic / Petrol" data-footer-stack="HTML5 · CSS · JS · Go · SQLite">
+    <header class="site-header"></header>
 
     <main class="main">
         <div class="container stack">
@@ -39,12 +21,12 @@
                     Интерфейс&nbsp;— на&nbsp;чистых HTML, CSS и&nbsp;JavaScript. Backend&nbsp;— на&nbsp;Go.
                 </p>
                 <div class="hero-actions">
-                    <a href="/register" class="btn">
+                    <a href="register" class="btn">
                         Создать аккаунт
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
                     </a>
-                    <a href="/schedule" class="btn btn-secondary">Расписание</a>
-                    <a href="/login" class="btn btn-secondary">У меня есть аккаунт</a>
+                    <a href="schedule" class="btn btn-secondary">Расписание</a>
+                    <a href="login" class="btn btn-secondary">У меня есть аккаунт</a>
                 </div>
             </section>
 
@@ -96,21 +78,13 @@
         </div>
     </main>
 
-    <footer class="site-footer">
-        <div class="container footer-row">
-            <span class="footer-meta">Design · Parchment / Neumorphic / Petrol</span>
-            <div class="swatches" aria-hidden="true">
-                <span class="swatch parchment"></span>
-                <span class="swatch surface"></span>
-                <span class="swatch line"></span>
-                <span class="swatch teal"></span>
-                <span class="swatch ink"></span>
-            </div>
-            <span class="footer-meta">HTML5 · CSS · JS · Go · SQLite</span>
-        </div>
-    </footer>
+    <footer class="site-footer"></footer>
 
-    <script src="/js/common.js"></script>
-    <script src="/js/index.js"></script>
+    <script src="js/config.js"></script>
+    <script src="js/core/api-client.js"></script>
+    <script src="js/core/format.js"></script>
+    <script src="js/core/layout.js"></script>
+    <script src="js/common.js"></script>
+    <script src="js/index.js"></script>
 </body>
 </html>

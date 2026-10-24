@@ -4,6 +4,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/NumerR/SOS/internal/authz"
+	"github.com/NumerR/SOS/internal/store"
 )
 
 type SubmitRequest struct {
@@ -18,6 +21,9 @@ type GradeRequest struct {
 }
 
 // SubmitWork handles POST /api/submissions
+//
+// Право на маршрут — «вход в систему»: сдавать может любая роль, если она
+// записана на курс. Исключение для незаписанных — authz.SubmissionCreateAny.
 func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w)
@@ -37,6 +43,11 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 
 	if req.AssignmentID <= 0 {
 		writeError(w, http.StatusBadRequest, "assignment_id is required")
+		return
+	}
+
+	req.Content = strings.TrimSpace(req.Content)
+	if !validateLength(w, "content", req.Content, maxSubmissionLength) {
 		return
 	}
 
@@ -60,12 +71,14 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if !isEnrolled && user.Role != "admin" {
+	// Сдавать можно только с записью на курс; право submission.create.any
+	// снимает это ограничение (оно одно у администратора).
+	if !isEnrolled && !canHere(user, authz.SubmissionCreateAny) {
 		writeError(w, http.StatusForbidden, "you must be enrolled in the course to submit work")
 		return
 	}
 
-	sub, err := h.Submissions.Upsert(r.Context(), user.ID, req.AssignmentID, strings.TrimSpace(req.Content))
+	sub, err := h.Submissions.Upsert(r.Context(), user.ID, req.AssignmentID, req.Content)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save submission")
 		return
@@ -75,6 +88,9 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListSubmissionsForAssignment handles GET /api/submissions?assignment_id=N
+//
+// Право submission.view проверяет маршрутизатор; здесь остаётся «своё ли
+// задание».
 func (h *Handlers) ListSubmissionsForAssignment(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w)
@@ -84,11 +100,6 @@ func (h *Handlers) ListSubmissionsForAssignment(w http.ResponseWriter, r *http.R
 	user := h.currentUser(r)
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-
-	if !hasRole([]string{"teacher", "admin"}, user.Role) {
-		writeError(w, http.StatusForbidden, "only teachers can view submissions")
 		return
 	}
 
@@ -109,7 +120,7 @@ func (h *Handlers) ListSubmissionsForAssignment(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if user.Role != "admin" && assignment.CreatedBy != user.ID {
+	if !canHere(user, authz.SubmissionViewAny) && assignment.CreatedBy != user.ID {
 		writeError(w, http.StatusForbidden, "you can only view submissions for your own assignments")
 		return
 	}
@@ -146,6 +157,9 @@ func (h *Handlers) MySubmissions(w http.ResponseWriter, r *http.Request) {
 }
 
 // GradeSubmission handles POST /api/submissions/grade
+//
+// Право submission.grade проверяет маршрутизатор; здесь — проверка владельца
+// задания и валидация оценки.
 func (h *Handlers) GradeSubmission(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w)
@@ -158,11 +172,6 @@ func (h *Handlers) GradeSubmission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !hasRole([]string{"teacher", "admin"}, user.Role) {
-		writeError(w, http.StatusForbidden, "only teachers can grade submissions")
-		return
-	}
-
 	var req GradeRequest
 	if !readJSON(w, r, &req) {
 		return
@@ -170,6 +179,13 @@ func (h *Handlers) GradeSubmission(w http.ResponseWriter, r *http.Request) {
 
 	if req.SubmissionID <= 0 {
 		writeError(w, http.StatusBadRequest, "submission_id is required")
+		return
+	}
+
+	// Оценку и комментарий проверяем до обращения к базе: запрос с мусором не
+	// должен тратить три SELECT и соединение.
+	req.Comment = strings.TrimSpace(req.Comment)
+	if !validateScore(w, req.Score) || !validateLength(w, "comment", req.Comment, maxDescriptionLength) {
 		return
 	}
 
@@ -188,15 +204,35 @@ func (h *Handlers) GradeSubmission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. Проверяем право: оценить может только владелец курса-задания либо админ.
-	if user.Role != "admin" && assignment.CreatedBy != user.ID {
+	if !canHere(user, authz.SubmissionGradeAny) && assignment.CreatedBy != user.ID {
 		writeError(w, http.StatusForbidden, "you can only grade submissions for your own courses")
 		return
 	}
 
-	if err := h.Submissions.Grade(r.Context(), req.SubmissionID, req.Score, strings.TrimSpace(req.Comment)); err != nil {
+	if err := h.Submissions.Grade(r.Context(), req.SubmissionID, req.Score, req.Comment); err != nil {
+		h.recordAudit(r, auditWrite{
+			action:     store.AuditGrade,
+			actor:      user,
+			targetType: "submission",
+			targetID:   auditTargetID(req.SubmissionID),
+			detail:     "grade failed",
+			ok:         false,
+		})
 		writeError(w, http.StatusInternalServerError, "failed to grade submission")
 		return
 	}
+
+	h.recordAudit(r, auditWrite{
+		action:     store.AuditGrade,
+		actor:      user,
+		targetType: "submission",
+		targetID:   auditTargetID(req.SubmissionID),
+		// Оценка в шкале интерфейса (0–10) и её же значение в базе:
+		// журнал отвечает на «кто поставил эту цифру», а не на «что
+		// написал комментарий» — текст комментария сюда не попадает.
+		detail: "score=" + strconv.FormatFloat(req.Score, 'f', -1, 64),
+		ok:     true,
+	})
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "graded"})
 }

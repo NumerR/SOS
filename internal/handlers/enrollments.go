@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/NumerR/SOS/internal/authz"
 	"github.com/NumerR/SOS/internal/store"
 )
 
@@ -34,7 +35,10 @@ func (h *Handlers) MyEnrollments(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, courses)
 }
 
-// Enroll — POST /api/enrollments: записаться на курс (student/admin).
+// Enroll — POST /api/enrollments: записаться на курс.
+//
+// Право (student/admin) проверяет маршрутизатор через authz.EnrollmentManage,
+// поэтому здесь остаётся только валидация тела и факт записи.
 func (h *Handlers) Enroll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w)
@@ -44,11 +48,6 @@ func (h *Handlers) Enroll(w http.ResponseWriter, r *http.Request) {
 	user := h.currentUser(r)
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-
-	if !hasRole([]string{"student", "admin"}, user.Role) {
-		writeError(w, http.StatusForbidden, "only students can enroll in courses")
 		return
 	}
 
@@ -83,7 +82,9 @@ func (h *Handlers) Enroll(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// CancelEnrollment — POST /api/enrollments/cancel: отписаться (student/admin).
+// CancelEnrollment — POST /api/enrollments/cancel: отписаться.
+//
+// Право — то же authz.EnrollmentManage (декларировано на маршруте).
 func (h *Handlers) CancelEnrollment(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w)
@@ -93,11 +94,6 @@ func (h *Handlers) CancelEnrollment(w http.ResponseWriter, r *http.Request) {
 	user := h.currentUser(r)
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-
-	if !hasRole([]string{"student", "admin"}, user.Role) {
-		writeError(w, http.StatusForbidden, "only students can cancel enrollment")
 		return
 	}
 
@@ -122,7 +118,12 @@ func (h *Handlers) CancelEnrollment(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// CourseStudents — GET /api/enrollments/course?course_id=N: кто записан (teacher-владелец/admin).
+// CourseStudents — GET /api/enrollments/course?course_id=N: кто записан на курс.
+//
+// Право «смотреть список записанных» (course.students.view) проверяет
+// маршрутизатор. Здесь остаётся проверка владельца: преподаватель видит только
+// свои курсы, а админ — любые, потому что у него есть
+// course.students.view.any.
 func (h *Handlers) CourseStudents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w)
@@ -135,19 +136,13 @@ func (h *Handlers) CourseStudents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !hasRole([]string{"teacher", "admin"}, user.Role) {
-		writeError(w, http.StatusForbidden, "only teachers can view enrolled students")
-		return
-	}
-
 	courseID, err := strconv.ParseInt(r.URL.Query().Get("course_id"), 10, 64)
 	if err != nil || courseID <= 0 {
 		writeError(w, http.StatusBadRequest, "valid course_id is required")
 		return
 	}
 
-	// Преподаватель видит список только своих курсов; админ — любых.
-	if user.Role == "teacher" {
+	if !canHere(user, authz.CourseStudentsAny) {
 		owner, found, err := h.Enrollments.CourseOwner(r.Context(), courseID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to check course ownership")

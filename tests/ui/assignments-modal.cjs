@@ -65,7 +65,7 @@ async function openDashboard(account) {
 
     // Один eval на все скрипты: в браузере классические <script> делят global lexical
     // environment, а window.eval() в jsdom создаёт отдельную область на каждый вызов.
-    const bundle = ["common.js", "modals.js", "dashboard.js"]
+    const bundle = ["config.js", "core/api-client.js", "core/format.js", "core/layout.js", "common.js", "modals.js", "dashboard.js"]
         .map((file) => fs.readFileSync(path.join(REPO, "web/js", file), "utf8"))
         .join("\n;\n");
     window.eval(bundle);

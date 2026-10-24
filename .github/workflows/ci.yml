@@ -1,0 +1,150 @@
+name: CI
+
+# Проверки, которые ловят класс багов этапа 2.5:
+#   go       — компиляция, формат, vet, тесты (включая гонку в лимитере);
+#   frontend — синтаксис каждого JS-файла и целостность подключений (модальные
+#              окна T0.1 сломались именно здесь: файл был валидным, но ни одна
+#              страница его не подключала);
+#   ui       — jsdom-тесты против живого сервера.
+#
+# Миграции на чистой PostgreSQL появляются вместе с T2.1: сейчас схема применяется
+# кодом на SQLite (internal/database/db.go), отдельного SQL-пакета для dry-run нет.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Новый пуш в ту же ветку отменяет предыдущий прогон: проверки дешёвые,
+# очереди — дорогие.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go (gofmt, vet, build, test -race)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установка Go (версия из go.mod)
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt требует правок в файлах:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test
+        run: go test -race -count=1 ./...
+
+  frontend:
+    name: Фронтенд без сборки (node --check + связи HTML/JS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установка Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: node --check по всем web/js/**/*.js
+        run: |
+          set -e
+          # find, а не glob web/js/*.js: с T3.1 часть скриптов лежит в web/js/core,
+          # и не-рекурсивная проверка молча пропускала бы подпапку.
+          found=0
+          while IFS= read -r f; do
+            found=$((found + 1))
+            echo "-- $f"
+            node --check "$f"
+          done < <(find web/js -name '*.js' | sort)
+          if [ "$found" -eq 0 ]; then
+            echo "в web/js нет ни одного .js — проверка сломалась, а не проект"
+            exit 1
+          fi
+          echo "проверено файлов: $found"
+
+      - name: Целостность фронтенда
+        run: node scripts/check-frontend.mjs
+
+  ui:
+    name: UI против живого сервера (jsdom)
+    runs-on: ubuntu-latest
+    needs: [go, frontend]
+    env:
+      # Одноразовый пароль CI-контейнера, не секрет: база создаётся в раннере
+      # и удаляется вместе с ним. В репозитории лежать нельзя только настоящим
+      # учётным данным.
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ci-only-pass-123
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установка Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Установка Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: tests/ui/package-lock.json
+
+      - name: Сборка сервера
+        run: go build -o /tmp/sos-ci ./cmd/server
+
+      - name: Зависимости UI-тестов
+        working-directory: tests/ui
+        run: npm ci
+
+      - name: Запуск сервера
+        run: |
+          set -e
+          /tmp/sos-ci > /tmp/sos-ci.log 2>&1 &
+          echo "$!" > /tmp/sos-ci.pid
+          for i in $(seq 1 30); do
+            if curl -sf localhost:8080/api/health > /dev/null; then
+              echo "сервер поднялся"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "сервер не поднялся за 30 секунд"
+          cat /tmp/sos-ci.log
+          exit 1
+
+      - name: Наполнение данными
+        run: bash tests/ui/seed.sh
+
+      - name: Прогон UI
+        working-directory: tests/ui
+        run: npm run test:all
+
+      - name: Лог сервера при падении
+        if: failure()
+        run: cat /tmp/sos-ci.log || true
+
+      - name: Остановка сервера
+        if: always()
+        run: kill "$(cat /tmp/sos-ci.pid)" 2>/dev/null || true

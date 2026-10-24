@@ -4,25 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Вход · SOS</title>
-    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
-    <header class="site-header">
-        <div class="container header-row">
-            <a href="/" class="brand">
-                <span class="brand-mark" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
-                </span>
-                <span class="brand-text">
-                    <span class="brand-title">SOS</span>
-                    <span class="brand-sub">Вход в систему</span>
-                </span>
-            </a>
-            <nav class="nav">
-                <a href="/register" class="btn btn-secondary">Регистрация</a>
-            </nav>
-        </div>
-    </header>
+<body data-layout="login" data-brand-sub="Вход в систему">
+    <header class="site-header"></header>
 
     <main class="main auth-wrap">
         <section class="panel auth-card">
@@ -56,11 +41,15 @@
                 <p id="message" class="message hidden" role="status"></p>
             </form>
 
-            <p class="form-foot">Нет аккаунта? <a href="/register">Зарегистрироваться</a></p>
+            <p class="form-foot">Нет аккаунта? <a href="register">Зарегистрироваться</a></p>
         </section>
     </main>
 
-    <script src="/js/common.js"></script>
-    <script src="/js/auth.js"></script>
+    <script src="js/config.js"></script>
+    <script src="js/core/api-client.js"></script>
+    <script src="js/core/format.js"></script>
+    <script src="js/core/layout.js"></script>
+    <script src="js/common.js"></script>
+    <script src="js/auth.js"></script>
 </body>
 </html>

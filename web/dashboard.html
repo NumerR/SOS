@@ -4,45 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Личный кабинет · SOS</title>
-    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
-    <header class="site-header">
-        <div class="container header-row">
-            <a href="/" class="brand">
-                <span class="brand-mark" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
-                </span>
-                <span class="brand-text">
-                    <span class="brand-title">SOS</span>
-                    <span class="brand-sub">Личный кабинет</span>
-                </span>
-            </a>
-
-            <div class="top-actions">
-                <a href="/schedule" class="btn btn-secondary">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-                    Расписание
-                </a>
-                <a href="/admin" id="adminLink" class="btn btn-secondary hidden">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                    Админ
-                </a>
-
-                <div class="user-box">
-                    <span class="avatar" id="userAvatar" aria-hidden="true">?</span>
-                    <span class="user-meta">
-                        <span class="user-name" id="userName">Загрузка…</span>
-                        <span class="chip chip-muted" id="userRole">—</span>
-                    </span>
-                </div>
-                <button id="logoutBtn" class="btn btn-secondary">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg>
-                    Выйти
-                </button>
-            </div>
-        </div>
-    </header>
+<body data-layout="dashboard" data-brand-sub="Личный кабинет" data-footer-note="Enrollments · assignments · deadlines">
+    <header class="site-header"></header>
 
     <main class="main">
         <div class="container stack">
@@ -132,19 +97,7 @@
         </div>
     </main>
 
-    <footer class="site-footer">
-        <div class="container footer-row">
-            <span class="footer-meta">Enrollments · assignments · deadlines</span>
-            <div class="swatches" aria-hidden="true">
-                <span class="swatch parchment"></span>
-                <span class="swatch surface"></span>
-                <span class="swatch line"></span>
-                <span class="swatch teal"></span>
-                <span class="swatch ink"></span>
-            </div>
-            <span class="footer-meta">Go · SQLite · Vanilla JS</span>
-        </div>
-    </footer>
+    <footer class="site-footer"></footer>
 
     <!-- Модальное окно заданий: содержимое рендерит js/modals.js -->
     <div id="modalContainer" class="modal-overlay hidden">
@@ -160,8 +113,12 @@
         </div>
     </div>
 
-    <script src="/js/common.js"></script>
-    <script src="/js/modals.js"></script>
-    <script src="/js/dashboard.js"></script>
+    <script src="js/config.js"></script>
+    <script src="js/core/api-client.js"></script>
+    <script src="js/core/format.js"></script>
+    <script src="js/core/layout.js"></script>
+    <script src="js/common.js"></script>
+    <script src="js/modals.js"></script>
+    <script src="js/dashboard.js"></script>
 </body>
 </html>

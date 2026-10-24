@@ -3,7 +3,6 @@ package handlers
 import (
 	"net/http"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/NumerR/SOS/internal/models"
 )
@@ -16,7 +15,8 @@ type CreateCourseRequest struct {
 
 // CoursesAPI обрабатывает GET и POST /api/courses.
 // GET — любой авторизованный (каталог виден студентам).
-// POST — только teacher и admin.
+// POST — право course.create: его проверяет маршрутизатор, поэтому здесь
+// роль больше не сравнивается.
 func (h *Handlers) CoursesAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -35,11 +35,6 @@ func (h *Handlers) CoursesAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if !hasRole([]string{"teacher", "admin"}, user.Role) {
-			writeError(w, http.StatusForbidden, "only teachers can create courses")
-			return
-		}
-
 		var req CreateCourseRequest
 		if !readJSON(w, r, &req) {
 			return
@@ -54,18 +49,9 @@ func (h *Handlers) CoursesAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if utf8.RuneCountInString(req.Title) > 200 {
-			writeError(w, http.StatusUnprocessableEntity, "title is too long")
-			return
-		}
-
-		if utf8.RuneCountInString(req.Description) > 2000 {
-			writeError(w, http.StatusUnprocessableEntity, "description is too long")
-			return
-		}
-
-		if utf8.RuneCountInString(req.Teacher) > 200 {
-			writeError(w, http.StatusUnprocessableEntity, "teacher name is too long")
+		if !validateLength(w, "title", req.Title, maxTitleLength) ||
+			!validateLength(w, "description", req.Description, maxDescriptionLength) ||
+			!validateLength(w, "teacher name", req.Teacher, maxPersonNameLength) {
 			return
 		}
 

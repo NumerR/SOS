@@ -140,6 +140,11 @@ button { font: inherit; }
 .btn-secondary:hover { background: var(--parchment); }
 .btn-secondary:active { box-shadow: var(--inset1); }
 
+/* «Выйти везде» после первого клика становится подтверждениям — цвет предупреждает. */
+.btn-danger { --btn-bg: var(--danger); --btn-fg: #f5f0e6; }
+.btn-danger:hover { background: var(--danger); filter: brightness(.94); }
+.btn-danger:focus-visible { box-shadow: var(--e1), 0 0 0 3px var(--danger-tint), 0 0 0 5px var(--danger); }
+
 .btn-icon { width: 40px; height: 40px; padding: 0; border-radius: var(--r-md); --btn-bg: var(--surface); --btn-fg: var(--ink-soft); box-shadow: var(--e1); }
 .btn-icon:hover { background: var(--parchment); color: var(--teal); }
 .btn-icon:active { box-shadow: var(--inset1); }

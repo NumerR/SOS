@@ -17,8 +17,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const fromDate = document.getElementById("fromDate");
     const toDate = document.getElementById("toDate");
 
-    const roleLabels = { student: "студент", teacher: "преподаватель", admin: "администратор" };
-    const canManage = new Set(["teacher", "admin"]);
+    const canManage = GS.can.manageBoard;
 
     const stateMeta = {
         none:      { label: "не сдано",    cls: "feed-state-none" },
@@ -29,21 +28,13 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     let user = null;
 
-    function pad(n) { return String(n).padStart(2, "0"); }
-    function toISODate(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
-    function dayStartUnix(iso) {
-        const [y, m, d] = iso.split("-").map(Number);
-        return Math.floor(new Date(y, m - 1, d, 0, 0, 0, 0).getTime() / 1000);
-    }
-    function dayEndUnix(iso) {
-        const [y, m, d] = iso.split("-").map(Number);
-        return Math.floor(new Date(y, m - 1, d, 23, 59, 59, 0).getTime() / 1000);
-    }
-    function formatDue(ts) {
-        const d = new Date(ts * 1000);
-        return d.toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" }) +
-            " · " + d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-    }
+    // Даты — общий модуль core/format.js: раньше эти же пять функций были
+    // написаны здесь заново (и «Без дедлайна»/«без точной даты» расходились в
+    // формулировках с дашбордом).
+    const toISODate = GS.toISODate;
+    const dayStartUnix = GS.dayStartUnix;
+    const dayEndUnix = GS.dayEndUnix;
+    const formatDue = GS.formatDateTime;
 
     const today = new Date();
     const weekLater = new Date(today.getTime() + 7 * 24 * 3600 * 1000);
@@ -109,7 +100,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         const to = dayEndUnix(toDate.value || toISODate(weekLater));
 
         try {
-            const items = await GS.fetchJSON(`/api/schedule?from=${from}&to=${to}`);
+            const items = await GS.fetchJSON(`/api/schedule?from=${from}&to=${to}`, { on401: "throw" });
             renderFeed(items);
         } catch (error) {
             if (error.status === 401) { showGuestMode(); return; }
@@ -126,7 +117,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             resourcesContainer.innerHTML = `
                 <div class="empty-state">
                     <span class="empty-text">Пока нет ни одного ресурса</span>
-                    <span class="empty-hint">${canManage.has(user.role) ? "Добавьте первый через форму ниже." : "Ресурсы появятся, когда их добавят преподаватели."}</span>
+                    <span class="empty-hint">${canManage(user.role) ? "Добавьте первый через форму ниже." : "Ресурсы появятся, когда их добавят преподаватели."}</span>
                 </div>`;
             return;
         }
@@ -155,7 +146,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (!resourcesContainer) return;
         resourcesContainer.innerHTML = `<div class="empty-state"><span class="spinner"></span><span class="empty-hint">Загрузка ресурсов…</span></div>`;
         try {
-            const resources = await GS.fetchJSON("/api/resources");
+            const resources = await GS.fetchJSON("/api/resources", { on401: "throw" });
             renderResources(resources);
         } catch (error) {
             if (error.status === 401) { showGuestMode(); return; }
@@ -178,78 +169,97 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (guestNotice) guestNotice.classList.add("hidden");
         if (loginLink) loginLink.classList.add("hidden");
 
-        const manage = canManage.has(user.role);
+        const manage = canManage(user.role);
         if (createResourceSection) createResourceSection.classList.toggle("hidden", !manage);
         if (eventsManageSection) eventsManageSection.classList.toggle("hidden", !manage);
     }
 
     // ---------- формы создания ----------
-    if (resourceForm) {
-        resourceForm.addEventListener("submit", async (event) => {
-            event.preventDefault();
-            GS.hideMessage(resourceMsg);
-            const fd = new FormData(resourceForm);
-            const payload = {
-                title: String(fd.get("title") || "").trim(),
-                category: String(fd.get("category") || "").trim(),
-                url: String(fd.get("url") || "").trim(),
-                description: String(fd.get("description") || "").trim(),
-            };
-            if (!payload.title) { GS.showMessage(resourceMsg, "Название обязательно", "error"); return; }
+    //
+    // Общий механизм для обеих форм. Раньше это были две копии одного
+    // обработчика, и отличались они только адресом, текстами и списком,
+    // который надо обновить: блокировка кнопки, «is-loading», сброс формы,
+    // сообщение об ошибке — всё совпадало дословно. Класс багов T0.1
+    // (модалки) вырос ровно из таких копий: правку внесли в одну, а вторая
+    // осталась старой.
+    //
+    // Хелпер приватный и живёт в этом файле: второй странице он пока не нужен,
+    // а выдумывать публичный API на одного потребителя — это ещё один контракт,
+    // который надо поддерживать. Если понадобится dashboard.js, он переедет в
+    // common.js без изменения вызовов.
+    function bindCreateForm(options) {
+        const { form, message, endpoint, buildPayload, successText, errorText, reload } = options;
+        if (!form) return;
 
-            const btn = resourceForm.querySelector('button[type="submit"]');
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            GS.hideMessage(message);
+
+            const payload = buildPayload(new FormData(form));
+            if (!payload.title) {
+                GS.showMessage(message, "Название обязательно", "error");
+                return;
+            }
+
+            const btn = form.querySelector('button[type="submit"]');
             const original = btn ? btn.innerHTML : "";
             if (btn) { btn.classList.add("is-loading"); btn.disabled = true; }
             try {
-                await GS.fetchJSON("/api/resources", { method: "POST", body: JSON.stringify(payload) });
-                GS.showMessage(resourceMsg, "Ресурс добавлен", "success");
-                resourceForm.reset();
-                await loadResources();
+                await GS.fetchJSON(endpoint, { method: "POST", body: JSON.stringify(payload) });
+                GS.showMessage(message, successText, "success");
+                form.reset();
+                await reload();
             } catch (error) {
-                GS.showMessage(resourceMsg, error.message || "Ошибка при добавлении ресурса", "error");
+                GS.showMessage(message, error.message || errorText, "error");
             } finally {
                 if (btn) { btn.classList.remove("is-loading"); btn.disabled = false; btn.innerHTML = original; }
             }
         });
     }
 
-    if (eventForm) {
-        eventForm.addEventListener("submit", async (event) => {
-            event.preventDefault();
-            GS.hideMessage(eventMsg);
-            const fd = new FormData(eventForm);
-            const dueRaw = String(fd.get("event_date_raw") || "").trim();
-            let dueIso = "";
-            if (dueRaw) {
-                const d = new Date(dueRaw);
-                if (!isNaN(d.getTime())) dueIso = d.toISOString();
-            }
-            const payload = {
-                title: String(fd.get("title") || "").trim(),
-                description: String(fd.get("description") || "").trim(),
-                event_date: dueIso,
-            };
-            if (!payload.title) { GS.showMessage(eventMsg, "Название обязательно", "error"); return; }
+    // Дата события: поле свободное ввода, поэтому пустая строка и нечитаемая
+    // дата дают одинаковый результат — пустое значение, сервер трактует его как
+    // «без даты».
+    function toEventDate(raw) {
+        const value = String(raw || "").trim();
+        if (!value) return "";
 
-            const btn = eventForm.querySelector('button[type="submit"]');
-            const original = btn ? btn.innerHTML : "";
-            if (btn) { btn.classList.add("is-loading"); btn.disabled = true; }
-            try {
-                await GS.fetchJSON("/api/events", { method: "POST", body: JSON.stringify(payload) });
-                GS.showMessage(eventMsg, "Событие добавлено", "success");
-                eventForm.reset();
-                await loadFeed();
-            } catch (error) {
-                GS.showMessage(eventMsg, error.message || "Ошибка при добавлении события", "error");
-            } finally {
-                if (btn) { btn.classList.remove("is-loading"); btn.disabled = false; btn.innerHTML = original; }
-            }
-        });
+        const date = new Date(value);
+        return isNaN(date.getTime()) ? "" : date.toISOString();
     }
+
+    bindCreateForm({
+        form: resourceForm,
+        message: resourceMsg,
+        endpoint: "/api/resources",
+        buildPayload: (fd) => ({
+            title: String(fd.get("title") || "").trim(),
+            category: String(fd.get("category") || "").trim(),
+            url: String(fd.get("url") || "").trim(),
+            description: String(fd.get("description") || "").trim(),
+        }),
+        successText: "Ресурс добавлен",
+        errorText: "Ошибка при добавлении ресурса",
+        reload: loadResources,
+    });
+
+    bindCreateForm({
+        form: eventForm,
+        message: eventMsg,
+        endpoint: "/api/events",
+        buildPayload: (fd) => ({
+            title: String(fd.get("title") || "").trim(),
+            description: String(fd.get("description") || "").trim(),
+            event_date: toEventDate(fd.get("event_date_raw")),
+        }),
+        successText: "Событие добавлено",
+        errorText: "Ошибка при добавлении события",
+        reload: loadFeed,
+    });
 
     // ---------- инициализация ----------
     try {
-        user = await GS.fetchJSON("/api/auth/me");
+        user = await GS.fetchJSON("/api/auth/me", { on401: "throw" });
     } catch (error) {
         if (error.status === 401) { showGuestMode(); return; }
         if (feedContainer) feedContainer.innerHTML = `<p class="message message-error">${GS.escapeHtml(error.message || "Ошибка загрузки профиля")}</p>`;
