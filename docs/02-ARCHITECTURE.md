@@ -204,6 +204,58 @@ JSON, и middleware-цепочка для них своя) и `/api/health` (п�
 
 Дедупликация импорта: `UNIQUE (source_id, external_id)`; при повторной встрече — upsert с обновлением полей и `source_revision`, а не новая строка.
 
+### 5.1 Что реально реализовано в T4.1 (расписание источника)
+
+Контракты выше — целевые; расписание уже работает по другому пути, и он зафиксирован
+здесь, чтобы следующий, кто будет читать документ, не искал несуществующий
+`/api/schedule/entries`. Источник — АПЭКС-ВУЗ, токен держит сервер, наружу отдаются
+только импортированные строки.
+
+`GET /api/schedule/groups?q=&limit=` — публичный. Каталог групп:
+
+```json
+{ "source": "apeks", "source_name": "АПЭКС-ВУЗ", "synced_at": 1761317000,
+  "count": 1, "source_page_url": "https://tksu.ru/…/rasp-stud.html",
+  "groups": [ { "external_id": "494", "name": "Б-ИСиТ-22",
+                "department": "…", "course": "2", "updated_at": 1761317000 } ] }
+```
+
+`GET /api/schedule/lessons?group=&month=&year=` (или `from=&to=` в unix-секундах) —
+публичный. `group` принимает и `external_id`, и имя из каталога (регистр и лишние
+пробелы не важны); если имя подходит нескольким группам — `422` со списком их
+идентификаторов, а не «первая попавшаяся». Ответ сгруппирован по учебным дням,
+`day_key` — `YYYYMMDD` (число, а не строка: так сортируется в SQL без функций),
+день без точной даты — `99999999`:
+
+```json
+{ "source": "apeks", "group_id": "494", "group_name": "Б-ИСиТ-22",
+  "range": { "from": 20261001, "to": 20261031 }, "updated_at": 1761317000,
+  "imported_months": [ { "month": 10, "year": 2026, "lessons": 22,
+                         "imported_at": 1761317000 } ],
+  "days": [ { "day_key": 20261002, "date": "2026-10-02", "weekday": "Пт",
+              "lessons": [ { "lesson_number": 3, "time": "12:20 – 13:55",
+                             "start_time": "12:20", "end_time": "13:55",
+                             "discipline": "…", "lesson_type": "Пр",
+                             "room": "к. 3/314", "teacher": "…",
+                             "subgroup": "1", "group_name": "Б-ИСиТ-22",
+                             "imported_at": 1761317000 } ] } ],
+  "source_page_url": "https://tksu.ru/…/rasp-stud.html" }
+```
+
+Три админских маршрута (право `schedule.source.manage`, запись — с CSRF):
+`GET /api/schedule/source/status` отдаёт `{configured, missing_config, stats}` —
+при неконфигурированном источнике это `200` с `configured: false`, а не `503`:
+«не настроено» — состояние, а не ошибка запроса. `POST /api/schedule/source/groups`
+→ `{source, fetched, added}`; `POST /api/schedule/source/lessons` с телом
+`{group, month, year, count}` (нули = «текущий месяц», `count` — сколько месяцев
+вперёд) → `{source, group_id, group_name, months, lessons}`. Оба пишут запись в
+журнал (`schedule.groups_sync`, `schedule.import`) и оба обращаются к чужому сайту:
+частота обращений к источнику — административное решение, а не побочный эффект
+открытой страницы.
+
+Значений токена, `APEKS_TOKEN` и вообще чего-либо, кроме перечисленного, ни один
+из этих ответов не содержит — проверка закреплена тестом.
+
 ## 6. Схема БД (целевая, PostgreSQL) ⭐
 
 Сохраняем существующее (`users`, `sessions`, `courses`, `enrollments`, `assignments`, `submissions`, `resources`) и добавляем:
@@ -236,6 +288,33 @@ audit_events(id, at, actor_user_id FK NULL, action, target_type, target_id,
 с остальной схемой в `T2.1`. `actor_user_id` — `ON DELETE SET NULL`: удаление
 учётки не должно стирать историю её действий, а журнал без автора остаётся
 читаемым (в UI — «не установлен»).
+
+В T4.1 к тому же SQLite-набору добавились ещё две таблицы — их объявляет модуль
+`schedule` (`internal/store/schedule_source.go`, версия
+`2026-10-24_schedule_source`):
+
+```
+schedule_source_groups(id, source, external_id, name, department, course, updated_at,
+                       UNIQUE (source, external_id))
+CREATE INDEX idx_schedule_groups_name ON schedule_source_groups (source, name)
+
+schedule_source_lessons(id, source, external_id, group_ext_id, month, year,
+                        day_key, date, weekday, lesson_number, time,
+                        start_time, end_time, group_name, subgroup, discipline,
+                        lesson_type, room, teacher, imported_at,
+                        UNIQUE (source, group_ext_id, external_id))
+CREATE INDEX idx_schedule_lessons_group_day ON … (source, group_ext_id, day_key, lesson_number)
+CREATE INDEX idx_schedule_lessons_batch    ON … (source, group_ext_id, month, year)
+```
+
+Это не целевая `schedule_entries`, а её рабочий эквивалент для одного источника:
+`source` держится колонкой, а не FK на `schedule_sources`, потому что справочника
+источников в базе нет и на один месяц он ровно один (ADR-0015). Уникальность
+`(source, group_ext_id, external_id)` — тот самый ключ дедупликации: импорт месяца
+делает upsert по нему и заменяет месяц целиком в одной транзакции, поэтому
+повторный импорт не удваивает пары, а удалённая источником пара исчезает и у нас.
+`day_key` вместо `starts_at`: у источника время пары приходит строкой
+«12:20 – 13:55» без даты-во-всё-миры, а день занятия задаёт вуз.
 
 ## 7. Аутентификация и безопасность (целевое состояние)
 
@@ -284,6 +363,21 @@ logout-all, смене пароля и смене роли; фоновая оч�
 отдельным тестом, который проходит по всем строкам таблицы. Отказы 403 и
 ошибки валидации 422 в журнал не пишутся намеренно.
 
+Добавлено в T4.1 (ADR-0015): в реестре 24 права — `schedule.source.manage`
+(только `admin`), student 3 / teacher 10 / admin 23. Это право стоят на всех
+трёх админских маршрутах источника (`internal/modules/schedule/module.go`), а
+чтение расписания (`/api/schedule/groups`, `/api/schedule/lessons`) объявлено
+`Public: true` и права не требует: в ответе нет ничего персонального, а витрина
+существует для гостя. Две новые точки журнала — `schedule.groups_sync` и
+`schedule.import`: в `detail` попадают только идентификатор группы, месяцы и
+счётчики, токена там нет и не может появиться, потому что токен не покидает
+процесс сервера. Отдельным тестом закреплена инвариантность: ни один ответ API
+и ни одна строка журнала не содержат значения `APEKS_TOKEN`, а фронтенд не
+обращается к `tksu.ru` — весь внешний путь остаётся на сервере. Исходящий запрос
+к источнику возможен только из обработчика под правом и с CSRF-заголовком,
+поэтому частота обращений к чужому сайту — решение администратора, а не
+побочный эффект открытой страницы.
+
 Осталось: политика хранения журнала (сколько месяцев записи лежат и кто чистит)
 — вопрос владельцу, `docs/03` §3; отдельный долг — `csrf_token` не может быть
 `__Host-`, потому что токен читает JS для заголовка `X-CSRF-Token`
@@ -298,9 +392,21 @@ ENV=production|development       TRUST_PROXY=false                SESSION_TTL=24
 LOG_LEVEL=info|debug|warn|error  (уровень slog; debug включает статику в доступ-логе)
 CORS_ALLOW_ORIGINS=https://…     (пусто = same-origin, заголовка нет)
 ADMIN_USERNAME/ADMIN_EMAIL/ADMIN_FULL_NAME/ADMIN_PASSWORD   (сид, существующий механизм)
-TELEGRAM_BOT_TOKEN=<secret>      TELEGRAM_ALLOWED_CHANNELS=…
-SCHEDULE_SOURCE_BASE_URL=…       IMPORT_INTERVAL=15m
+TELEGRAM_BOT_TOKEN=<secret>      TELEGRAM_ALLOWED_CHANNELS=…   (T4.2, не реализовано)
+APEKS_TOKEN=<secret>             APEKS_API_URL=…  (пусто = боевой адрес источника)
+IMPORT_INTERVAL=15m                                          (не реализовано)
 ```
+
+Про `APEKS_TOKEN` (T4.1): переменная читается ровно один раз — в
+`newScheduleSourceClient` (`cmd/server/main.go`), и только как значение запроса к
+источнику. Пустая — штатное состояние, а не авария: сервер стартует, страница
+расписания показывает «данные ещё не импортированы», а админская панель подсказывает,
+что задать. Значение не печатается ни в одном логе (`slog`-сообщение говорит только
+«не задан»), не попадает ни в один ответ API, ни в одну строку журнала, ни в URL
+браузера; в `apeks.scrub` оно вырезается из текста ошибки, если чужая библиотека
+всё-таки подставит полный URL с токеном в сообщение. `APEKS_API_URL` переопределяет
+адрес (нужен тестам на локальном TLS-стабе), но http-схему клиент отвергает при
+сборке — токен не уйдёт открытым текстом.
 
 Таймауты HTTP-сервера и дедлайн обращений к БД пока не настраиваются через env —
 это константы в `cmd/server/main.go` и `internal/handlers/deadline.go`
@@ -364,15 +470,16 @@ SQLite и проверяют допуск на маршрутах, а не то�
 с маркерами разметки профиля, а в ответе нет ни `password_hash`, ни `csrf_token=`,
 ни админских маршрутов, и после настоящего `POST /api/auth/logout` страница
 перестаёт отдаваться.
-Итого 91 тест верхнего уровня и 32 подтеста в шести пакетах,
+Итого 150 тестов верхнего уровня и 52 подтеста в семи пакетах,
 `go test -race -count=1 ./...` — все ok.
-UI-проверки (`tests/ui/*.cjs`, jsdom) после остатка T3.1 — шесть
-сьютов и 176 проверок: задания/модалки 20, роли админа 24 (в ней же — журнал),
+UI-проверки (`tests/ui/*.cjs`, jsdom) после T4.1 — семь
+сьютов и 235 проверок: задания/модалки 20, роли админа 24 (в ней же — журнал),
 панель аккаунта 29 (она проверяет уже `/profile`), истечение сессии 14,
-формы расписания и общая шапка 54, страница профиля 35.
-Четыре сьюта ходят к живому серверу; `schedule-forms.cjs` и `profile-page.cjs`
-работают без него (`fetch` подменён роутером или ошибкой) и потому не тратят
-бюджет лимитера входов.
+формы расписания и общая шапка 54, страница профиля 35, таблица расписания 59.
+Из них 148 работают офлайн — `schedule-forms.cjs`, `profile-page.cjs` и
+`schedule-timetable.cjs` подменяют `fetch` роутером или ошибкой и потому не тратят
+бюджет лимитера входов; остальные четыре (87 проверок) работают с живым сервером
+и сидом.
 Сьют истечения сессии и есть проверка приёмки T3.1 («не вечный
 spinner»): сессия отзывается настоящим `POST /api/auth/logout`, и требуется, что
 навигация ровно одна, только на вход, а на самом входе и в гостевом расписании —
@@ -381,16 +488,32 @@ spinner»): сессия отзывается настоящим `POST /api/auth
 делают 17 входов по логу сервера. Поэтому проверки журнала добавлены в сьют ролей (он и
 так входит администратором), а не пятым отдельным сьютом.
 
-Чего нет: store-интеграционные против PostgreSQL (журнал проверяется на SQLite —
-PostgreSQL появится в T2.1) и «повторный импорт не создаёт
-дубликат» (нет импорта, ADR-0004), parser fixtures (T4.1), Playwright (см. §9,
-ждёт решения о размещении).
+Появились в T4.1: parser fixtures —
+`internal/apeks/testdata/apeks-2026-10-week.json` (живой ответ источника за неделю,
+из папки парсера владельца) и `TestParseMonthRealSample`, который сверяет с ним
+каждое разобранное поле; сценарий «повторный импорт не создаёт дубликат» —
+`TestReplaceMonthIsRepeatable`, плюс `TestReplaceMonthDropsStaleLessons` (пара,
+убранная источником, исчезает и у нас), `TestReimportMovesLessonBetweenMonths`
+(перенос занятия между месяцами не оставляет хвост) и
+`TestScheduleSourceMigrationIsIdempotent`. Сбой источника тоже проверяется:
+битый ответ не затирает уже импортированный месяц
+(`TestImportBrokenPayloadKeepsOldMonth`), а текст ошибки источника не выдаёт
+подробностей наружу (`TestImportWhenSourceFailsHidesDetails`). Публичность чтения
+и закрытость записи — `TestScheduleGroupsAPIIsPublicAndHonestWhenEmpty`,
+`TestScheduleStatusAPIOnlyForAdmin`, `TestSyncGroupsDeniedForTeacher`,
+`TestSyncGroupsDeniedWithoutCSRF`, `TestSyncGroupsRequiresSession`; секретность
+токена — `TestErrorMessagesCarryNoSecret` и `TestTransportErrorIsScrubbed`.
+
+Чего нет: store-интеграционные против PostgreSQL (и журнал, и расписание
+проверяются на SQLite — PostgreSQL появится в T2.1), фоновый импорт по
+расписанию (`IMPORT_INTERVAL` не реализован, месяц тянет человек кнопкой), и
+Playwright (см. §9, ждёт решения о размещении).
 
 ## 12. Что делает Агент 1 до Этапа 3
 
 Принять решения из 03, зафиксировать ADR-0001 (тоположение развёртывания), ADR-0002 (PostgreSQL + runner миграций), ADR-0003 (формат ошибок API), ADR-0004 (распределение ролей и `authz`), написать `docs/how-to-add-a-module.md`, обновить README (сейчас он расходится с кодом: CSRF помечен нереализованным, схема БД — 4 таблицы вместо 8).
 
-Состояние: ADR-0001…ADR-0012 зафиксированы (05-DECISIONS.md), `docs/how-to-add-a-module.md`
+Состояние: ADR-0001…ADR-0015 зафиксированы (05-DECISIONS.md), `docs/how-to-add-a-module.md`
 написан и проверен добавлением тестового модуля, README приведён в соответствие
 и дополнен разделом «Права (`authz`)». Осталось не выполненным из этого списка:
 ADR-0001 реализован только как решение (Pages + внешний backend), относительные
