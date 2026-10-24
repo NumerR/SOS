@@ -61,12 +61,12 @@
   graceful shutdown по `SIGINT`/`SIGTERM`, `context.WithTimeout` на каждый
   запрос к БД, `slog` JSON + `request_id`, `/api/health` с `db.PingContext`;
 - границы длины всех текстовых полей и шкала оценки 0–10 — проверка до
-  обращения к БД, ответ `422` с именем поля;
+  обращения к БД, ответ `422` конвертом с именем поля (§ «Ошибки API»);
 - фронтенд ходит в API через один транспорт (`web/js/core/api-client.js`,
   252 строки): базовый URL из `web/js/config.js` (пустой = same-origin),
   `credentials` для кросс-origin, CSRF-заголовок на небезопасных методах,
-  таймаут через `AbortController`, ошибка одной формы (`status`/`message`/
-  `retryAfter`/`code`). Политику 401 («уйти на вход») решает клиент — формы со
+  таймаут через `AbortController`, ошибка одной формы (`status`/`code`/`message`/
+  `fields`/`retryAfter`/`data`). Политику 401 («уйти на вход») решает клиент — формы со
   штатным 401 (вход, смена пароля, гостевые эндпоинты) передают
   `on401: "throw"`; подписи ролей, права для кнопок и даты собраны в
   `web/js/core/format.js`, пути страниц относительные — см. ADR-0011;
@@ -464,6 +464,60 @@ curl -i -X POST http://localhost:8080/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{"username":"h","email":"h@example.com","full_name":"H","password":"password123","role":"teacher"}'
 ```
+
+## Ошибки API
+
+Все отказы API выглядят одинаково (`ADR-0003`, `internal/apierror`):
+
+```json
+{
+  "error": {
+    "code": "validation",
+    "message": "title is required",
+    "fields": { "title": "title is required" }
+  }
+}
+```
+
+`code` читает код (он стабильный, текст — нет), `message` печатается человеку,
+`fields` есть только когда сервер назвал поле. Ключ `fields` — имя из JSON
+(`title`, `course_id`, `group`), а подпись к ней берёт у самой формы:
+`GS.fieldLabel` ищет контрол по `name` и читает текст его `<label>`, поэтому
+«title is required» показывается как «title is required — поле: Название» без
+словаря соответствия.
+
+| HTTP | `code` | |
+| --- | --- | --- |
+| 400 | `validation`, `invalid_json` | плохое значение / неразбираемое тело |
+| 401 | `unauthorized` | сессии нет; сюда же «неверный текущий пароль» |
+| 403 | `forbidden`, `csrf_failed` | нет права / не сверился токен |
+| 404 | `not_found` | нет ресурса или маршрута |
+| 405 | `method_not_allowed` | путь есть, метода нет — пишет платформа |
+| 409 | `conflict` | логин или почта заняты |
+| 422 | `validation` | валидация формы, вместе с `fields` |
+| 429 | `rate_limited` | плюс заголовок `Retry-After` |
+| 502, 503 | `source_unavailable` | источник расписания не ответил или не настроен |
+
+Проверить живьём:
+
+```bash
+curl -s -X DELETE localhost:8080/api/events
+# {"error":{"code":"method_not_allowed","message":"method not allowed"}}
+curl -s localhost:8080/api/courses
+# {"error":{"code":"unauthorized","message":"unauthorized"}}
+curl -s localhost:8080/api/net-takogo
+# {"error":{"code":"not_found","message":"route not found"}}
+```
+
+Отказ источника (`source_unavailable`, 502/503) появляется у auth-маршрута
+расписания и требует сессию — например `POST /api/schedule/source/lessons` без
+заданного `APEKS_TOKEN` даёт 503 с текстом «источник расписания не настроен».
+Проверяется тестами `TestImportWhenSourceIsNotConfigured` и
+`TestImportWhenSourceFailsHidesDetails`.
+
+Единственное исключение — `/api/health`: он отвечает документом о состоянии
+(`{"status":"error","db":"error"}` при 503), а не отказом API, потому что его
+читает мониторинг.
 
 ## Тесты
 
