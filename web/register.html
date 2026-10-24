@@ -19,7 +19,7 @@
             <p class="auth-sub">Пароль хэшируется на сервере, в открытом виде не хранится.</p>
 
             <form id="authForm" class="form" data-endpoint="/api/auth/register" novalidate>
-                <fieldset class="field radio-group">
+                <fieldset class="field radio-group" aria-describedby="roleHelper message">
                     <legend class="field-label">Кто вы</legend>
 
                     <label class="radio-card">
@@ -31,33 +31,37 @@
                         </span>
                     </label>
 
-                    <p class="helper">Роль преподавателя или администратора выдаёт администратор в кабинете
+                    <p class="helper" id="roleHelper">Роль преподавателя или администратора выдаёт администратор в кабинете
                         управления — при регистрации её выбрать нельзя.</p>
                 </fieldset>
 
                 <label class="field">
                     <span class="field-label">Логин</span>
                     <input class="control" type="text" name="username" required
-                           minlength="3" maxlength="32" autocomplete="username" placeholder="ivanov">
-                    <span class="helper">3–32 символа: буквы, цифры, точка, дефис, подчёркивание.</span>
+                           minlength="3" maxlength="32" autocomplete="username" placeholder="ivanov"
+                           aria-describedby="usernameHelper message">
+                    <span class="helper" id="usernameHelper">3–32 символа: буквы, цифры, точка, дефис, подчёркивание.</span>
                 </label>
 
                 <label class="field">
                     <span class="field-label">Email</span>
                     <input class="control" type="email" name="email" required
-                           autocomplete="email" placeholder="student@example.com">
+                           autocomplete="email" placeholder="student@example.com"
+                           aria-describedby="message">
                 </label>
 
                 <label class="field">
                     <span class="field-label">Полное имя</span>
                     <input class="control" type="text" name="full_name" maxlength="100"
-                           autocomplete="name" placeholder="Иванов Иван Иванович">
+                           autocomplete="name" placeholder="Иванов Иван Иванович"
+                           aria-describedby="message">
                 </label>
 
                 <label class="field">
                     <span class="field-label">Пароль</span>
                     <input class="control" type="password" name="password" required
-                           minlength="8" autocomplete="new-password" placeholder="Минимум 8 символов">
+                           minlength="8" autocomplete="new-password" placeholder="Минимум 8 символов"
+                           aria-describedby="message">
                 </label>
 
                 <div class="form-actions">

@@ -23,7 +23,11 @@
 //      сверяет с журналом: иначе правка цвета в :root прошла бы незаметно;
 //   7. общий submit-механизм форм создания: определение GS.bindCreateForm одно,
 //      страницы его вызывают, и копий этого обработчика в страничных скриптах
-//      не появилось (класс багов T0.1).
+//      не появилось (класс багов T0.1);
+//   8. связь «поле → подсказка / строка сообщения» через aria-describedby:
+//      ссылки ведут на существующие id, каждое поле формы со статус-строкой на
+//      неё ссылается, подсказка с id подключена, и сгенерированные в JS поля не
+//      исключение (остаток T0.5, ADR-0018).
 //
 // Запуск локально: node scripts/check-frontend.mjs
 // Код выхода 0 — всё в порядке, 1 — есть находки (они печатаются списком).
@@ -350,12 +354,127 @@ for (const file of copies) {
   fail("web/js", `${file}: своя копия submit-механизма с блокировкой кнопки — используй GS.bindCreateForm или добавь исключение с причиной`);
 }
 
+// ---------- 8. aria-describedby: поле ссылается на свою подсказку и строку сообщения ----------
+//
+// ADR-0016 (T0.5) закрыл структуру страницы и контраст, но оставил ровно одну
+// вещь, записанную в «что не закрыло»: строки сообщений подписаны role="status",
+// а поле никуда на них не ссылается. Живой регион читается только в момент
+// изменения текста, и если фокус уже стоит в поле, отказ вслух проходит мимо —
+// пользователь либо ловит его на слух, либо уходит с поля и возвращается.
+// Связь «поле → сообщение» (1.3.1 / 3.3.1) — это aria-describedby, и она
+// статическая: её нельзя забыть «на одной ветке кода», её можно только не
+// написать совсем, или написать с опечаткой в id.
+//
+// Четыре правила, все по HTML страниц (плюс четвертое — по шаблонам в JS):
+//   1) каждая ссылка aria-describedby ведёт на id, который в этом же файле есть;
+//   2) в форме, где есть роль-статус строка, каждое поле с class="control"
+//      на неё ссылается (radio/checkbox-группа — через fieldset, как и должно);
+//   3) если у поля есть подсказка span.helper с id, поле на неё ссылается;
+//   4) поле, которое генерирует скрипт (modals.js, admin.js), тоже с ссылкой —
+//      в HTML его не найти, поэтому смотрим прямо теги в шаблонах.
+function attrsOf(tag) {
+  const out = {};
+  for (const m of tag.matchAll(/([a-zA-Z_:][-a-zA-Z0-9_:.]*)="([^"]*)"/g)) {
+    out[m[1].toLowerCase()] = m[2];
+  }
+  return out;
+}
+
+function describedBy(tag) {
+  return (attrsOf(tag)["aria-describedby"] || "").trim().split(/\s+/).filter(Boolean);
+}
+
+const CONTROL_TAG = /<(?:input|textarea|select)\b[\s\S]*?>/gi;
+
+function isControlTag(tag) {
+  return /class="[^"]*control/.test(tag) && attrsOf(tag).type !== "hidden";
+}
+
+let describedLinks = 0;
+let statusForms = 0;
+
+for (const page of pages) {
+  const html = readFileSync(join(WEB, page), "utf8");
+  const ids = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
+
+  for (const m of html.matchAll(/aria-describedby="([^"]*)"/g)) {
+    for (const ref of m[1].trim().split(/\s+/)) {
+      if (!ref) continue;
+      describedLinks += 1;
+      if (!ids.has(ref)) {
+        fail(page, `aria-describedby ссылается на «${ref}», а элемента с таким id на странице нет — для ассистивных технологий ссылка пустая`);
+      }
+    }
+  }
+
+  for (const form of html.match(/<form\b[\s\S]*?<\/form>/gi) || []) {
+    const statusIds = [...form.matchAll(/<(?:p|div|span)\b[^>]*role="status"[^>]*>/gi)]
+      .map((m) => attrsOf(m[0]).id)
+      .filter(Boolean);
+    if (!statusIds.length) continue;
+    statusForms += 1;
+
+    for (const m of form.matchAll(CONTROL_TAG)) {
+      if (!isControlTag(m[0])) continue;
+      const missing = statusIds.filter((sid) => !describedBy(m[0]).includes(sid));
+      if (missing.length) {
+        const name = attrsOf(m[0]).name || attrsOf(m[0]).id || "(без имени)";
+        fail(page, `поле ${name} не ссылается на строку сообщения своей формы (${missing.join(", ")}) — отказ, пришедший в это поле, вслух не слышно`);
+      }
+    }
+
+    for (const fs of form.match(/<fieldset\b[\s\S]*?<\/fieldset>/gi) || []) {
+      if (!/type="radio"|type="checkbox"/.test(fs)) continue;
+      const open = (fs.match(/<fieldset\b[\s\S]*?>/i) || [""])[0];
+      const missing = statusIds.filter((sid) => !describedBy(open).includes(sid));
+      if (missing.length) {
+        fail(page, `fieldset с группой переключателей не ссылается на строку сообщения (${missing.join(", ")})`);
+      }
+    }
+  }
+
+  for (const block of html.match(/<label\b[^>]*class="[^"]*\bfield\b[^"]*"[\s\S]*?<\/label>/gi) || []) {
+    const helper = (block.match(/<span\b[^>]*class="helper"[^>]*\bid="([^"]+)"/i) || [])[1];
+    if (!helper) continue;
+    for (const m of block.matchAll(CONTROL_TAG)) {
+      if (!isControlTag(m[0])) continue;
+      if (!describedBy(m[0]).includes(helper)) {
+        fail(page, `подсказка #${helper} не подключена через aria-describedby — вслух её не прочитать`);
+      }
+    }
+  }
+}
+
+let generatedControls = 0;
+for (const file of jsFiles(JS_DIR)) {
+  const source = readFileSync(join(JS_DIR, file), "utf8");
+  if (!source.includes('class="control')) continue;
+  for (const m of source.matchAll(CONTROL_TAG)) {
+    if (!isControlTag(m[0])) continue;
+    generatedControls += 1;
+    if (!describedBy(m[0]).length) {
+      fail(`web/js/${file}`, `генерированное поле без aria-describedby (${m[0].replace(/\s+/g, " ").slice(0, 60)}…) — сообщение модалки остаётся не связанным с полем`);
+    }
+  }
+}
+
+notes.push(`aria-describedby: ссылок ${describedLinks}, форм со статус-строкой ${statusForms}, полей в JS-шаблонах ${generatedControls}`);
+
+// Агрегат не должен молча выродиться: если ссылок нет вообще, правила 2 и 3
+// ничего не проверили (формы потеряли role="status" или страницы переписали).
+if (describedLinks === 0) {
+  fail("web/", "ни одного aria-describedby во всём фронтенде — проверка связи «поле → сообщение» стала пустой");
+}
+if (statusForms === 0) {
+  fail("web/", "ни одна форма не содержит строку с role=\"status\" — правилу про ссылку на сообщение нечего проверять");
+}
+
 if (problems.length > 0) {
   console.error(`check-frontend: найдено проблем — ${problems.length}`);
   for (const p of problems) console.error("  FAIL " + p);
   process.exit(1);
 }
 
-console.log(`check-frontend: ок — страниц ${htmlFiles(WEB).length}, проверены подключения скриптов, стилей, id, инлайновые обработчики, структура заголовков, skip-link, scope у таблиц, контраст токенов и общность submit-механизма`);
+console.log(`check-frontend: ок — страниц ${htmlFiles(WEB).length}, проверены подключения скриптов, стилей, id, инлайновые обработчики, структура заголовков, skip-link, scope у таблиц, контраст токенов, общность submit-механизма и ссылки aria-describedby`);
 for (const n of notes) console.log("  ok  " + n);
 for (const n of contrastNotes) console.log("  ok  " + n);

@@ -150,6 +150,21 @@ const DANGEROUS = `HW 'tests' <img src=x onerror=alert(1)>`;
         await wait(250);
         const cform = doc.querySelector('form[data-modal-form="create-assignment"]');
         check("форма создания задания открылась", Boolean(cform));
+
+        // Разметку формы генерирует modals.js, поэтому проверять её надо в DOM:
+        // статическая проверка (check-frontend.mjs, группа 8) видит отсутствие
+        // атрибута в шаблоне, а здесь видно, что сгенерированные id действительно
+        // существуют в документе и ссылка не ведёт в никуда.
+        const cfields = [...cform.querySelectorAll("input.control, textarea.control, select.control")];
+        check("у каждого поля сгенерированной формы есть aria-describedby",
+            cfields.length === 3 && cfields.every((f) => (f.getAttribute("aria-describedby") || "").trim().length > 0),
+            `полей ${cfields.length}`);
+        const crefs = cfields.flatMap((f) => (f.getAttribute("aria-describedby") || "").trim().split(/\s+/));
+        check("ссылки aria-describedby сгенерированной формы ведут на существующие элементы",
+            crefs.every((id) => Boolean(doc.getElementById(id))), JSON.stringify(crefs));
+        check("подсказка дедлайна подключена к своему полю",
+            crefs.includes("deadlineHelp") && crefs.includes("modalStatus"),
+            doc.getElementById("deadlineHelp") ? doc.getElementById("deadlineHelp").textContent.trim() : "нет #deadlineHelp");
         const runTag = "HW run " + Date.now().toString().slice(-6);
         cform.querySelector('input[name="title"]').value = runTag;
         cform.querySelector('textarea[name="description"]').value = "Вторая работа";
@@ -169,6 +184,10 @@ const DANGEROUS = `HW 'tests' <img src=x onerror=alert(1)>`;
         check("сдача студента видна преподавателю", Boolean(row), row ? row.textContent.trim().slice(0, 40) : "");
 
         const scoreInput = row.querySelector("[data-score-for]");
+        check("поле оценки ссылается на строку состояния модалки",
+            (scoreInput.getAttribute("aria-describedby") || "").split(/\s+/).includes("modalStatus")
+            && Boolean(doc.getElementById("modalStatus")),
+            scoreInput.getAttribute("aria-describedby") || "атрибута нет");
         scoreInput.value = "4.5";
         row.querySelector("[data-comment-for]").value = "Хорошо";
         row.querySelector('[data-modal-action="save-grade"]').click();

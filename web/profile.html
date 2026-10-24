@@ -68,18 +68,21 @@
                 <form id="passwordForm" class="form" novalidate>
                     <label class="field">
                         <span class="field-label">Текущий пароль</span>
-                        <input class="control" type="password" name="current_password" required autocomplete="current-password">
+                        <input class="control" type="password" name="current_password" required autocomplete="current-password"
+                               aria-describedby="passwordMessage">
                     </label>
 
                     <label class="field">
                         <span class="field-label">Новый пароль</span>
-                        <input class="control" type="password" name="new_password" required minlength="8" maxlength="200" autocomplete="new-password">
-                        <span class="helper">Минимум 8 символов. После смены все остальные устройства разлогинятся, это останется только вы.</span>
+                        <input class="control" type="password" name="new_password" required minlength="8" maxlength="200" autocomplete="new-password"
+                               aria-describedby="newPasswordHelper passwordMessage">
+                        <span class="helper" id="newPasswordHelper">Минимум 8 символов. После смены все остальные устройства разлогинятся, это останется только вы.</span>
                     </label>
 
                     <label class="field">
                         <span class="field-label">Повторите новый пароль</span>
-                        <input class="control" type="password" name="repeat_password" required minlength="8" maxlength="200" autocomplete="new-password">
+                        <input class="control" type="password" name="repeat_password" required minlength="8" maxlength="200" autocomplete="new-password"
+                               aria-describedby="passwordMessage">
                     </label>
 
                     <div class="form-actions">

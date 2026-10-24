@@ -72,18 +72,21 @@
                 <form id="courseForm" class="form" novalidate>
                     <label class="field">
                         <span class="field-label">Название курса</span>
-                        <input class="control" type="text" name="title" required maxlength="200" placeholder="Например: Основы Go">
+                        <input class="control" type="text" name="title" required maxlength="200" placeholder="Например: Основы Go"
+                               aria-describedby="message">
                     </label>
 
                     <label class="field">
                         <span class="field-label">Преподаватель</span>
-                        <input class="control" type="text" name="teacher" maxlength="200" placeholder="Например: Иванов И.И.">
-                        <span class="helper">Если оставить пустым — подставим ваше имя.</span>
+                        <input class="control" type="text" name="teacher" maxlength="200" placeholder="Например: Иванов И.И."
+                               aria-describedby="teacherHelper message">
+                        <span class="helper" id="teacherHelper">Если оставить пустым — подставим ваше имя.</span>
                     </label>
 
                     <label class="field">
                         <span class="field-label">Описание</span>
-                        <textarea class="control" name="description" maxlength="2000" rows="4" placeholder="Краткое описание курса"></textarea>
+                        <textarea class="control" name="description" maxlength="2000" rows="4" placeholder="Краткое описание курса"
+                                  aria-describedby="message"></textarea>
                     </label>
 
                     <div class="form-actions">

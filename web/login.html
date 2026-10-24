@@ -22,14 +22,16 @@
                 <label class="field">
                     <span class="field-label">Логин или email</span>
                     <input class="control" type="text" name="identifier" required
-                           autocomplete="username" placeholder="student или student@example.com">
-                    <span class="helper">Регистр не важен.</span>
+                           autocomplete="username" placeholder="student или student@example.com"
+                           aria-describedby="identifierHelper message">
+                    <span class="helper" id="identifierHelper">Регистр не важен.</span>
                 </label>
 
                 <label class="field">
                     <span class="field-label">Пароль</span>
                     <input class="control" type="password" name="password" required
-                           autocomplete="current-password" placeholder="••••••••">
+                           autocomplete="current-password" placeholder="••••••••"
+                           aria-describedby="message">
                 </label>
 
                 <div class="form-actions">

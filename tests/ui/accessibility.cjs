@@ -8,10 +8,12 @@
 // молча теряется, если проверку не оставить в репозитории.
 //
 // Часть проверок (lang, один h1, разрыв уровня заголовков, skip-link, scope у
-// th, контраст токенов) дублируется в scripts/check-frontend.mjs — там, где они
-// не требуют ни сервера, ни jsdom. Здесь то, что статикой не проверяется:
-// ориентир «Навигация» рисует core/layout.js, а ловушку фокуса держит modals.js
-// в рантайме.
+// th, контраст токенов, наличие и разрыв aria-describedby) дублируется в
+// scripts/check-frontend.mjs — там, где они не требуют ни сервера, ни jsdom.
+// Здесь то, что статикой не проверяется: ориентир «Навигация» рисует
+// core/layout.js, ловушку фокуса держит modals.js в рантайме, и только в DOM
+// видно, что после отказа текст появился именно в том элементе, который поле
+// называет своим описанием (раздел 5, ADR-0018).
 //
 // Тест полностью офлайновый: fetch подменяется заглушкой, сервер на :8080 не
 // нужен, лимитер входов (20 попыток на IP за 10 минут, ADR-0006) не расходуется.
@@ -252,6 +254,107 @@ function active(doc) {
     const after = doc.querySelectorAll("header nav").length;
     check("layout: повторный render не удваивает навигацию", before === 1 && after === 1, `${before} → ${after}`);
 }
+
+// ---------- 5. aria-describedby: поле знает про свою подсказку и строку сообщения ----------
+//
+// Остаток T0.5, закрытый ADR-0018: сообщения подписаны role="status", но поле
+// ничего о своём сообщении не знало. check-frontend.mjs видит сам атрибут и его
+// битую ссылку; здесь то, для чего нужен DOM и рантайм — что по ссылке лежит
+// элемент, и в момент отказа именно в нём появляется текст, который читается
+// вслух вместе с полем.
+function describedByChecks() {
+    let refs = 0;
+    let broken = 0;
+    let statusForms = 0;
+    let unlinkedFields = 0;
+    let unlinkedGroups = 0;
+    const brokenList = [];
+
+    for (const page of PAGES) {
+        const html = fs.readFileSync(path.join(REPO, "web", page), "utf8");
+        const dom = new JSDOM(html);
+        const doc = dom.window.document;
+
+        for (const el of doc.querySelectorAll("[aria-describedby]")) {
+            for (const id of (el.getAttribute("aria-describedby") || "").trim().split(/\s+/)) {
+                if (!id) continue;
+                refs += 1;
+                if (!doc.getElementById(id)) {
+                    broken += 1;
+                    brokenList.push(`${page}#${id}`);
+                }
+            }
+        }
+
+        for (const form of doc.querySelectorAll("form")) {
+            const status = form.querySelector('[role="status"]');
+            if (!status || !status.id) continue;
+            statusForms += 1;
+
+            for (const field of form.querySelectorAll("input.control, textarea.control, select.control")) {
+                if (field.type === "hidden") continue;
+                const ids = (field.getAttribute("aria-describedby") || "").split(/\s+/);
+                if (!ids.includes(status.id)) unlinkedFields += 1;
+            }
+
+            // Радиогруппа: описание вешают на fieldset, а не на каждую метку —
+            // иначе одна и та же строка читается четыре раза подряд.
+            for (const group of form.querySelectorAll("fieldset")) {
+                if (!group.querySelector('input[type="radio"], input[type="checkbox"]')) continue;
+                const ids = (group.getAttribute("aria-describedby") || "").split(/\s+/);
+                if (!ids.includes(status.id)) unlinkedGroups += 1;
+            }
+        }
+
+        dom.window.close();
+    }
+
+    check("describedby: каждая ссылка ведёт на существующий элемент", broken === 0,
+        `ссылок ${refs}, битых ${broken}${brokenList.length ? ": " + brokenList.join(", ") : ""}`);
+    check("describedby: каждое поле формы со статус-строкой ссылается на неё",
+        unlinkedFields === 0, `форм ${statusForms}, полей без ссылки ${unlinkedFields}`);
+    check("describedby: радиогруппа ссылается через fieldset", unlinkedGroups === 0,
+        `групп без ссылки ${unlinkedGroups}`);
+}
+
+// Рантайм: showMessage снимает hidden и пишет текст в тот самый элемент, который
+// поле называет своим описанием. Если ссылка ведёт в никуда или в другой узел,
+// проверка краснеет именно здесь — статика такого не видит.
+function describedByRuntimeChecks() {
+    const { window, doc } = track("schedule.html", [...LAYOUT_BUNDLE, "common.js"]);
+    const titleField = doc.querySelector('#resourceForm input[name="title"]');
+    const urlField = doc.querySelector('#resourceForm input[name="url"]');
+
+    const titleRefs = ((titleField && titleField.getAttribute("aria-describedby")) || "").split(/\s+/);
+    check("describedby: поле «Название» ссылкируется на resourceMsg", titleRefs.includes("resourceMsg"),
+        titleField ? JSON.stringify(titleRefs) : "поля нет");
+
+    window.eval('GS.showMessage(document.getElementById("resourceMsg"), "title is required — поле: Название", "error")');
+    const shown = doc.getElementById("resourceMsg");
+    const carriesText = titleRefs.some((id) => {
+        const el = doc.getElementById(id);
+        return el && el.textContent.includes("поле: Название");
+    });
+    check("describedby: после отказа текст стоит в элементе, на который ссылается поле",
+        carriesText, JSON.stringify({ titleRefs, text: shown.textContent }));
+    check("describedby: элемент описания перестал быть hidden и читается",
+        !shown.classList.contains("hidden"), shown.className);
+
+    const urlRefs = ((urlField && urlField.getAttribute("aria-describedby")) || "").split(/\s+/);
+    const helper = doc.getElementById("urlHelper");
+    check("describedby: поле «Ссылка» ссылается и на подсказку, и на сообщение",
+        urlRefs.includes("urlHelper") && urlRefs.includes("resourceMsg"), JSON.stringify(urlRefs));
+    check("describedby: текст подсказки непустой", Boolean(helper) && helper.textContent.trim().length > 10,
+        helper ? JSON.stringify(helper.textContent.trim().slice(0, 40)) : "подсказки нет");
+
+    window.eval('GS.hideMessage(document.getElementById("resourceMsg"))');
+    check("describedby: после hideMessage описание пустое, а не залипшее",
+        doc.getElementById("resourceMsg").textContent === "",
+        JSON.stringify(doc.getElementById("resourceMsg").textContent));
+}
+
+describedByChecks();
+describedByRuntimeChecks();
 
 modalChecks().then(() => {
     check("ни одна проверка не оставила необработанного отклонения", rejections.length === 0, JSON.stringify(rejections));

@@ -228,10 +228,12 @@ const AssignmentsUI = (() => {
                             <label class="sr-only" for="score-${GS.escapeHtml(s.id)}">Оценка</label>
                             <input id="score-${GS.escapeHtml(s.id)}" class="control grading-input" type="number"
                                    step="0.1" min="0" max="10" inputmode="decimal" placeholder="Оценка"
+                                   aria-describedby="modalStatus"
                                    value="${s.score >= 0 ? GS.escapeHtml(s.score) : ""}"
                                    data-score-for="${GS.escapeHtml(s.id)}">
                             <label class="sr-only" for="comment-${GS.escapeHtml(s.id)}">Комментарий</label>
                             <textarea id="comment-${GS.escapeHtml(s.id)}" class="control" style="min-height:60px;"
+                                      aria-describedby="modalStatus"
                                       placeholder="Комментарий" data-comment-for="${GS.escapeHtml(s.id)}">${GS.escapeHtml(s.comment || "")}</textarea>
                             <button class="btn btn-secondary" data-modal-action="save-grade"
                                     data-submission-id="${GS.escapeHtml(s.id)}">Сохранить</button>
@@ -257,8 +259,9 @@ const AssignmentsUI = (() => {
             <label class="field">
                 <span class="field-label">Ваша работа</span>
                 <textarea class="control" name="content" required
+                          aria-describedby="submitHelp modalStatus"
                           placeholder="Вставьте ссылку на репозиторий или текст решения..."></textarea>
-                <span class="helper">Сдачу можно обновить до дедлайна — повторная отправка заменяет предыдущую.</span>
+                <span class="helper" id="submitHelp">Сдачу можно обновить до дедлайна — повторная отправка заменяет предыдущую.</span>
             </label>
             <div class="form-actions"><button type="submit" class="btn">Отправить</button></div>
             ${statusLine("modalStatus")}
@@ -270,16 +273,19 @@ const AssignmentsUI = (() => {
             <input type="hidden" name="course_title" value="${GS.escapeHtml(courseTitle || "")}">
             <label class="field">
                 <span class="field-label">Название</span>
-                <input class="control" type="text" name="title" maxlength="200" required placeholder="Домашнее задание 1">
+                <input class="control" type="text" name="title" maxlength="200" required
+                       aria-describedby="modalStatus" placeholder="Домашнее задание 1">
             </label>
             <label class="field">
                 <span class="field-label">Описание</span>
-                <textarea class="control" name="description" maxlength="2000" rows="3" placeholder="Что нужно сделать..."></textarea>
+                <textarea class="control" name="description" maxlength="2000" rows="3"
+                          aria-describedby="modalStatus" placeholder="Что нужно сделать..."></textarea>
             </label>
             <label class="field">
                 <span class="field-label">Дедлайн</span>
-                <input class="control" type="datetime-local" name="due_date_raw">
-                <span class="helper">Оставьте пустым, если дедлайна нет.</span>
+                <input class="control" type="datetime-local" name="due_date_raw"
+                       aria-describedby="deadlineHelp modalStatus">
+                <span class="helper" id="deadlineHelp">Оставьте пустым, если дедлайна нет.</span>
             </label>
             <div class="form-actions"><button type="submit" class="btn">Создать</button></div>
             ${statusLine("modalStatus")}

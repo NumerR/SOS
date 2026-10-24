@@ -26,7 +26,8 @@
                         <label class="field sched-group-field">
                             <span class="field-label">Группа</span>
                             <input class="control" type="search" id="groupInput" list="groupOptions"
-                                   maxlength="200" autocomplete="off" placeholder="Например: Б-ИСиТ-22">
+                                   maxlength="200" autocomplete="off" placeholder="Например: Б-ИСиТ-22"
+                                   aria-describedby="groupHelper">
                             <datalist id="groupOptions"></datalist>
                             <span class="helper" id="groupHelper">Каталог групп загружается…</span>
                         </label>
@@ -97,7 +98,7 @@
 
                     <label class="field source-count">
                         <span class="field-label">Месяцев подряд</span>
-                        <select class="control control-small" id="importCount">
+                        <select class="control control-small" id="importCount" aria-describedby="sourceMsg">
                             <option value="1">1 — только текущий</option>
                             <option value="2">2</option>
                             <option value="3">3</option>
@@ -171,23 +172,27 @@
                     <form id="resourceForm" class="form" novalidate>
                         <label class="field">
                             <span class="field-label">Название</span>
-                            <input class="control" type="text" name="title" required maxlength="200" placeholder="Например: Библиотека / Moodle / Стенд">
+                            <input class="control" type="text" name="title" required maxlength="200" placeholder="Например: Библиотека / Moodle / Стенд"
+                                   aria-describedby="resourceMsg">
                         </label>
 
                         <label class="field">
                             <span class="field-label">Категория</span>
-                            <input class="control" type="text" name="category" maxlength="64" placeholder="Например: Материалы">
+                            <input class="control" type="text" name="category" maxlength="64" placeholder="Например: Материалы"
+                                   aria-describedby="resourceMsg">
                         </label>
 
                         <label class="field">
                             <span class="field-label">Ссылка (URL)</span>
-                            <input class="control" type="url" name="url" maxlength="2000" placeholder="https://…">
-                            <span class="helper">Можно оставить пустым, если ресурс — не ссылка.</span>
+                            <input class="control" type="url" name="url" maxlength="2000" placeholder="https://…"
+                                   aria-describedby="urlHelper resourceMsg">
+                            <span class="helper" id="urlHelper">Можно оставить пустым, если ресурс — не ссылка.</span>
                         </label>
 
                         <label class="field">
                             <span class="field-label">Описание</span>
-                            <textarea class="control" name="description" maxlength="2000" rows="3" placeholder="Коротко: что это и зачем"></textarea>
+                            <textarea class="control" name="description" maxlength="2000" rows="3" placeholder="Коротко: что это и зачем"
+                                      aria-describedby="resourceMsg"></textarea>
                         </label>
 
                         <div class="form-actions">
@@ -212,18 +217,21 @@
                 <form id="eventForm" class="form" novalidate>
                     <label class="field">
                         <span class="field-label">Название</span>
-                        <input class="control" type="text" name="title" required maxlength="200" placeholder="Например: День открытых дверей">
+                        <input class="control" type="text" name="title" required maxlength="200" placeholder="Например: День открытых дверей"
+                               aria-describedby="eventMsg">
                     </label>
 
                     <label class="field">
                         <span class="field-label">Дата и время</span>
-                        <input class="control" type="datetime-local" name="event_date_raw">
-                        <span class="helper">Оставьте пустым, если точной даты нет.</span>
+                        <input class="control" type="datetime-local" name="event_date_raw"
+                               aria-describedby="dateHelper eventMsg">
+                        <span class="helper" id="dateHelper">Оставьте пустым, если точной даты нет.</span>
                     </label>
 
                     <label class="field">
                         <span class="field-label">Описание</span>
-                        <textarea class="control" name="description" maxlength="2000" rows="3" placeholder="Кратко о событии"></textarea>
+                        <textarea class="control" name="description" maxlength="2000" rows="3" placeholder="Кратко о событии"
+                                  aria-describedby="eventMsg"></textarea>
                     </label>
 
                     <div class="form-actions">
