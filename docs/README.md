@@ -32,13 +32,19 @@ T1.1 (реестр модулей `internal/platform`, права `internal/auth
 [run 40041370917](https://github.com/NumerR/SOS/actions/runs/40041370917), `completed / success`.
 Документация после T1.1 — `7796033`
 ([run 40042500419](https://github.com/NumerR/SOS/actions/runs/40042500419), success).
-T3.1 закрыт частично — коммитом `8fef933` (ADR-0011): конфигурация, API-клиент,
-политика 401, сбор дублей в core/format.js, относительные пути и сьют `session-expiry.cjs`;
-в остатке — `core/layout.js`, `profile.html`, страница 404, повторяющийся
-submit-обработчик и `deploy-frontend.yml`
+T3.1 закрыт почти полностью. Первая половина — коммитом `8fef933` (ADR-0011):
+конфигурация, API-клиент, политика 401, сбор дублей в core/format.js,
+относительные пути и сьют `session-expiry.cjs`
 ([run 40044462737](https://github.com/NumerR/SOS/actions/runs/40044462737), `completed / success`).
-Документация после T3.1 — `20055c5`
+Документация после неё — `20055c5`
 ([run 40045063515](https://github.com/NumerR/SOS/actions/runs/40045063515), success).
+Вторая половина — коммитом `8b3a027` (ADR-0013): общая шапка и подвал в
+`web/js/core/layout.js`, страница `web/404.html` со статусом 404 (JSON для
+`/api/*`), один `bindCreateForm` вместо двух копий submit-обработчика и офлайн-сьют
+`tests/ui/schedule-forms.cjs` (54 проверки)
+([run 40053487121](https://github.com/NumerR/SOS/actions/runs/40053487121), `completed / success`).
+В остатке по T3.1 — `profile.html` и публикация на Pages (`deploy-frontend.yml`
++ собственный 404 с base-относительными путями).
 T1.2 (журнал действий `audit_events`: таблица от модуля `audit`, 15 точек записи
 в обработчиках, `GET /api/admin/audit` с правом `audit.view`, панель в `/admin`)
 закрыт коммитом `26066e8` (ADR-0012) —
