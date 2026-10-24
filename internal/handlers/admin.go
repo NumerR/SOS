@@ -101,6 +101,14 @@ func (h *Handlers) AdminSetRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.Users.SetRole(r.Context(), target.ID, role); err != nil {
+		h.recordAudit(r, auditWrite{
+			action:     store.AuditRoleChange,
+			actor:      admin,
+			targetType: "user",
+			targetID:   auditTargetID(target.ID),
+			detail:     "from=" + target.Role + " to=" + role,
+			ok:         false,
+		})
 		writeError(w, http.StatusInternalServerError, "failed to update role")
 		return
 	}
@@ -108,6 +116,14 @@ func (h *Handlers) AdminSetRole(w http.ResponseWriter, r *http.Request) {
 	// Сессии отзываем: иначе уже входящий «преподаватель» сохранит права ещё
 	// на сутки, пока жива старая кука.
 	if err := h.Sessions.DeleteAllForUser(r.Context(), target.ID); err != nil {
+		h.recordAudit(r, auditWrite{
+			action:     store.AuditRoleChange,
+			actor:      admin,
+			targetType: "user",
+			targetID:   auditTargetID(target.ID),
+			detail:     "from=" + target.Role + " to=" + role + ", sessions not revoked",
+			ok:         false,
+		})
 		writeError(w, http.StatusInternalServerError, "role updated but sessions could not be revoked")
 		return
 	}
@@ -117,8 +133,10 @@ func (h *Handlers) AdminSetRole(w http.ResponseWriter, r *http.Request) {
 		actorID = admin.ID
 	}
 
-	// Отдельной таблицы аудита пока нет (T1.2), поэтому запись ролевой смены
-	// живёт только в логе — и она должна быть в машине-читаемом виде.
+	// Строка лога осталась намеренно: у неё есть request_id, по которому
+	// смена роли привязывается к конкретному HTTP-запросу, а в audit_events
+	// лежит то, что спрашивает администратор через интерфейс. Два канала — для
+	// двух разных читателей (ADR-0012).
 	requestLogger(r).Info("admin: роль изменена",
 		slog.Int64("target_user_id", target.ID),
 		slog.String("from_role", target.Role),
@@ -126,6 +144,15 @@ func (h *Handlers) AdminSetRole(w http.ResponseWriter, r *http.Request) {
 		slog.Int64("actor_user_id", actorID),
 		slog.String("ip", ClientIP(r)),
 	)
+
+	h.recordAudit(r, auditWrite{
+		action:     store.AuditRoleChange,
+		actor:      admin,
+		targetType: "user",
+		targetID:   auditTargetID(target.ID),
+		detail:     "from=" + target.Role + " to=" + role,
+		ok:         true,
+	})
 
 	target.Role = role
 	writeJSON(w, http.StatusOK, target)

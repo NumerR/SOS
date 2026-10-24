@@ -13,6 +13,7 @@ import (
 	"github.com/NumerR/SOS/internal/handlers"
 	"github.com/NumerR/SOS/internal/modules/accounts"
 	"github.com/NumerR/SOS/internal/modules/assignments"
+	"github.com/NumerR/SOS/internal/modules/audit"
 	"github.com/NumerR/SOS/internal/modules/courses"
 	"github.com/NumerR/SOS/internal/modules/events"
 	"github.com/NumerR/SOS/internal/modules/resources"
@@ -34,6 +35,9 @@ func moduleList(h *handlers.Handlers) []platform.Module {
 		resources.New(h),
 		events.New(h),
 		schedule.New(h),
+		// Аудит — последним: его таблица ссылается на users из базовой схемы,
+		// а обработчики аккаунтов пишут в неё уже после применения миграций.
+		audit.New(h),
 	}
 }
 

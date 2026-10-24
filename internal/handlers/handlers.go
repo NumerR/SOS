@@ -52,7 +52,13 @@ type Deps struct {
 	Schedule    *store.ScheduleStore
 	Resources   *store.ResourceStore
 	Events      *store.EventStore
-	Limits      Limiters
+
+	// Audit — журнал действий (T1.2). Отличается от остальных полей одним:
+	// отсутствие хранилища не отменяет запрос, а только лишает его строки в
+	// журнале (см. handlers.recordAudit). Поэтому nil здесь не ошибка сборки,
+	// а состояние, на которое опираются unit-тесты пакетов без журнала.
+	Audit  *store.AuditStore
+	Limits Limiters
 }
 
 // Handlers — HTTP-обработчики. Поля Deps доступны напрямую: h.Users, h.Sessions…

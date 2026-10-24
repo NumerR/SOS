@@ -226,6 +226,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *store.UserStore) {
 		Schedule:    store.NewScheduleStore(db),
 		Resources:   store.NewResourceStore(db),
 		Events:      store.NewEventStore(db),
+		Audit:       store.NewAuditStore(db),
 		Limits:      handlers.NewLimiters(),
 	})
 

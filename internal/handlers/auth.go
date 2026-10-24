@@ -149,6 +149,15 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.recordAudit(r, auditWrite{
+		action:     store.AuditRegister,
+		actor:      user,
+		targetType: "user",
+		targetID:   auditTargetID(user.ID),
+		detail:     "role=" + user.Role,
+		ok:         true,
+	})
+
 	writeJSON(w, http.StatusCreated, user)
 }
 
@@ -177,6 +186,14 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 
 	accountKey := "login:" + req.Identifier
 	if remaining := h.Limits.LoginAccount.Tokens(accountKey); remaining < 1 {
+		h.recordAudit(r, auditWrite{
+			action: store.AuditLogin,
+			// actor = nil: учётка может быть и реальной, и выдуманной, а
+			// различать их на этой ветке мы отказываемся (см. dummy-хэш).
+			targetType: "identifier",
+			detail:     "locked identifier=" + req.Identifier,
+			ok:         false,
+		})
 		h.tooManyAttempts(w, r, accountKey)
 		return
 	}
@@ -204,6 +221,25 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 			slog.String("identifier", redactKey(req.Identifier)),
 			slog.String("ip", ClientIP(r)),
 		)
+
+		// actor = найденная учётка, если она существует: «по кому именно
+		// подбирали пароль» — вопрос, на который админ отвечает по журналу.
+		// Пароль в detail не попадает ни при каком раскладе.
+		failed := auditWrite{
+			action:     store.AuditLogin,
+			targetType: "identifier",
+			detail:     "invalid credentials identifier=" + req.Identifier,
+			ok:         false,
+		}
+		if userWithSecret != nil {
+			user := userWithSecret.User
+			failed.actor = &user
+			failed.targetType = "user"
+			failed.targetID = auditTargetID(user.ID)
+			failed.detail = "invalid credentials"
+		}
+		h.recordAudit(r, failed)
+
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -213,6 +249,14 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	if !h.startSession(w, r, &userWithSecret.User) {
 		return
 	}
+
+	h.recordAudit(r, auditWrite{
+		action:     store.AuditLogin,
+		actor:      &userWithSecret.User,
+		targetType: "user",
+		targetID:   auditTargetID(userWithSecret.User.ID),
+		ok:         true,
+	})
 
 	requestLogger(r).Info("auth: вход выполнен",
 		slog.Int64("user_id", userWithSecret.User.ID),
@@ -242,8 +286,28 @@ func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var actor *models.User
+
 	if sessionID := sessionIDFromRequest(r); sessionID != "" {
+		// Кто выходил — узнаём по сессии до её удаления: маршрут публичный
+		// (кука могла протухнуть), поэтому пользователя в контексте нет, а
+		// строка журнала без автора бесполезна.
+		if session, err := h.Sessions.Get(r.Context(), sessionID); err == nil {
+			if user, err := h.Users.GetByID(r.Context(), session.UserID); err == nil {
+				actor = user
+			}
+		}
+
 		_ = h.Sessions.Delete(r.Context(), sessionID)
+
+		h.recordAudit(r, auditWrite{
+			action:     store.AuditLogout,
+			actor:      actor,
+			targetType: "session",
+			// target_id — внутренний id сессии из таблицы sessions, а не её
+			// токен: токен в журнале был бы чужим рабочим входом.
+			ok: actor != nil,
+		})
 	}
 
 	clearSessionCookie(w, r)
@@ -271,6 +335,13 @@ func (h *Handlers) LogoutAll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.Sessions.DeleteAllForUser(r.Context(), user.ID); err != nil {
+		h.recordAudit(r, auditWrite{
+			action:     store.AuditLogoutAll,
+			actor:      user,
+			targetType: "user",
+			targetID:   auditTargetID(user.ID),
+			ok:         false,
+		})
 		writeError(w, http.StatusInternalServerError, "failed to revoke sessions")
 		return
 	}
@@ -278,6 +349,14 @@ func (h *Handlers) LogoutAll(w http.ResponseWriter, r *http.Request) {
 	// Отдельно удалять текущую сессию не нужно: DeleteAllForUser забирает и её.
 	clearSessionCookie(w, r)
 	clearCSRFCookie(w, r)
+
+	h.recordAudit(r, auditWrite{
+		action:     store.AuditLogoutAll,
+		actor:      user,
+		targetType: "user",
+		targetID:   auditTargetID(user.ID),
+		ok:         true,
+	})
 
 	requestLogger(r).Info("auth: вышли все сессии",
 		slog.Int64("user_id", user.ID),
@@ -331,6 +410,14 @@ func (h *Handlers) ChangePassword(w http.ResponseWriter, r *http.Request) {
 			slog.Int64("user_id", user.ID),
 			slog.String("ip", ClientIP(r)),
 		)
+		h.recordAudit(r, auditWrite{
+			action:     store.AuditPasswordChange,
+			actor:      user,
+			targetType: "user",
+			targetID:   auditTargetID(user.ID),
+			detail:     "invalid current password",
+			ok:         false,
+		})
 		writeError(w, http.StatusUnauthorized, "current password is incorrect")
 		return
 	}
@@ -364,11 +451,31 @@ func (h *Handlers) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Пароль уже новый — молчать нельзя: это ровно тот случай, когда
 		// пользователь ждёт, что чужие устройства вышли.
+		h.recordAudit(r, auditWrite{
+			action:     store.AuditPasswordChange,
+			actor:      user,
+			targetType: "user",
+			targetID:   auditTargetID(user.ID),
+			// ok=false относится к исходу целиком: пароль смены не отменили,
+			// но «остальные устройства вышли» — утверждение неверное, и
+			// администратор обязан увидеть именно это.
+			detail: "password changed, sessions not revoked",
+			ok:     false,
+		})
 		writeError(w, http.StatusInternalServerError, "password changed but other sessions could not be revoked")
 		return
 	}
 
 	h.Limits.Password.Reset(ClientIP(r))
+	h.recordAudit(r, auditWrite{
+		action:     store.AuditPasswordChange,
+		actor:      user,
+		targetType: "user",
+		targetID:   auditTargetID(user.ID),
+		detail:     "revoked_sessions=" + strconv.FormatInt(revoked, 10),
+		ok:         true,
+	})
+
 	requestLogger(r).Info("auth: пароль изменён",
 		slog.Int64("user_id", user.ID),
 		slog.Int64("revoked_sessions", revoked),

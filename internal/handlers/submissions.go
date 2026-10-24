@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/NumerR/SOS/internal/authz"
+	"github.com/NumerR/SOS/internal/store"
 )
 
 type SubmitRequest struct {
@@ -209,9 +210,29 @@ func (h *Handlers) GradeSubmission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.Submissions.Grade(r.Context(), req.SubmissionID, req.Score, req.Comment); err != nil {
+		h.recordAudit(r, auditWrite{
+			action:     store.AuditGrade,
+			actor:      user,
+			targetType: "submission",
+			targetID:   auditTargetID(req.SubmissionID),
+			detail:     "grade failed",
+			ok:         false,
+		})
 		writeError(w, http.StatusInternalServerError, "failed to grade submission")
 		return
 	}
+
+	h.recordAudit(r, auditWrite{
+		action:     store.AuditGrade,
+		actor:      user,
+		targetType: "submission",
+		targetID:   auditTargetID(req.SubmissionID),
+		// Оценка в шкале интерфейса (0–10) и её же значение в базе:
+		// журнал отвечает на «кто поставил эту цифру», а не на «что
+		// написал комментарий» — текст комментария сюда не попадает.
+		detail: "score=" + strconv.FormatFloat(req.Score, 'f', -1, 64),
+		ok:     true,
+	})
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "graded"})
 }

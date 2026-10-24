@@ -31,6 +31,36 @@
     const TEACHER_AND_ADMIN = ["teacher", "admin"];
     const STUDENT_AND_ADMIN = ["student", "admin"];
 
+    // Подписи действий журнала (audit_events.action, T1.2).
+    //
+    // Ключи — строки реестра из internal/store/audit.go: сервер пишет имена,
+    // человек видит объяснение. Жёсткого контракта между этими двумя файлами
+    // нет, и это осознанный размен: подпись неизвестного действия отдаётся
+    // как есть, поэтому новое действие заведомо видно в админке техническим
+    // именем, а не исчезает молча.
+    const AUDIT_ACTIONS = {
+        "auth.login": "вход",
+        "auth.logout": "выход",
+        "auth.logout_all": "выход на всех устройствах",
+        "auth.password_change": "смена пароля",
+        "auth.register": "регистрация",
+        "admin.role_change": "смена роли",
+        "submission.grade": "оценка работы",
+    };
+
+    function auditActionLabel(action) {
+        return AUDIT_ACTIONS[action] || action || "—";
+    }
+
+    // Результат события: «выполнено» / «не выполнено». ok=false — это не
+    // ошибка интерфейса, а зафиксированный отказ (неверный текущий пароль,
+    // перебор по идентификатору), и выделять его надо как предупреждение.
+    function auditResult(ok) {
+        return ok
+            ? { label: "выполнено", chip: "chip-outline" }
+            : { label: "не выполнено", chip: "chip-muted" };
+    }
+
     function roleLabel(role) {
         return ROLE_LABELS[role] || role || "—";
     }
@@ -119,6 +149,8 @@
         roleChipClass,
         assignableRoles: () => ASSIGNABLE_ROLES.slice(),
         can,
+        auditActionLabel,
+        auditResult,
         pad,
         toISODate,
         dayStartUnix,

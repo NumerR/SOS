@@ -44,11 +44,19 @@ func newTestEnv(t *testing.T) (*Handlers, *sql.DB) {
 	if err := database.Migrate(db); err != nil {
 		t.Fatalf("миграции: %v", err)
 	}
+
+	// Таблица журнала: в живом сервере её создаёт миграция модуля audit, а
+	// здесь модуля нет — иначе тесты обработчиков зависели бы от пакета,
+	// который зависит от них.
+	if _, err := db.Exec(store.AuditEventsMigration); err != nil {
+		t.Fatalf("таблица аудита: %v", err)
+	}
 	t.Cleanup(func() { _ = db.Close() })
 
 	return New(Deps{
 		Users:    store.NewUserStore(db),
 		Sessions: store.NewSessionStore(db),
+		Audit:    store.NewAuditStore(db),
 		Limits:   NewLimiters(),
 	}), db
 }

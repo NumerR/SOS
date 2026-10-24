@@ -44,6 +44,11 @@ const (
 	UserList       Permission = "user.list"        // посмотреть список пользователей
 	UserRoleManage Permission = "user.role.manage" // назначить роль
 	AdminPanelView Permission = "admin.panel.view" // открыть страницу /admin
+	// AuditView — чтение журнала действий (audit_events, T1.2). Отдельно от
+	// user.list, потому что это другие данные: журнал содержит IP, User-Agent
+	// и чужие неудачные входы. Список пользователей и журнал — два разных
+	// решения, и выдавать их одним правом нельзя.
+	AuditView Permission = "audit.view"
 
 	// Курсы и записи.
 	CourseCreate       Permission = "course.create"            // создать курс
@@ -97,6 +102,7 @@ var registry = []Spec{
 	{UserList, "список всех пользователей", []Role{RoleAdmin}},
 	{UserRoleManage, "назначение ролей", []Role{RoleAdmin}},
 	{AdminPanelView, "доступ к странице /admin", []Role{RoleAdmin}},
+	{AuditView, "чтение журнала действий (audit_events)", []Role{RoleAdmin}},
 
 	// Курсы и записи.
 	{CourseCreate, "создание курса", []Role{RoleTeacher, RoleAdmin}},

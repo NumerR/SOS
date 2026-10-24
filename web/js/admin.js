@@ -2,6 +2,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     const usersBody = document.getElementById("usersBody");
     const refreshButton = document.getElementById("refreshBtn");
     const statusElement = document.getElementById("adminMsg");
+    const auditBody = document.getElementById("auditBody");
+    const refreshAuditButton = document.getElementById("refreshAuditBtn");
 
     // Подписи, классы чипов и список ролей для селекта — в core/format.js:
     // раньше этот словарь был скопирован трижды (админка, дашборд, лента).
@@ -113,6 +115,100 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
     }
 
+    // ---------- журнал действий (T1.2) ----------
+    //
+    // Сервер отдаёт последние события списком без общего количества: «страница
+    // не пустая, но есть ещё» выводится из длины списка, а не из отдельного
+    // запроса. Здесь только отрисовка — право audit.view проверяет сервер.
+
+    const AUDIT_COLUMNS = 6;
+
+    // Столько же записей просит страница, сколько показывает. Сервер не отдаёт
+    // общего количества, поэтому «ровно limit» — единственный честный признак
+    // того, что внизу могли остаться более старые события.
+    const AUDIT_LIMIT = 50;
+
+    const auditMore = document.getElementById("auditMore");
+
+    function showAuditMore(visible) {
+        if (!auditMore) return;
+        auditMore.classList.toggle("hidden", !visible);
+    }
+
+    function auditPlaceholder(kind, text) {
+        const markup = kind === "spinner"
+            ? `<span class="spinner" aria-hidden="true"></span><span class="empty-hint">${text}</span>`
+            : `<span class="empty-text">${text}</span>`;
+
+        return `
+            <tr><td colspan="${AUDIT_COLUMNS}">
+                <div class="empty-state" style="border:0; box-shadow:none; background:transparent;">
+                    ${markup}
+                </div>
+            </td></tr>
+        `;
+    }
+
+    // Объект действия: «user #12», «session», «identifier». Тип пишет сервер,
+    // идентификатор может быть числом строкой (id записи) или пустым.
+    function auditTarget(event) {
+        if (!event.target_type) return `<span class="t-muted">—</span>`;
+
+        const id = event.target_id ? ` <span class="t-muted">#${GS.escapeHtml(event.target_id)}</span>` : "";
+        return GS.escapeHtml(event.target_type) + id;
+    }
+
+    function auditRow(event) {
+        const result = GS.auditResult(event.ok);
+        // detail — технические подробности решения (from=…, score=…), они нужны
+        // администратору, но не должны спорить с названием действия.
+        const detail = event.detail
+            ? `<div class="empty-hint">${GS.escapeHtml(event.detail)}</div>`
+            : "";
+
+        return `
+            <tr>
+                <td class="t-muted">${GS.escapeHtml(GS.formatDateTime(event.at))}</td>
+                <td>${GS.escapeHtml(event.actor_username || "не установлен")}</td>
+                <td class="t-strong">${GS.escapeHtml(GS.auditActionLabel(event.action))}${detail}</td>
+                <td>${auditTarget(event)}</td>
+                <td><span class="chip ${result.chip}">${GS.escapeHtml(result.label)}</span></td>
+                <td class="t-muted">${GS.escapeHtml(event.ip || "—")}</td>
+            </tr>
+        `;
+    }
+
+    function renderAudit(events) {
+        if (!auditBody) return;
+
+        showAuditMore(events.length === AUDIT_LIMIT);
+
+        if (!events.length) {
+            auditBody.innerHTML = auditPlaceholder("empty", "Событий пока нет");
+            return;
+        }
+
+        auditBody.innerHTML = events.map(auditRow).join("");
+    }
+
+    async function loadAudit() {
+        if (!auditBody) return;
+
+        showAuditMore(false);
+        auditBody.innerHTML = auditPlaceholder("spinner", "Загрузка журнала…");
+
+        try {
+            const events = await GS.fetchJSON("/api/admin/audit?limit=" + AUDIT_LIMIT);
+            renderAudit(events);
+        } catch (error) {
+            if (error.status === 403) {
+                GS.api.navigate(GS.api.dashboardPath());
+                return;
+            }
+            auditBody.innerHTML = `<tr><td colspan="${AUDIT_COLUMNS}"><p class="message message-error">${GS.escapeHtml(error.message || "Не удалось загрузить журнал")}</p></td></tr>`;
+        }
+    }
+
     // Делегирование: строки перерисовываются, вешать обработчик на каждую — лишний код.
     if (usersBody) {
         usersBody.addEventListener("click", async (event) => {
@@ -143,6 +239,9 @@ document.addEventListener("DOMContentLoaded", async () => {
                 // предупреждаем, чтобы это не выглядело как «его выкинуло».
                 GS.showMessage(statusElement, "Роль обновлена. У пользователя сброшены входные сессии.", "success");
                 await loadUsers();
+                // Смена роли — событие журнала: администратор должен видеть его
+                // сразу, иначе последняя строка выглядит потерянной.
+                await loadAudit();
             } catch (error) {
                 GS.showMessage(statusElement, error.message || "Не удалось обновить роль", "error");
                 // 401 = собственная сессия истекла: на вход уводит api-client,
@@ -155,6 +254,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     if (refreshButton) refreshButton.addEventListener("click", loadUsers);
+    if (refreshAuditButton) refreshAuditButton.addEventListener("click", loadAudit);
 
-    await loadUsers();
+    // Списки независимы, поэтому ждём их вместе: страница не должна
+    // выглядеть как админка без журнала.
+    await Promise.all([loadUsers(), loadAudit()]);
 });

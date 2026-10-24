@@ -85,6 +85,28 @@ async function login(identifier, password) {
         selfRow ? selfRow.textContent.replace(/\s+/g, " ").trim().slice(0, 60) : "строка не найдена");
     check("кнопки сохранения найдены", Boolean(selfButton));
 
+    // ---------- журнал действий: доступ и отрисовка (T1.2) ----------
+    //
+    // Проверки идут до смены роли: дальше сессия студента отзывается, и
+    // сравнить 403 с 401 станет невозможно.
+
+    const journal = await api("/api/admin/audit?limit=50", { cookie: admin.cookie });
+    check("администратору журнал доступен", journal.status === 200 && Array.isArray(journal.data),
+        "код " + journal.status);
+
+    const forbidden = await api("/api/admin/audit", { cookie: student.cookie });
+    check("студенту журнал закрыт", forbidden.status === 403,
+        "код " + forbidden.status + " " + JSON.stringify(forbidden.data));
+
+    const auditRows = Array.from(doc.querySelectorAll("#auditBody tr"));
+    check("таблица журнала отрисована", auditRows.length >= 1, auditRows.length + " строк");
+    check("в журнале не осталось заглушки загрузки",
+        !doc.getElementById("auditBody").innerHTML.includes("spinner"),
+        doc.getElementById("auditBody").textContent.replace(/\s+/g, " ").trim().slice(0, 60));
+
+    const hasRefresh = Boolean(doc.getElementById("refreshAuditBtn"));
+    check("кнопка обновления журнала есть", hasRefresh);
+
     // Меняем роль студента на преподавателя и обратно — через интерфейс.
     const targetRow = rows.find((r) => r.textContent.includes("s_stud"));
     const targetSelect = targetRow.querySelector("[data-role-select]");
@@ -114,6 +136,48 @@ async function login(identifier, password) {
     }
     const restored = (await api("/api/admin/users", { cookie: admin.cookie })).data.find((u) => u.username === "s_stud");
     check("роль возвращена через тот же интерфейс", restored.role === "student", restored.role);
+
+    // ---------- журнал действий: запись сделанного ----------
+    //
+    // Смена роли выполнена кнопкой на странице, поэтому событие обязано быть
+    // видено и в API, и в таблице — иначе администратор не узнает, что
+    // действие дошло до сервера.
+
+    const journalAfter = await api("/api/admin/audit?limit=50", { cookie: admin.cookie });
+    const roleEvents = (journalAfter.data || []).filter((e) => e.action === "admin.role_change");
+    check("повышение записано в журнал",
+        roleEvents.some((e) => e.ok === true && /from=student to=teacher/.test(e.detail)),
+        roleEvents.map((e) => e.detail).join(" | ").slice(0, 120));
+    check("понижение записано в журнал",
+        roleEvents.some((e) => e.ok === true && /from=teacher to=student/.test(e.detail)),
+        roleEvents.map((e) => e.detail).join(" | ").slice(0, 120));
+    check("журнал подписывает автора действия",
+        roleEvents.every((e) => e.actor_username === admin.user.username),
+        roleEvents.map((e) => e.actor_username).join(", "));
+    // Свежие две записи — те, что сделала страница; третья осталась от seed.sh
+    // (она про t_teacher), поэтому id сверяем только со свежими.
+    check("объект действия — пользователь",
+        roleEvents.every((e) => e.target_type === "user") &&
+            roleEvents.slice(0, 2).every((e) => String(e.target_id) === String(sstud.id)),
+        roleEvents.map((e) => e.target_type + "#" + e.target_id).join(", "));
+
+    const auditText = doc.getElementById("auditBody").textContent.replace(/\s+/g, " ");
+    check("в таблице действия по-русски", /смена роли/.test(auditText), auditText.slice(0, 80));
+    check("итог показан чипом", /выполнено/.test(auditText));
+
+    if (hasRefresh) {
+        doc.getElementById("refreshAuditBtn").click();
+        for (let i = 0; i < 60 && doc.getElementById("auditBody").innerHTML.includes("spinner"); i++) await wait(50);
+        const reRendered = Array.from(doc.querySelectorAll("#auditBody tr"));
+        check("обновление журнала перерисовывает таблицу",
+            reRendered.length >= 1 && !doc.getElementById("auditBody").innerHTML.includes("message-error"),
+            reRendered.length + " строк");
+    }
+
+    // Журнал не должен содержать ничего, чем можно воспользоваться для входа.
+    const dump = JSON.stringify(journalAfter.data || {}) + auditText;
+    const leaks = ["$2a$", "$2b$", ADMIN_PASS, "password123", admin.csrf].filter((secret) => dump.includes(secret));
+    check("в журнале нет паролей, хешей и токенов", leaks.length === 0, leaks.join(", "));
 
     check("инлайновых onclick в таблице нет",
         doc.getElementById("usersBody").innerHTML.includes("onclick=") === false);

@@ -104,6 +104,7 @@ func main() {
 	scheduleStore := store.NewScheduleStore(db)
 	resourceStore := store.NewResourceStore(db)
 	eventStore := store.NewEventStore(db)
+	auditStore := store.NewAuditStore(db)
 
 	// Сборщик протухших сессий. Первый проход — сразу, чтобы после рестарта
 	// база не осталась с мусором; дальше раз в sessionCleanupInterval.
@@ -127,6 +128,7 @@ func main() {
 		Schedule:    scheduleStore,
 		Resources:   resourceStore,
 		Events:      eventStore,
+		Audit:       auditStore,
 		Limits:      handlers.NewLimiters(),
 	})
 

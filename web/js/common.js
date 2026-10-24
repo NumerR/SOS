@@ -107,6 +107,8 @@
         roleChipClass: format.roleChipClass,
         assignableRoles: format.assignableRoles,
         can: format.can,
+        auditActionLabel: format.auditActionLabel,
+        auditResult: format.auditResult,
         toISODate: format.toISODate,
         dayStartUnix: format.dayStartUnix,
         dayEndUnix: format.dayEndUnix,
