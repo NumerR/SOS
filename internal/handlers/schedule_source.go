@@ -209,21 +209,55 @@ func (h *Handlers) ScheduleStatusAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Настроен ли источник: админская панель по этому полю показывает либо
-	// кнопки импорта, либо подсказку про APEKS_TOKEN. Состояние «не настроен» —
+	// кнопки импорта, либо подсказку о причине. Состояние «не настроен» —
 	// не ошибка запроса, а конфигурация, поэтому оно часть ответа, а не код 503.
 	//
 	// engine — каким кодом разобраны привезённые пары («go» / «python»).
 	// Поле нужно не панели, а человеку, который разбирается, почему у двух
 	// одинаковых импортов разные строки: при двух движках это единственный
 	// способ увидеть, какой из них работал.
+	//
+	// missing_config и hint перестали быть константами после ADR-0021: с двумя
+	// движками путь «токен задан, а парсер не запускается» стал возможен, и
+	// совет завести APEKS_TOKEN человеку, у которого он задан, — это не
+	// подсказка, а ложный след. Значения приходят из состояния сборки сервера
+	// (cmd/server.newScheduleSourceClient), а текст ошибки моста в ответ не
+	// попадает: там абсолютные пути процесса.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"source":         apeks.Source,
 		"source_name":    apeks.DisplayName,
 		"configured":     h.Apeks != nil,
 		"engine":         scheduleSourceEngine(h.Apeks),
-		"missing_config": "APEKS_TOKEN",
+		"missing_config": h.scheduleSourceMissing(),
+		"hint":           h.scheduleSourceHint(),
 		"stats":          stats,
 	})
+}
+
+// scheduleSourceMissing — имя переменной окружения, из-за которой источника
+// нет. Пустое поле Deps означает «причину не передали» (тест и любая другая
+// сборка могут собрать Deps без неё), поэтому ответ — прежний общий вариант, а
+// не пустая строка: панель обязана иметь слово всегда.
+func (h *Handlers) scheduleSourceMissing() string {
+	if name := strings.TrimSpace(h.ScheduleSourceMissing); name != "" {
+		return name
+	}
+	return "APEKS_TOKEN"
+}
+
+// scheduleSourceHint — фрагмент подсказки для панели и для текста 503, без
+// точки на конце (обе стороны дописывают свою фразу). Поднявшийся источник
+// подсказки не имеет в принципе: «причина, по которой импорта нет» при
+// работающем клиенте — это уже не про конфигурацию.
+//
+// Пустая строка — «причину не передали», и тогда текст формулирует вызывающая
+// сторона: панель своим прежним предложением, 503 — общим советом про
+// APEKS_TOKEN.
+func (h *Handlers) scheduleSourceHint() string {
+	if h.Apeks != nil {
+		return ""
+	}
+	return strings.TrimSpace(h.ScheduleSourceHint)
 }
 
 // scheduleSourceEngine — имя движка источника для админского статуса.
@@ -590,23 +624,37 @@ func (h *Handlers) writeScheduleSourceError(w http.ResponseWriter, r *http.Reque
 	}
 }
 
-// scheduleSourceNotConfigured — источник не настроен (APEKS_TOKEN пуст).
+// scheduleSourceNotConfigured — источник не настроен: клиента нет, и импорта
+// физически не может быть.
+//
+// Причину говорит сборка сервера (Deps.ScheduleSourceMissing/…Hint), а не эта
+// функция: с ADR-0021 «не настроен» перестало быть синонимом пустого
+// APEKS_TOKEN — токен может быть задан, а парсер недоступен, и совет завести
+// токен в этом случае уводит админа ровно не туда.
 func (h *Handlers) scheduleSourceNotConfigured(w http.ResponseWriter, r *http.Request, user *models.User) {
+	reason := "задайте APEKS_TOKEN на сервере"
+	if hint := h.scheduleSourceHint(); hint != "" {
+		reason = hint
+	}
+
 	requestLogger(r).Warn("расписание: импорт запрошен при ненастроенном источнике",
 		slog.String("user", user.Username),
-		slog.String("missing", "APEKS_TOKEN"),
+		slog.String("missing", h.scheduleSourceMissing()),
 	)
 
 	h.recordAudit(r, auditWrite{
 		action:     store.AuditScheduleImport,
 		actor:      user,
 		targetType: "schedule_source",
-		detail:     "source=apeks reason=not_configured",
-		ok:         false,
+		// Имя переменной в деталях, а не только «not_configured»: журнал читают
+		// через страницу /admin, и админ, который уже завёл токен и получил
+		// отказ, обязан увидеть в истории ту же причину, что и в панели.
+		detail: fmt.Sprintf("source=apeks reason=not_configured missing=%s", h.scheduleSourceMissing()),
+		ok:     false,
 	})
 
 	writeError(w, http.StatusServiceUnavailable,
-		"источник расписания не настроен: задайте APEKS_TOKEN на сервере")
+		"источник расписания не настроен: "+reason)
 }
 
 // scheduleSourceFailure — источник не ответил (сеть, 403, неизвестный формат).

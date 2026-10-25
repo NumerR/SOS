@@ -120,20 +120,27 @@ func main() {
 
 	seedAdmin(userStore)
 
+	// Источник расписания поднимается до сборщика обработчиков: вместе с
+	// клиентом он отдаёт панели причину, по которой импорта может не быть
+	// (см. newScheduleSourceClient).
+	apeksClient, apeksProblem := newScheduleSourceClient()
+
 	h := handlers.New(handlers.Deps{
-		Users:          userStore,
-		Sessions:       sessionStore,
-		Courses:        courseStore,
-		Enrollments:    enrollmentStore,
-		Assignments:    assignmentStore,
-		Submissions:    submissionStore,
-		Schedule:       scheduleStore,
-		Resources:      resourceStore,
-		Events:         eventStore,
-		Audit:          auditStore,
-		ScheduleSource: scheduleSourceStore,
-		Apeks:          newScheduleSourceClient(),
-		Limits:         handlers.NewLimiters(),
+		Users:                 userStore,
+		Sessions:              sessionStore,
+		Courses:               courseStore,
+		Enrollments:           enrollmentStore,
+		Assignments:           assignmentStore,
+		Submissions:           submissionStore,
+		Schedule:              scheduleStore,
+		Resources:             resourceStore,
+		Events:                eventStore,
+		Audit:                 auditStore,
+		ScheduleSource:        scheduleSourceStore,
+		Apeks:                 apeksClient,
+		ScheduleSourceMissing: apeksProblem.missing,
+		ScheduleSourceHint:    apeksProblem.hint,
+		Limits:                handlers.NewLimiters(),
 	})
 
 	// Модули платформы: список в cmd/server/modules.go.
@@ -301,6 +308,17 @@ func newLogger() *slog.Logger {
 	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 }
 
+// sourceProblem — что сервер знает о причине «источника нет» и обязан
+// рассказать панели. Собирает newScheduleSourceClient и живёт в Deps.
+//
+// missing — имя переменной окружения (не текст ошибки: в нём абсолютные пути
+// процесса). hint — предложение для админской панели и для текста 503; пустое
+// означает «прежнего общего текста достаточно», и панель формулирует сама.
+type sourceProblem struct {
+	missing string
+	hint    string
+}
+
 // newScheduleSourceClient собирает доступ к источнику расписания из окружения.
 //
 // nil — штатный ответ, а не аварийный: без токена платформа продолжает
@@ -309,6 +327,13 @@ func newLogger() *slog.Logger {
 // (например, http-адрес источника) логируем и тоже продолжаем — ронять сервис
 // из-за недоступного чужого сайта неправильно.
 //
+// Вторым значением возвращается причина: админская панель обязана называть её
+// правильно. До ADR-0021 «источника нет» значило ровно одно — пустой
+// APEKS_TOKEN, и панель повторяла это слово всегда. С двумя движками токен
+// может быть задан, а импорта всё равно не быть (нет python3, нет fetch.py,
+// неразобравшийся адрес, неизвестное SCHEDULE_SOURCE), и совет «заведите
+// токен» в этом случае — ложный след.
+//
 // Значение APEKS_TOKEN не печатается ни в одном из сообщений.
 //
 // Движок выбирает оператор: SCHEDULE_SOURCE=python разбирает ответ приложенным
@@ -316,13 +341,15 @@ func newLogger() *slog.Logger {
 // кодом репозитория. Выбор пишется в лог старта вместе с адресом источника,
 // потому что вывод импорта выглядит одинаково в обоих случаях, а различается
 // тем, чей код смотрел в ответ вуза.
-func newScheduleSourceClient() apeks.Backend {
+func newScheduleSourceClient() (apeks.Backend, sourceProblem) {
 	token := strings.TrimSpace(os.Getenv("APEKS_TOKEN"))
 	if token == "" {
 		slog.Info("внешнее расписание отключено: APEKS_TOKEN не задан",
 			slog.String("hint", "задайте токен источника — тогда появится импорт пар и каталог групп"),
 		)
-		return nil
+		// Панель и так формулирует эту подсказку верно («на сервере не задан
+		// APEKS_TOKEN»), поэтому hint остаётся пустым.
+		return nil, sourceProblem{missing: "APEKS_TOKEN"}
 	}
 
 	switch engine := strings.ToLower(strings.TrimSpace(envOr("SCHEDULE_SOURCE", apeks.EnginePython))); engine {
@@ -334,13 +361,23 @@ func newScheduleSourceClient() apeks.Backend {
 			Python:  os.Getenv("PYTHON_BIN"),
 		})
 		if err != nil {
+			// Разбор ошибки нужен только здесь: «нет чем разбирать» и «адрес
+			// не годится» — разные советы оператору, и путать их нельзя.
+			missing, hint := "APEKS_API_URL", "токен APEKS_TOKEN задан, но адрес источника APEKS_API_URL не подходит: он обязан разбираться и быть по HTTPS"
+			if errors.Is(err, apeks.ErrParserUnavailable) {
+				missing = "PYTHON_BIN"
+				hint = "токен APEKS_TOKEN задан, но парсер расписания не запускается: проверьте PYTHON_BIN " +
+					"(по умолчанию python3) и SCHEDULE_PARSER (по умолчанию tools/schedule-parser/fetch.py); " +
+					"запасной путь без python — SCHEDULE_SOURCE=go"
+			}
 			slog.Error("источник расписания не настроен",
 				slog.String("engine", apeks.EnginePython),
+				slog.String("missing", missing),
 				slog.String("hint", "путь к парсеру: SCHEDULE_PARSER, интерпретатор: PYTHON_BIN; "+
 					"запасной путь — SCHEDULE_SOURCE=go"),
 				slog.Any("error", err),
 			)
-			return nil
+			return nil, sourceProblem{missing: missing, hint: hint}
 		}
 
 		slog.Info("источник расписания подключён",
@@ -349,7 +386,7 @@ func newScheduleSourceClient() apeks.Backend {
 			slog.String("endpoint", parser.Endpoint()),
 			slog.String("parser", parser.Script()),
 		)
-		return parser
+		return parser, sourceProblem{}
 
 	case apeks.EngineGo:
 		client, err := apeks.New(apeks.Config{
@@ -359,10 +396,15 @@ func newScheduleSourceClient() apeks.Backend {
 		if err != nil {
 			slog.Error("источник расписания не настроен",
 				slog.String("engine", apeks.EngineGo),
+				slog.String("missing", "APEKS_API_URL"),
 				slog.String("hint", "проверьте APEKS_TOKEN и APEKS_API_URL"),
 				slog.Any("error", err),
 			)
-			return nil
+			return nil, sourceProblem{
+				missing: "APEKS_API_URL",
+				hint: "токен APEKS_TOKEN задан, но адрес источника APEKS_API_URL не подходит: он обязан " +
+					"разбираться и быть по HTTPS; движок выбран SCHEDULE_SOURCE=go",
+			}
 		}
 
 		slog.Info("источник расписания подключён",
@@ -370,14 +412,20 @@ func newScheduleSourceClient() apeks.Backend {
 			slog.String("engine", apeks.EngineGo),
 			slog.String("endpoint", client.Endpoint()),
 		)
-		return client
+		return client, sourceProblem{}
 
 	default:
 		slog.Error("источник расписания не настроен",
+			slog.String("missing", "SCHEDULE_SOURCE"),
 			slog.String("hint", "SCHEDULE_SOURCE бывает python или go"),
 			slog.String("value", engine),
 		)
-		return nil
+		// Значение оператора в подсказку панели не подставляется: это свободная
+		// строка из окружения, а панель показывается человеку через браузер.
+		return nil, sourceProblem{
+			missing: "SCHEDULE_SOURCE",
+			hint:    "SCHEDULE_SOURCE принимает только python или go — выбранное значение не распознано",
+		}
 	}
 }
 

@@ -475,6 +475,89 @@ func TestScheduleStatusAPIOnlyForAdmin(t *testing.T) {
 	if !ok || stats["groups"] != float64(1) {
 		t.Errorf("статистика источника: %v", payload["stats"])
 	}
+	if hint := payload["hint"]; hint != "" {
+		t.Errorf("подсказка о причине выдана при незаполненной причине: %v", hint)
+	}
+}
+
+// TestScheduleStatusNamesTheRealReason — причина «источника нет» приходит из
+// сборки сервера, а не из константы.
+//
+// Поймано ADR-0021: с двумя движками возможен путь «токен задан, а парсер не
+// запускается», и прежняя константа советовала админу завести APEKS_TOKEN,
+// который уже был заведён. Проверяются оба места, где панель и админ видят
+// причину: состояние источника и отказ импорта.
+func TestScheduleStatusNamesTheRealReason(t *testing.T) {
+	e := newScheduleSourceEnv(t)
+	e.seedCatalog(t, store.SourceGroup{ExternalID: "494", Name: "Б-ИСиТ-22"})
+
+	const reason = "токен APEKS_TOKEN задан, но парсер расписания не запускается: " +
+		"проверьте PYTHON_BIN и SCHEDULE_PARSER; запасной путь — SCHEDULE_SOURCE=go"
+	e.h.ScheduleSourceMissing = "PYTHON_BIN"
+	e.h.ScheduleSourceHint = reason
+
+	rec := e.callAdminGET(t, "admin", "/api/schedule/source/status",
+		http.HandlerFunc(e.h.ScheduleStatusAPI))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("админу отказано: %d %s", rec.Code, rec.Body.String())
+	}
+
+	payload := decode(t, rec)
+	if payload["missing_config"] != "PYTHON_BIN" {
+		t.Errorf("переменная названа неверно: %v", payload["missing_config"])
+	}
+	if payload["hint"] != reason {
+		t.Errorf("подсказка не та: %v", payload["hint"])
+	}
+
+	// Тот же отказ импорта обязан назвать ту же причину: два места одного
+	// состояния, расходящиеся текстом, — это ровно тот ложный след, из-за
+	// которого вся правка и затевалась.
+	rec = e.callAdmin(t, "admin", "/api/schedule/source/lessons",
+		`{"group":"494","month":10,"year":2026}`,
+		http.HandlerFunc(e.h.ScheduleImportAPI), true)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("код %d, ожидалось 503: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "PYTHON_BIN") || strings.Contains(body, "задайте APEKS_TOKEN") {
+		t.Errorf("отказ по-прежнему советует токен: %s", body)
+	}
+	if !strings.Contains(body, "не настроен") {
+		t.Errorf("отказ потерял общее состояние: %s", body)
+	}
+
+	// История отказа читается позже, когда панель уже закрыта, — и она обязана
+	// помнить ту же переменную, что показала панель.
+	if event := lastAudit(t, e.h, store.AuditScheduleImport); !strings.Contains(event.Detail, "missing=PYTHON_BIN") {
+		t.Errorf("в деталях события нет настоящей переменной: %q", event.Detail)
+	}
+
+	assertNoSecretInAudit(t, e.h)
+}
+
+// TestScheduleStatusHintSilentWhenSourceWorks — подсказка о причине живёт
+// только там, где источника нет. Поле в Deps может остаться от прошлой сборки
+// (или быть заполненным ошибочно), а панель читает hint лишь при
+// configured:false; сервер же не должен выдавать «чего не хватает» там, где
+// всё поднялось.
+func TestScheduleStatusHintSilentWhenSourceWorks(t *testing.T) {
+	e := newScheduleSourceEnv(t)
+	e.attachApeks(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(apeksGroupsPayload()))
+	})
+	e.h.ScheduleSourceMissing = "PYTHON_BIN"
+	e.h.ScheduleSourceHint = "подсказка, которой при работающем источнике быть не должно"
+
+	rec := e.callAdminGET(t, "admin", "/api/schedule/source/status",
+		http.HandlerFunc(e.h.ScheduleStatusAPI))
+	payload := decode(t, rec)
+	if payload["configured"] != true {
+		t.Fatalf("configured = %v при подключённом источнике", payload["configured"])
+	}
+	if payload["hint"] != "" {
+		t.Errorf("подсказка о причине показана при работающем источнике: %v", payload["hint"])
+	}
 }
 
 func TestSyncGroupsWritesCatalogAndAudit(t *testing.T) {
@@ -768,6 +851,11 @@ func TestImportWhenSourceIsNotConfigured(t *testing.T) {
 	}
 	if !strings.Contains(event.Detail, "not_configured") {
 		t.Errorf("в деталях события нет причины: %q", event.Detail)
+	}
+	// Причину не передавали (Deps собран без неё) — ответ обязан остаться
+	// прежним общим вариантом, а не пустой строкой в журнале.
+	if !strings.Contains(event.Detail, "missing=APEKS_TOKEN") {
+		t.Errorf("в деталях события не названа переменная: %q", event.Detail)
 	}
 	assertNoSecretInAudit(t, e.h)
 }

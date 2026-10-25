@@ -382,6 +382,33 @@ async function until(page, predicate, tries = 60) {
     check("ненастроенный источник назван переменной", /APEKS_TOKEN/.test(text(unconfigured.doc, "sourceHint")), text(unconfigured.doc, "sourceHint"));
     check("при ненастроенном источнике цифры всё равно видно", text(unconfigured.doc, "statGroups") === "2");
 
+    // Причина «токена нет» — единственная, которую панель формулирует сама. С
+    // ADR-0021 их стало несколько, и настоящую знает только сборка сервера: она
+    // приходит полем hint, а прежняя фраза панели обязана уступить — иначе
+    // админ с уже заведённым токеном получает совет завести его заново.
+    //
+    // Текст hint здесь повторяет строку из cmd/server/main.go: проверка
+    // держит контракт поля, а не фантазию фронтенда.
+    const noParser = boot({
+        role: "admin",
+        seed: { group: "494", name: "Б-ИСиТ-22", month: 10, year: 2026 },
+        routes: {
+            "GET /api/schedule/source/status": json(Object.assign({}, STATUS, {
+                configured: false,
+                missing_config: "PYTHON_BIN",
+                hint: "токен APEKS_TOKEN задан, но парсер расписания не запускается: проверьте PYTHON_BIN " +
+                    "(по умолчанию python3) и SCHEDULE_PARSER (по умолчанию tools/schedule-parser/fetch.py); " +
+                    "запасной путь без python — SCHEDULE_SOURCE=go",
+            })),
+        },
+    });
+    await until(noParser, () => /PYTHON_BIN/.test(text(noParser.doc, "sourceHint")));
+    const parserHint = text(noParser.doc, "sourceHint");
+    check("панель называет причину сервера", /PYTHON_BIN/.test(parserHint) && /SCHEDULE_SOURCE=go/.test(parserHint), parserHint);
+    check("панель не советует завести уже заданный токен", !/не задан APEKS_TOKEN/.test(parserHint), parserHint);
+    check("при чужой причине цифры и обещание чтения остаются", /Чтение уже импортированных/.test(parserHint)
+        && text(noParser.doc, "statGroups") === "2", parserHint);
+
     // источник падает: 502 от сервера, текст сервера, а не выдуманный перевод.
     const failed = boot({
         role: "admin",
