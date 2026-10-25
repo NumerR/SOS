@@ -35,7 +35,10 @@
 //   9. индикатор фокуса (остаток доступности, ADR-0020): каждое правило с
 //      :focus/:focus-visible/:focus-within, которое снимает системный контур или
 //      рисует свой, обязано показать цвет с контрастом >= 3:1 против каждой
-//      подложки проекта — «фокус есть, но не виден» теперь красное.
+//      подложки проекта — «фокус есть, но не виден» теперь красное;
+//  10. сьюты не догружают страницы руками (ADR-0026): ручной диспатч события
+//      загрузки в `tests/ui/*.cjs` красный — jsdom стреляет им сам, а второй
+//      запуск обработчиков отсоединяет узлы, уже снятые сьютом.
 //
 // Запуск локально: node scripts/check-frontend.mjs
 // Код выхода 0 — всё в порядке, 1 — есть находки (они печатаются списком).
@@ -752,12 +755,51 @@ for (const [selector, reason] of FOCUS_EXEMPT) {
   if (seenExempts.has(selector)) contrastNotes.push(`фокус: освобождено «${selector}» — ${reason}`);
 }
 
+// ---------- 10. сьюты не догружают страницы руками ----------
+//
+// Класс найден ADR-0026: `admin-roles.cjs` на холодном стеке давал 18/24 там, где
+// полный прогон давал 24/24. Сьют после `window.eval(bundle)` сам стрелял
+// `dispatchEvent(new Event("DOMContentLoaded"))`, а jsdom стреляет этим событием
+// сам на следующем тике после разбора. Обработчик страницы выполнялся дважды,
+// вторая перерисовка отсоединяла узлы, которые сьют уже снял, и клик по
+// отсоединённой кнопке не порождал запроса — в логе сервера не было ни одного
+// POST, а сообщение `#adminMsg` оставалось пустым. Прогрев полного прогона
+// маскировал гонку: обе перерисовки успевали до съёма строк.
+//
+// Статически это выглядит как безупречный код сьюта, поэтому замок здесь: ни один
+// `tests/ui/*.cjs` не должен диспатчить событие загрузки страницы. Остальные
+// dispatchEvent (submit, keydown, change) легальны — они изображают действие
+// пользователя, а не перезагрузку страницы. Ищем событие в одной строке с
+// dispatchEvent: собранное в переменную проверка не увидит.
+const SUITE_DIR = join(ROOT, "tests", "ui");
+const PAGE_LOAD_EVENTS = new Set(["DOMContentLoaded", "readystatechange", "load"]);
+const DISPATCH_EVENT = /dispatchEvent\(\s*(?:new\s+)?((?:\w+\.)*Event)\(\s*["']([^"']+)["']/g;
+
+if (!existsSync(SUITE_DIR)) {
+  fail("tests/ui", "каталога с jsdom-сьютами нет — проверке нечего читать, это не «сьюты чисты»");
+} else {
+  const suites = readdirSync(SUITE_DIR).filter((f) => f.endsWith(".cjs")).sort();
+  let dispatchedLoad = 0;
+  for (const file of suites) {
+    const text = readFileSync(join(SUITE_DIR, file), "utf8");
+    for (const m of text.matchAll(DISPATCH_EVENT)) {
+      if (!PAGE_LOAD_EVENTS.has(m[2])) continue;
+      dispatchedLoad += 1;
+      fail(`tests/ui/${file}`, `вручную диспатчится «${m[2]}» (${m[1]}): jsdom стреляет событием загрузки сам на следующем тике после разбора, поэтому обработчик страницы выполняется дважды — вторая перерисовка отсоединяет узлы, уже снятые сьютом (ADR-0026)`);
+    }
+  }
+  if (!suites.length) {
+    fail("tests/ui", "в каталоге нет ни одного .cjs-сьюта — проверка вырождается в зелёный CI");
+  }
+  notes.push(`сьюты: файлов ${suites.length}, ручных диспатчей события загрузки — ${dispatchedLoad} (приём ADR-0026)`);
+}
+
 if (problems.length > 0) {
   console.error(`check-frontend: найдено проблем — ${problems.length}`);
   for (const p of problems) console.error("  FAIL " + p);
   process.exit(1);
 }
 
-console.log(`check-frontend: ок — страниц ${htmlFiles(WEB).length}, проверены подключения скриптов, стилей, id, инлайновые обработчики, структура заголовков, skip-link, scope у таблиц, контраст токенов и его покрытие, общность submit-механизма, ссылки aria-describedby и различимость колец фокуса`);
+console.log(`check-frontend: ок — страниц ${htmlFiles(WEB).length}, проверены подключения скриптов, стилей, id, инлайновые обработчики, структура заголовков, skip-link, scope у таблиц, контраст токенов и его покрытие, общность submit-механизма, ссылки aria-describedby, различимость колец фокуса и отсутствие ручных догрузок страниц в сьютах`);
 for (const n of notes) console.log("  ok  " + n);
 for (const n of contrastNotes) console.log("  ok  " + n);
