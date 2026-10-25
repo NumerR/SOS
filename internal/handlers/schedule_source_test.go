@@ -536,11 +536,16 @@ func TestScheduleStatusNamesTheRealReason(t *testing.T) {
 	assertNoSecretInAudit(t, e.h)
 }
 
-// TestScheduleStatusHintSilentWhenSourceWorks — подсказка о причине живёт
-// только там, где источника нет. Поле в Deps может остаться от прошлой сборки
-// (или быть заполненным ошибочно), а панель читает hint лишь при
+// TestScheduleStatusHintSilentWhenSourceWorks — причина «источника нет» живёт
+// только там, где источника нет. Поля в Deps могут остаться от прошлой сборки
+// (или быть заполненными ошибочно), а панель читает hint лишь при
 // configured:false; сервер же не должен выдавать «чего не хватает» там, где
 // всё поднялось.
+//
+// Второе поле проверяется здесь же не зря: живой прогон с чистого клона
+// показал, что при собранном клиенте Deps приходят пустыми, и прежний
+// fallback превращал ответ в `configured: true, missing_config: "APEKS_TOKEN"`
+// — строку, которая противоречит сама себе.
 func TestScheduleStatusHintSilentWhenSourceWorks(t *testing.T) {
 	e := newScheduleSourceEnv(t)
 	e.attachApeks(t, func(w http.ResponseWriter, _ *http.Request) {
@@ -557,6 +562,26 @@ func TestScheduleStatusHintSilentWhenSourceWorks(t *testing.T) {
 	}
 	if payload["hint"] != "" {
 		t.Errorf("подсказка о причине показана при работающем источнике: %v", payload["hint"])
+	}
+	if payload["missing_config"] != "" {
+		t.Errorf("переменная названа недостающей при работающем источнике: %v", payload["missing_config"])
+	}
+
+	// Тот же ответ при незаполненных Deps — так собирает сервер, у которого
+	// источник поднялся: пустые поля не должны превращаться в APEKS_TOKEN.
+	e.h.ScheduleSourceMissing = ""
+	e.h.ScheduleSourceHint = ""
+	rec = e.callAdminGET(t, "admin", "/api/schedule/source/status",
+		http.HandlerFunc(e.h.ScheduleStatusAPI))
+	payload = decode(t, rec)
+	if payload["configured"] != true {
+		t.Fatalf("configured = %v при подключённом источнике и пустых Deps", payload["configured"])
+	}
+	if payload["missing_config"] != "" {
+		t.Errorf("при пустых Deps и работающем источнике названа недостающая переменная: %v", payload["missing_config"])
+	}
+	if payload["hint"] != "" {
+		t.Errorf("подсказка при пустых Deps и работающем источнике: %v", payload["hint"])
 	}
 }
 
