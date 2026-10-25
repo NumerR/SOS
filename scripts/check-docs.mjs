@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Проверка согласованности документации с деревом.
 //
-// Зачем она нужна: docs/01–docs/05 и README — самый часто правимый artifact этого
+// Зачем она нужна: docs/01–docs/05 и README — самый часто правимый артефакт этого
 // репозитория, и они же единственный, который никто не проверяет. Слой родился из
 // трёх находок одного обхода: README ссылался на `internal/apierror/apierror_test.go`
 // — файла никогда не было (ADR-0003 принёс `internal/handlers/errors_test.go`),
@@ -26,11 +26,14 @@
 //      (задач и решений), их цифры описывают день, а не дерево. Не считаются числа
 //      после «было», со стрелкой «→», знаки диффа «−N» и «N строк `ok`» — это вывод
 //      проверки, а не файл;
-//   5. команды: каждый `npm run <скрипт>` из документации есть в `tests/ui/package.json`.
+//   5. команды: каждый `npm run <скрипт>` из документации есть в `tests/ui/package.json`;
+//   6. номера решений: на каждое упоминание ADR-NNNN обязана быть запись `## ADR-NNNN.`
+//      в docs/05-DECISIONS.md, а индексный диапазон «ADR-0001…ADR-NNNN» (docs/README,
+//      docs/02 §12) обязан называть последнее принятое решение.
 //
 // Ограничение, о котором надо помнить: проверка сверяет координату с длиной файла,
 // а не с её содержимым. Ссылка `store.go:40` пройдёт, даже если на 40-й строке
-// теперь другой код, — переезд функции внутрь файла layer'у не виден. Исторические
+// теперь другой код, — переезд функции внутрь файла слою не виден. Исторические
 // координаты (как их было до `8fef933`) закрываются освобождением с причиной, а не
 // молчаливым согласием.
 //
@@ -154,6 +157,11 @@ const PAREN = /\(([^()]*)\)/g;
 // границы слова нет никогда — с ним проверка не находила ни одного заявления.
 const SIZE_IN_PAREN = /(\d{1,5})\s*(?:строк|строки|строка)(?![а-яё])/;
 const NPM_REF = /npm run ([a-z0-9][a-z0-9:_-]*)/g;
+// Номер решения: на каждое упоминание обязана быть запись в журнале docs/05, а
+// индексный диапазон «ADR-0001…ADR-NNNN» обязан называть последнее принятое решение —
+// именно так ловится устаревший список, который никто не обновил, приняв новый ADR.
+const ADR_REF = /ADR-(\d{4})(?![0-9])/g;
+const ADR_RANGE = /ADR-0001(?:\.\.\.|…|[-–—])\s*ADR-(\d{4})(?![0-9])/g;
 
 const tree = walk(ROOT, []);
 // Намеренно неполная история (shallow-клон, который делает actions/checkout по
@@ -200,6 +208,14 @@ function spans(text) {
   return text.match(/`[^`\n]+`/g) || [];
 }
 
+// Журнал решений — единственный источник того, что ADR с таким номером существует.
+const DECISIONS = "docs/05-DECISIONS.md";
+const adrHeadings = new Map();
+for (const m of readFileSync(join(ROOT, DECISIONS), "utf8").matchAll(/^## ADR-(\d{4})\.\s*(.+)$/gm)) {
+  adrHeadings.set(m[1], m[2].trim());
+}
+const adrMax = [...adrHeadings.keys()].sort().at(-1) || "0000";
+
 const usedPathExempts = new Set();
 const usedLineExempts = new Set();
 const usedSizeExempts = new Set();
@@ -213,6 +229,8 @@ let lineRefs = 0;
 let hashRefs = 0;
 let sizeRefs = 0;
 let scriptRefs = 0;
+let adrRefs = 0;
+let adrRanges = 0;
 
 for (const doc of docFiles()) {
   let text;
@@ -316,6 +334,20 @@ for (const doc of docFiles()) {
       else fail(doc, `команды \`npm run ${m[1]}\` в tests/ui/package.json нет`);
     }
   }
+
+  // 6. номера решений
+  for (const m of text.matchAll(ADR_REF)) {
+    adrRefs++;
+    if (!adrHeadings.has(m[1])) {
+      fail(doc, `ссылка ADR-${m[1]}, а записи \`## ADR-${m[1]}.\` в ${DECISIONS} нет — либо опечатка в номере, либо решение не записано`);
+    }
+  }
+  for (const m of text.matchAll(ADR_RANGE)) {
+    adrRanges++;
+    if (m[1] !== adrMax) {
+      fail(doc, `диапазон «ADR-0001…ADR-${m[1]}» устарел: последнее принятое решение в ${DECISIONS} — ADR-${adrMax}`);
+    }
+  }
 }
 
 // Стражи вырождения: пустой прогон выглядит как зелёный CI.
@@ -325,6 +357,11 @@ if (!shallowRepo && hashRefs < 20) fail("README.md", `ссылок на хеши
 if (lineRefs < 50) fail("README.md", `координат строк проверено ${lineRefs} — разбор номеров сломан`);
 if (sizeRefs < 5) fail("README.md", `заявлений об объёме сверено ${sizeRefs} — разбор скобок сломан`);
 if (scriptRefs < 20) fail("README.md", `упоминаний npm run найдено ${scriptRefs} — разбор команд сломан`);
+if (adrRefs < 100) fail(DECISIONS, `упоминаний ADR найдено ${adrRefs} — разбор номеров решений сломан`);
+// Порог 1, не 2: диапазонов в документации ровно два, и правка одной фразы не означает,
+// что разбор сломан — это сделала бы находка в самом диапазоне. Основной сигнал даёт
+// порог выше по числу упоминаний.
+if (adrRanges < 1) fail("docs/README.md", `индексных диапазонов «ADR-0001…» найдено ${adrRanges} — разбор сломан`);
 
 for (const [ref, reason] of PATH_EXEMPT) {
   if (!usedPathExempts.has(ref)) fail("scripts/check-docs.mjs", `освобождение \`${ref}\` больше не встречается в документации — убери его (${reason})`);
@@ -349,6 +386,7 @@ notes.push(shallowRepo
   : `хеши: проверено ${hashRefs}, освобождений ${HASH_EXEMPT.size}`);
 notes.push(`объём: заявлений «N строк» сверено ${sizeRefs}`);
 notes.push(`команды: упоминаний npm run ${scriptRefs}, скриптов в package.json ${npmScripts.size}`);
+notes.push(`решения: упоминаний ADR ${adrRefs}, записей в журнале ${adrHeadings.size}, последнее ADR-${adrMax}, индексных диапазонов ${adrRanges}`);
 
 if (problems.length > 0) {
   console.error(`check-docs: найдено проблем — ${problems.length}`);
@@ -356,7 +394,7 @@ if (problems.length > 0) {
   process.exit(1);
 }
 
-console.log(`check-docs: ок — проверены пути файлов, номера строк, хеши коммитов, заявления об объёме и команды npm в документации`);
+console.log(`check-docs: ок — проверены пути файлов, номера строк, хеши коммитов, заявления об объёме, команды npm и номера решений ADR в документации`);
 for (const n of notes) console.log("  ok  " + n);
 for (const [ref, reason] of PATH_EXEMPT) console.log(`  ok  освобождено \`${ref}\` — ${reason}`);
 for (const [key, reason] of LINE_EXEMPT) console.log(`  ok  освобождено \`${key}\` — ${reason}`);
