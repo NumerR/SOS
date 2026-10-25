@@ -585,6 +585,82 @@ func TestScheduleStatusHintSilentWhenSourceWorks(t *testing.T) {
 	}
 }
 
+// TestScheduleStatusFieldsAgreeInEveryState — инвариант между состояниями, а не
+// ещё одна проверка одного состояния.
+//
+// Противоречие `configured: true` + `missing_config: "APEKS_TOKEN"` нашёл ручной
+// прогон сервера с чистого клона, а не тест: каждый прежний тест спрашивал ровно
+// то состояние, которое сам и собрал, и никто не формулировал правило целиком —
+// «недостающая переменная называется ровно тогда, когда источника нет». Здесь это
+// правило проходит все четыре сборки состояния, включая те две, которые панель
+// никогда не показывает.
+func TestScheduleStatusFieldsAgreeInEveryState(t *testing.T) {
+	cases := []struct {
+		name       string
+		withSource bool
+		missing    string
+		hint       string
+	}{
+		{"источник собран, Deps пусты — так собирает cmd/server", true, "", ""},
+		{"источник собран, Deps заполнены ошибочно", true, "PYTHON_BIN", "проверьте PYTHON_BIN"},
+		{"источника нет, причина передана", false, "PYTHON_BIN", "проверьте PYTHON_BIN"},
+		{"источника нет, причину не передали", false, "", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newScheduleSourceEnv(t)
+			if tc.withSource {
+				e.attachApeks(t, func(w http.ResponseWriter, _ *http.Request) {
+					_, _ = w.Write([]byte(apeksGroupsPayload()))
+				})
+			}
+			e.h.ScheduleSourceMissing = tc.missing
+			e.h.ScheduleSourceHint = tc.hint
+
+			rec := e.callAdminGET(t, "admin", "/api/schedule/source/status",
+				http.HandlerFunc(e.h.ScheduleStatusAPI))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("состояние источника — это 200, получено %d: %s", rec.Code, rec.Body.String())
+			}
+
+			payload := decode(t, rec)
+			configured, ok := payload["configured"].(bool)
+			if !ok {
+				t.Fatalf("configured не булево: %v", payload["configured"])
+			}
+			missing, _ := payload["missing_config"].(string)
+			engine, _ := payload["engine"].(string)
+			hint, _ := payload["hint"].(string)
+
+			// Имя недостающей переменной живёт ровно по одну сторону от
+			// configured: по эту — пусто, по ту — обязательно что-то.
+			if configured == (missing != "") {
+				t.Errorf("configured=%v против missing_config=%q", configured, missing)
+			}
+			// Движок — то же самое: выдумывать его при отсутствии источника
+			// нельзя, а молчать при работающем — значит оставить админа без
+			// ответа «каким кодом меня собрали».
+			if configured != (engine != "") {
+				t.Errorf("configured=%v против engine=%q", configured, engine)
+			}
+			// Подсказка про причину существует только вместе с причиной.
+			if configured && hint != "" {
+				t.Errorf("при работающем источнике подсказка о причине: %q", hint)
+			}
+			// Две строки одного состояния не могут расходиться: если подсказка
+			// есть, она обязана называть то же имя, что и missing_config.
+			if !configured && hint != "" && !strings.Contains(hint, missing) {
+				t.Errorf("подсказка %q не называет переменную %q", hint, missing)
+			}
+			// Секретной hygiene это не отменяет: имя переменной — не значение.
+			if strings.Contains(missing, testApeksToken) || strings.Contains(hint, testApeksToken) {
+				t.Errorf("в ответ ушло значение токена: %q / %q", missing, hint)
+			}
+		})
+	}
+}
+
 func TestSyncGroupsWritesCatalogAndAudit(t *testing.T) {
 	e := newScheduleSourceEnv(t)
 	calls := e.attachApeks(t, func(w http.ResponseWriter, r *http.Request) {
