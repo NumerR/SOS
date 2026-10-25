@@ -18,6 +18,12 @@ function check(name, ok, detail = "") {
     console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? " — " + detail : ""}`);
 }
 function wait(ms) { return new Promise((r) => setTimeout(r, ms)); }
+// Пустое adminMsg означает, что страница за бюджет ожидания ответа не получила,
+// а это другой диагноз, чем «ответил не то»: печатаем его явно.
+function msgDetail(el) {
+    const text = (el.textContent || "").trim();
+    return text || "сообщение не появилось за 3 с — запрос не дошёл или страница его не ждёт";
+}
 
 // Панель журнала перезагружается сама после каждой смены роли: на время этого
 // запроса в #auditBody лежит заглушка со spinner'ом («Загрузка журнала…»).
@@ -128,7 +134,7 @@ async function login(identifier, password) {
 
     for (let i = 0; i < 60 && !(doc.getElementById("adminMsg").textContent || "").trim(); i++) await wait(50);
     const status = doc.getElementById("adminMsg");
-    check("сервер принял изменение роли через UI", /обновлен/i.test(status.textContent), status.textContent.trim());
+    check("сервер принял изменение роли через UI", /обновлен/i.test(status.textContent), msgDetail(status));
     check("сообщение предупреждает об отзыве сессий", /сесс/i.test(status.textContent));
 
     const after = await api("/api/admin/users", { cookie: admin.cookie });
