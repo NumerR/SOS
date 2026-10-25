@@ -44,6 +44,9 @@ web/                          index.html, schedule.html, events.html, profile.ht
   js/core/ (api-client.js, csrf.js, auth.js, dom.js, date.js)
   js/pages/ (dashboard.js, schedule.js, events.js, …)
 deploy/                       docker-compose.yml, example env, systemd/Procfile
+tools/schedule-parser/        приложенный Python-парсер источника (ADR-0021):
+                              fetch.py — точка входа для Go-моста, api_client.py,
+                              parser.py, groups.py, тесты; вызывается процессом, не импортируется
 docs/                         этот набор + ADR + «как добавить модуль»
 ```
 
@@ -274,7 +277,9 @@ JSON, и middleware-цепочка для них своя) и `/api/health` (п�
 Контракты выше — целевые; расписание уже работает по другому пути, и он зафиксирован
 здесь, чтобы следующий, кто будет читать документ, не искал несуществующий
 `/api/schedule/entries`. Источник — АПЭКС-ВУЗ, токен держит сервер, наружу отдаются
-только импортированные строки.
+только импортированные строки. Разбирает ответ приложенный Python-парсер (`ADR-0021`), а
+не только код репозитория: это видно в `engine` админского статуса, и путь целиком —
+в пункте «Про выбор движка» §8.
 
 `GET /api/schedule/groups?q=&limit=` — публичный. Каталог групп:
 
@@ -308,9 +313,10 @@ JSON, и middleware-цепочка для них своя) и `/api/health` (п�
 ```
 
 Три админских маршрута (право `schedule.source.manage`, запись — с CSRF):
-`GET /api/schedule/source/status` отдаёт `{configured, missing_config, stats}` —
-при неконфигурированном источнике это `200` с `configured: false`, а не `503`:
-«не настроено» — состояние, а не ошибка запроса. `POST /api/schedule/source/groups`
+`GET /api/schedule/source/status` отдаёт `{configured, engine, missing_config, stats}` —
+при неконфигурированном источнике это `200` с `configured: false` и пустым `engine`:
+«не настроено» — состояние, а не ошибка запроса, и выдумывать движок там, где пути нет,
+нельзя. `POST /api/schedule/source/groups`
 → `{source, fetched, added}`; `POST /api/schedule/source/lessons` с телом
 `{group, month, year, count}` (нули = «текущий месяц», `count` — сколько месяцев
 вперёд) → `{source, group_id, group_name, months, lessons}`. Оба пишут запись в
@@ -459,6 +465,8 @@ CORS_ALLOW_ORIGINS=https://…     (пусто = same-origin, заголовка
 ADMIN_USERNAME/ADMIN_EMAIL/ADMIN_FULL_NAME/ADMIN_PASSWORD   (сид, существующий механизм)
 TELEGRAM_BOT_TOKEN=<secret>      TELEGRAM_ALLOWED_CHANNELS=…   (T4.2, не реализовано)
 APEKS_TOKEN=<secret>             APEKS_API_URL=…  (пусто = боевой адрес источника)
+SCHEDULE_SOURCE=python|go        (пусто = python; ADR-0021 — кто разбирает ответ)
+SCHEDULE_PARSER=<путь к fetch.py> PYTHON_BIN=python3  (переопределение для моста и тестов)
 IMPORT_INTERVAL=15m                                          (не реализовано)
 ```
 
@@ -473,12 +481,25 @@ IMPORT_INTERVAL=15m                                          (не реализ�
 адрес (нужен тестам на локальном TLS-стабе), но http-схему клиент отвергает при
 сборке — токен не уйдёт открытым текстом.
 
+Про выбор движка (ADR-0021, `63f8cb3`). `SCHEDULE_SOURCE=python` — ответ источника
+разбирает приложенный Python-парсер: мост `internal/apeks/python.go` запускает
+`SCHEDULE_PARSER` (по умолчанию `tools/schedule-parser/fetch.py`) интерпретатором
+`PYTHON_BIN` (по умолчанию `python3`) без оболочки, токен даёт ему **только окружением
+процесса** — в аргументах командной строки секрет не оказывается, потому что строку
+видно в `ps` и она попадает в логи падений. `SCHEDULE_SOURCE=go` — прежний клиент
+`internal/apeks/client.go`; он оставлен рабочим именно как запасной путь на случай
+хостинга без интерпретатора (вопрос владельцу в `docs/03` B2). Выбранный движок
+пишется в лог старта и виден в `engine` из `GET /api/schedule/source/status`;
+автоматической смены движка при ошибке нет — два разбора могут разойтись, и молчаливый
+переход показал бы админу данные, собранные не тем кодом, который он настроил.
+Значение `SCHEDULE_SOURCE` тоже читается один раз, при старте.
+
 Таймауты HTTP-сервера и дедлайн обращений к БД пока не настраиваются через env —
 это константы в `cmd/server/main.go` и `internal/handlers/deadline.go`
 (`dbRequestTimeout`). Делать их переменными смысла нет до `T2.1`: значения
 подбираются под пул соединений PostgreSQL, а не под SQLite-файл.
 
-Секреты только из окружения управляемого хостинга/GitHub Secrets; `data/`, `.env` уже в `.gitignore`. Логи — `slog` JSON без значений секретов и без паролей.
+Секреты только из окружения управляемого хостинга/GitHub Secrets; `data/`, `.env` уже в `.gitignore`, туда же добавлены `__pycache__/` и `*.pyc` — Python кэширует байткод рядом с исходниками парсера, и при каждом прогоне появляется папка, которую коммитить нельзя. Логи — `slog` JSON без значений секретов и без паролей.
 
 ## 9. Топология развёртывания (два варианта, решает владелец)
 
@@ -494,11 +515,17 @@ IMPORT_INTERVAL=15m                                          (не реализ�
 `deploy-frontend.yml` — если выбран вариант B (Pages). `deploy-backend.yml` — по выбранному варианту размещения backend.
 Секреты через GitHub Environments, в логи не выводятся.
 
-Фактическое состояние (T0.4, ADR-0009; состав проверок расширен в T0.5, ADR-0016, в ADR-0017, в ADR-0018, в ADR-0019 и в ADR-0020):
+Фактическое состояние (T0.4, ADR-0009; состав проверок расширен в T0.5, ADR-0016, в ADR-0017, в ADR-0018, в ADR-0019, в ADR-0020 и в ADR-0021):
 `.github/workflows/ci.yml` есть и состоит
-из трёх работ — `go` (gofmt, vet, build, `go test -race -count=1`), `frontend`
-(`node --check` + `scripts/check-frontend.mjs`) и `ui` (jsdom-тесты против живого
-сервера, `npm ci` по закоммиченному lockfile). `check-frontend.mjs` проверяет девять
+из четырёх работ — `go` (gofmt, vet, build, `go test -race -count=1`; Python ставится
+явно, иначе тест паритета разборов молча пропускался бы), `frontend`
+(`node --check` + `scripts/check-frontend.mjs`), `parser` (офлайн-проверки приложенного
+парсера: `py_compile`, `test_parser.py`, `test_contract.py` — без сети, без токена и без
+`requests`) и `ui` (jsdom-тесты против живого сервера, `npm ci` по закоммиченному
+lockfile, плюс сквозная приёмка источника на подставном парсере
+`bash tests/schedule-source-python.sh`, которая python не требует: дочерний процесс —
+`/bin/sh`). Живой АПЭКС-ВУЗ из CI не дёргается: нужен токен вуза в секретах репозитория,
+а это и лишний канал утечки, и чужая нагрузка от чужого CI. `check-frontend.mjs` проверяет девять
 групп: существующие `<script src>`/`<link href>`, подключение каждого JS-файла хотя
 бы одной страницей, объявленность `getElementById`-мишеней, отсутствие инлайновых
 `on*`-обработчиков, структуру доступности страницы (`lang`, `<title>`, один `<h1>`,
@@ -563,19 +590,23 @@ SQLite и проверяют допуск на маршрутах, а не то�
 с маркерами разметки профиля, а в ответе нет ни `password_hash`, ни `csrf_token=`,
 ни админских маршрутов, и после настоящего `POST /api/auth/logout` страница
 перестаёт отдаваться.
-Итого 158 тестов верхнего уровня и 52 подтеста в семи пакетах,
-`go test -race -count=1 ./...` — все ok.
-UI-проверки (`tests/ui/*.cjs`, jsdom) — восемь сьютов и 377 проверок
-(после ADR-0018; после ADR-0017 было 364, после T0.5 — 339): доступность структуры,
+Итого 171 тест верхнего уровня и 63 подтеста в семи пакетах (было 158 и 52 до ADR-0021;
+`internal/apeks` — 36), `go test -race -count=1 ./...` — все ok.
+UI-проверки (`tests/ui/*.cjs`, jsdom) — девять сьютов и 398 проверок
+(восемь из них — 377 — гоняет `npm run test:all`; девятый, `schedule-source-python.cjs`,
+поднимает собственный сервер с подставным парсером, поэтому вызывается отдельно —
+`npm run test:source`; после ADR-0018 было 377, после ADR-0017 — 364, после T0.5 — 339):
+доступность структуры,
 модального окна и связки поля с сообщением 112,
 задания/модалки 24, роли админа 24 (в ней же — журнал),
 панель аккаунта 29 (она проверяет уже `/profile`), истечение сессии 14,
 формы создания и общая шапка 80 (сьют расписания с ADR-0017 покрывает и кабинет),
-страница профиля 35, таблица расписания 59.
+страница профиля 35, таблица расписания 59, источник расписания сквозняком 21.
 Из них 286 работают офлайн — `accessibility.cjs`, `schedule-forms.cjs`,
 `profile-page.cjs` и `schedule-timetable.cjs` подменяют `fetch` роутером или ошибкой
 и потому не тратят бюджет лимитера входов; остальные четыре (91 проверка) работают с
-живым сервером и сидом.
+живым сервером и сидом, и двадцать одна проверка источника — со своим сервером на
+свободном порту и своей базой в `mktemp` (ADR-0021).
 Сьют истечения сессии и есть проверка приёмки T3.1 («не вечный
 spinner»): сессия отзывается настоящим `POST /api/auth/logout`, и требуется, что
 навигация ровно одна, только на вход, а на самом входе и в гостевом расписании —
@@ -599,6 +630,22 @@ spinner»): сессия отзывается настоящим `POST /api/auth
 `TestScheduleStatusAPIOnlyForAdmin`, `TestSyncGroupsDeniedForTeacher`,
 `TestSyncGroupsDeniedWithoutCSRF`, `TestSyncGroupsRequiresSession`; секретность
 токена — `TestErrorMessagesCarryNoSecret` и `TestTransportErrorIsScrubbed`.
+
+Добавлено ADR-0021 (`63f8cb3`): второй срез живого ответа —
+`internal/apeks/testdata/apeks-groups-tree.json` (дерево «институт → курс → группа»,
+в котором пустой уровень пришёл списком `[]`) с `TestParseGroupsOnLiveExcerpt` и
+`TestParseGroupsRejectsUnknownNodeShape`; запасной Go-путь на этой форме проверяется
+тестом `TestGetGroupsSurvivesEmptyLevels`, а пустые словари месяца —
+`TestParseMonthAcceptsEmptyDictionaries`. Мост в дочерний процесс закрыт
+`internal/apeks/python_test.go` (9 тестов: проверка среды до первого импорта, договор
+аргументов и окружения, коды выхода, недостающий `external_id`, каталог групп, токен
+спрятан от сообщений парсера, границы месяца общие с Go-клиентом; в том же файле —
+две проверки паритета, `TestPythonParserMatchesGoParser` (пары) и
+`TestPythonGroupsMatchGoParser` (каталог), которые действительно вызывают `python3` и
+потому пропускаются без интерпретатора). Со стороны Python договор CLI держит
+`tools/schedule-parser/test_contract.py` (17 проверок на обеих фикстурах), а всю связку
+целиком — `tests/schedule-source-python.sh` с подставным парсером
+`tests/fixtures/schedule-source.sh` и сьютом `tests/ui/schedule-source-python.cjs`.
 
 Формат отказа (§4) проверяется с двух сторон. `internal/handlers/errors_test.go`
 (7 тестов) — что конверт однопольный, `fields` отсутствует когда его нет, код
