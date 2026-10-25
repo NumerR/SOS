@@ -69,7 +69,10 @@ async function openDashboard(account) {
         .map((file) => fs.readFileSync(path.join(REPO, "web/js", file), "utf8"))
         .join("\n;\n");
     window.eval(bundle);
-    window.document.dispatchEvent(new window.Event("DOMContentLoaded", { bubbles: true }));
+    // DOMContentLoaded диспатчит сам jsdom на следующем тике после разбора
+    // (приём из session-expiry.cjs): ручной диспатч запускает обработчик
+    // страницы дважды, а с ним дважды вешаются и делегаты на местах, которые
+    // страница не перерисовывает.
 
     // ждём, пока дашборд отрисует карточки с действиями
     for (let i = 0; i < 60; i++) {

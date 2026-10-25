@@ -14,6 +14,7 @@
     "test:a11y": "node accessibility.cjs",
     "test:source": "bash ../schedule-source-python.sh",
     "test:source-states": "bash ../source-states-smoke.sh",
+    "test:live": "bash run-live.sh",
     "test:all": "node accessibility.cjs && node schedule-forms.cjs && node schedule-timetable.cjs && node profile-page.cjs && node assignments-modal.cjs && node admin-roles.cjs && node account-security.cjs && node session-expiry.cjs"
   },
   "dependencies": {

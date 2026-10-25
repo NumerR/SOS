@@ -87,8 +87,10 @@ async function login(identifier, password) {
         .map((f) => fs.readFileSync(path.join(REPO, "web/js", f), "utf8"))
         .join("\n;\n");
     window.eval(bundle);
-    doc.dispatchEvent(new window.Event("DOMContentLoaded", { bubbles: true }));
-
+    // DOMContentLoaded не диспатчим руками: jsdom сам стреляет им на следующем тике
+    // после разбора (тот же приём, что в session-expiry.cjs). Ручной диспатч
+    // добавлял второй запуск страницы: вторая перерисовка #usersBody detach'ала
+    // строку, уже снятую сьютом ниже, и клик по ней не доходил до сервера.
     for (let i = 0; i < 60 && !doc.querySelector("[data-action='save-role']"); i++) await wait(50);
 
     const rows = Array.from(doc.querySelectorAll("#usersBody tr"));

@@ -84,7 +84,9 @@ async function bootPage({ seed }) {
         .map((f) => fs.readFileSync(path.join(REPO, "web/js", f), "utf8"))
         .join("\n;\n");
     window.eval(bundle);
-    doc.dispatchEvent(new window.Event("DOMContentLoaded", { bubbles: true }));
+    // DOMContentLoaded диспатчит сам jsdom на следующем тике после разбора
+    // (приём из session-expiry.cjs): ручной диспатч запускает страницу дважды,
+    // и каждый запрос источника уходит в двух экземплярах.
 
     return { window, doc, calls };
 }

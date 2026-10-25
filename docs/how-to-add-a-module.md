@@ -180,6 +180,8 @@ gofmt -l internal cmd                     # пусто
 go vet ./...
 go test -race -count=1 ./...              # включая тесты app-уровня
 node scripts/check-docs.mjs               # если тронуты README или docs/*.md (ADR-0025)
+bash tests/ui/run-live.sh                 # если тронуты страницы или web/js: восемь сьютов
+                                          # на собственном стеке (сервер, база, сид)
 LOG_LEVEL=debug go run ./cmd/server       # в логе — таблица маршрутов и прав
 ```
 
