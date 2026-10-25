@@ -13,7 +13,14 @@ const ModalManager = (() => {
     const FOCUSABLE = [
         "a[href]",
         "button:not([disabled])",
-        "input:not([disabled])",
+        // `type="hidden"` сюда не входит, и это не мелочь: обе формы диалога
+        // начинаются скрытым полем (`course_id`, `assignment_id`), и с прежним
+        // списком первой под подход FOCUSABLE находилось именно оно — open()
+        // звал focus() на невидимом поле, фокус оставался на <body> за диалогом,
+        // и человек, открывший форму, в окно с клавиатуры не попадал. Поймал это
+        // живой замер состояний фокуса (ADR-0022), а не статика: кольцо у видимых
+        // полей в порядке, а входа в окно нет.
+        'input:not([disabled]):not([type="hidden"])',
         "textarea:not([disabled])",
         "select:not([disabled])",
         '[tabindex]:not([tabindex="-1"])',
@@ -55,6 +62,11 @@ const ModalManager = (() => {
 
         const target = body.querySelector(FOCUSABLE) || closeBtn || dialog;
         if (target && typeof target.focus === "function") target.focus();
+        // Страховка: если ни один кандидат фокус не принял (поле под disabled,
+        // контейнер, который браузер не считает фокусируемым), заходим в диалог
+        // сами. У #modalDialog есть tabindex="-1" и своё кольцо; остаться на
+        // <body> — значит показать окно человеку, которое он не видит клавиатурой.
+        if (!dialog.contains(document.activeElement)) dialog.focus();
         return true;
     }
 

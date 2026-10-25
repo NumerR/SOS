@@ -39,6 +39,14 @@
 // слабое изменение печатается замечанием, а не провалом: у поля, которое
 // просто темнеет границей, индикатор виден, но изменение составляет 1,9:1.
 //
+// С ADR-0022 к страницам добавились модальные окна: их содержимое появляется
+// только по клику, и ни одна статическая проверка про него не знает. Пять
+// состояний диалога на /dashboard открываются настоящими кликами по настоящим
+// кнопкам, и внутри них идёт тот же двухпроходный обход — только по элементам
+// `#modalDialog` и в координатах вьюпорта (оверлей прибит к окну). Для диалога
+// проверяется ещё и ловушка: Tab обязан остаться внутри. Ничего не
+// отправляется: кнопка «сохранить» в форме только фокусируется и замеряется.
+//
 // Запуск (нужен живой сервер и сид):
 //   ADDR=127.0.0.1:8162 DB_PATH=/tmp/sos-focus.db \
 //     ADMIN_USERNAME=admin ADMIN_PASSWORD='focus-pass-123' go run ./cmd/server
@@ -77,6 +85,47 @@ const ONLY = arg("page"); // проверить одну страницу (от�
 const VIEWPORT = { width: 1280, height: 900 };
 
 const FOCUSABLE_SELECTOR = 'a[href], button, input:not([type="hidden"]), select, textarea, [tabindex]:not([tabindex="-1"]), summary, [contenteditable="true"]';
+
+// Те же признаки, но только внутри открытого диалога. Отдельный селектор нужен
+// потому, что за модалкой остаётся живая страница: без ограничения обход
+// считал бы её элементы недоступными и падал бы с ложной находкой.
+const DIALOG_SELECTOR = [
+  'a[href]', 'button', 'input:not([type="hidden"])', 'select', 'textarea',
+  '[tabindex]:not([tabindex="-1"])', 'summary', '[contenteditable="true"]',
+].map((part) => `#modalDialog ${part}`).join(", ");
+
+// Модальные окна (ADR-0022). Разметка диалога одна — #modalContainer на
+// /dashboard, — но содержимое у него разное, и по-разному выглядит кольцо у
+// поля внутри него: список заданий, форма создания, сдача работы, таблица
+// сдач с полями оценки. steps — цепочка кликов от свежей страницы до нужного
+// содержимого; ничего не отправляется, кнопка «сохранить» только фокусируется.
+const MODALS = [
+  {
+    id: "assignments-student", page: "/dashboard", auth: "student",
+    label: "список заданий студента",
+    steps: ['[data-action="view-assignments-student"]'],
+  },
+  {
+    id: "submit-work", page: "/dashboard", auth: "student",
+    label: "форма сдачи работы",
+    steps: ['[data-action="view-assignments-student"]', '[data-modal-action="open-submit"]'],
+  },
+  {
+    id: "assignments-teacher", page: "/dashboard", auth: "teacher",
+    label: "управление заданиями (преподаватель)",
+    steps: ['[data-action="manage-assignments"]'],
+  },
+  {
+    id: "create-assignment", page: "/dashboard", auth: "teacher",
+    label: "форма нового задания",
+    steps: ['[data-action="manage-assignments"]', '[data-modal-action="open-create"]'],
+  },
+  {
+    id: "submissions", page: "/dashboard", auth: "teacher",
+    label: "таблица сдач с оценками",
+    steps: ['[data-action="manage-assignments"]', '[data-modal-action="open-submissions"]'],
+  },
+];
 
 const CREDS = {
   student: { identifier: "s_stud", password: "password123" },
@@ -319,6 +368,40 @@ const ACTIVE_FP_JS = `
 
 const BLUR_JS = `const a = document.activeElement; if (a && a.blur) a.blur(); return true;`;
 
+// Метки прошлого обхода. Нужны, потому что обход модалки перенумеровывает
+// элементы внутри диалога, а старый `data-fp` остаётся на элементах страницы за
+// ним: без сброса замер по индексу #0 взял бы элемент со страницы, а не из окна.
+const UNTAG_JS = `
+  for (const el of document.querySelectorAll('[data-fp]')) el.removeAttribute('data-fp');
+  return true;
+`;
+
+// Клик по первому совпадению — так открываются модалки: настоящим событием по
+// настоящей кнопке, а не вызовом внутренней функции скрипта.
+const CLICK_JS = `
+  const el = document.querySelector(p);
+  if (!el) return false;
+  el.scrollIntoView({ block: 'center', inline: 'nearest' });
+  el.click();
+  return true;
+`;
+
+// Состояние диалога. Отдельно проверяется, что фокус после открытия уехал
+// внутрь: это не про кольцо, а про то, куда человека вообще видно.
+const DIALOG_STATE_JS = `
+  const overlay = document.getElementById('modalContainer');
+  if (!overlay) return { open: false, reason: 'на странице нет #modalContainer — модалки живут только там, где подключён modals.js' };
+  if (overlay.classList.contains('hidden')) return { open: false, reason: 'диалог скрыт классом .hidden' };
+  const dialog = document.getElementById('modalDialog');
+  if (!dialog) return { open: false, reason: 'нет #modalDialog' };
+  const cs = getComputedStyle(dialog);
+  if (cs.display === 'none' || cs.visibility === 'hidden') return { open: false, reason: 'диалог не отрисован' };
+  const box = dialog.getBoundingClientRect();
+  if (box.width < 40 || box.height < 40) return { open: false, reason: 'у диалога нет размеров: ' + box.width + 'x' + box.height };
+  const a = document.activeElement;
+  return { open: true, inside: !!a && dialog.contains(a), focus: a ? a.tagName.toLowerCase() : '—' };
+`;
+
 // На время замеров страница лишается переходов, анимаций и мигающей каретки.
 // Без этого снимок «после» ловил бы середину transition, а каретка добавляла
 // бы ~17 пикселей сильных изменений там, где индикатора нет вообще.
@@ -348,6 +431,33 @@ const FOCUS_JS = `
     visible: el.matches(':focus-visible'),
     x: r.x + window.scrollX, y: r.y + window.scrollY, w: r.width, h: r.height,
   };
+`;
+
+// То же для элемента внутри открытого диалога. Разница в системе координат:
+// оверлей прибит к вьюпорту (`position: fixed`), а снимок берётся по
+// координатам документа. Прокрутка сбрасывается до и после focus() — иначе
+// кадр уехал бы по фону, когда диалог сам прокрутил своё содержимое к полю.
+const FOCUS_DIALOG_JS = `
+  window.scrollTo(0, 0);
+  const el = document.querySelector('[data-fp="' + p + '"]');
+  if (!el) return null;
+  el.focus();
+  window.scrollTo(0, 0);
+  const r = el.getBoundingClientRect();
+  return {
+    focused: document.activeElement === el,
+    visible: el.matches(':focus-visible'),
+    x: r.x, y: r.y, w: r.width, h: r.height,
+  };
+`;
+
+// Диалог закрывается штатной кнопкой: следующий случай всё равно начинается с
+// новой загрузки страницы, но открытого оверлея на ней быть не должно.
+const CLOSE_DIALOG_JS = `
+  const btn = document.getElementById('modalCloseBtn');
+  if (!btn) return false;
+  btn.click();
+  return true;
 `;
 
 // Diff двух снимков считает сама страница: браузер декодирует собственный PNG.
@@ -429,11 +539,12 @@ async function navigate(cdp, url) {
 
 // Страницы дорисовывают содержимое через fetch: ждём, пока перестанет меняться
 // не число элементов, а их идентичность — шапка после /api/auth/me остаётся
-// того же размера, но ссылки в ней другие.
-async function settle(cdp) {
+// того же размера, но ссылки в ней другие. Селектор приходит параметром: тем же
+// приёмом ждём и наполнение открытого диалога.
+async function settle(cdp, selector = FOCUSABLE_SELECTOR) {
   let prev = null;
   for (let i = 0; i < 40; i++) {
-    const sig = await cdp.eval(SIGNATURE_JS, FOCUSABLE_SELECTOR);
+    const sig = await cdp.eval(SIGNATURE_JS, selector);
     if (sig && sig === prev) return sig;
     prev = sig;
     await wait(150);
@@ -501,21 +612,27 @@ function record(page, verdict, element, detail) {
   rows.push({ page, verdict, element, detail });
 }
 
-// Обход одной страницы в два прохода. Первый — куда реально приходит Tab
+// Обход фокусируемых элементов в два прохода. Первый — куда реально приходит Tab
 // (свежая загрузка страницы единственная сбрасывает точку продолжения
 // клавиатурной навигации, и она же включает клавиатурную модальность, без
 // которой :focus-visible на программном фокусе не сработает). Второй — видно ли
 // индикатор: два снимка одной области, с фокусом и без. Если страница
 // перестроила DOM между проходами, индексы теряют смысл — такой прогон
 // помечается находкой, а не тихо продолжается.
-async function checkPage(cdp, spec) {
-  const who = await ensureLogin(cdp, spec.auth);
-  await navigate(cdp, BASE + spec.path);
-  const sig = await settle(cdp);
-  const items = await cdp.eval(TAG_JS, FOCUSABLE_SELECTOR);
-  console.log(`\n── ${spec.path} (${spec.label}) как ${who}: фокусируемых элементов ${items.length}`);
+//
+// Один и тот же обход нужен и для страницы целиком, и для открытой модалки
+// (ADR-0022), поэтому селектор и способ снять координаты приходят аргументами,
+// а не берутся из модуля: диалог лежит на `position: fixed` подложке, и его
+// геометрию надо мерить в координатах вьюпорта, а не документа.
+async function runPasses(cdp, label, selector, opts) {
+  // Метки прошлого обхода сбрасываются всегда: модалка нумерует элементы заново,
+  // и иначе замер нашёл бы по индексу элемент, который уже не тот.
+  await cdp.eval(UNTAG_JS);
+  const sig = await settle(cdp, selector);
+  const items = await cdp.eval(TAG_JS, selector);
+  console.log(`   фокусируемых элементов: ${items.length}`);
   if (items.length === 0) {
-    record(spec.path, "FAIL", "—", "на странице нет ни одного фокусируемого элемента");
+    record(label, "FAIL", "—", opts.emptyMessage);
     return;
   }
   await cdp.eval(FREEZE_JS);
@@ -528,6 +645,7 @@ async function checkPage(cdp, spec) {
   // находкой, потому что повтор её не убирает.
   const order = [];
   let dropped = 0;
+  let escaped = false;
   for (let i = 0; i < items.length + 4; i++) {
     let fp = null;
     for (let attempt = 0; attempt < 4; attempt++) {
@@ -537,37 +655,47 @@ async function checkPage(cdp, spec) {
       if (fp !== order[order.length - 1] || order.length === 0) break;
       dropped++;
     }
-    if (fp === null) break;                       // фокус ушёл в chrome браузера
+    if (fp === null) { escaped = true; break; }  // фокус ушёл в chrome браузера или за пределы диалога
     order.push(fp);
     if (fp === order[0] && order.length > 1) break; // обход замкнулся
   }
   const reached = new Set(order);
   const indexes = Array.from(items.keys());
-  const mismatch = indexes.filter((i) => i < order.length && order[i] !== String(i));
-  if (mismatch.length) {
-    record(spec.path, "FAIL", items[mismatch[0]],
-      `порядок Tab не совпадает с порядком DOM: первый сбой на позиции ${mismatch[0]}, ` +
-      `фактический порядок ${order.join(' → ')}`);
+  // Для страницы порядок DOM и порядок Tab обязаны совпасть: расхождение значит
+  // tabindex или перестроенный между проходами содержимое. У открытого диалога
+  // точка входа другая — ловушка начинает обход с кнопки закрытия, а не с
+  // первого элемента разметки, — поэтому там проверяется только замкнутость.
+  if (opts.assertOrder) {
+    const mismatch = indexes.filter((i) => i < order.length && order[i] !== String(i));
+    if (mismatch.length) {
+      record(label, "FAIL", items[mismatch[0]],
+        `порядок Tab не совпадает с порядком DOM: первый сбой на позиции ${mismatch[0]}, ` +
+        `фактический порядок ${order.join(' → ')}`);
+    }
+  }
+  if (opts.trap && escaped) {
+    record(label, "FAIL", "—",
+      `Tab ушёл за пределы диалога: ловушка фокуса не держит (пройдено ${order.length} из ${items.length})`);
   }
   const unreachable = indexes.filter((i) => !reached.has(String(i)));
   for (const i of unreachable) {
-    record(spec.path, "FAIL", items[i], `до элемента #${i} Tab не доходит за ${order.length} нажатий`);
+    record(label, "FAIL", items[i], `до элемента #${i} Tab не доходит за ${order.length} нажатий`);
   }
   console.log(`   проход 1: Tab прошёл ${order.length} из ${items.length}, недоступных ${unreachable.length}, ` +
-    `повторов нажатия ${dropped}`);
+    `повторов нажатия ${dropped}` + (opts.trap ? `, ловушка ${escaped ? "НЕ держит" : "держит"}` : ""));
 
   // ── проход 2: видимость индикатора ──
   let withFocusVisible = 0;
   let measured = 0;
   for (const i of indexes) {
     if (!reached.has(String(i))) continue;
-    if (await cdp.eval(SIGNATURE_JS, FOCUSABLE_SELECTOR) !== sig) {
-      record(spec.path, "FAIL", items[i], "страница перестроила DOM во время обхода — индексы больше не значат ничего");
+    if (await cdp.eval(SIGNATURE_JS, selector) !== sig) {
+      record(label, "FAIL", items[i], "страница перестроила DOM во время обхода — индексы больше не значат ничего");
       return;
     }
-    const st = await cdp.eval(FOCUS_JS, String(i));
-    if (!st) { record(spec.path, "FAIL", items[i], "элемент пропал из DOM"); continue; }
-    if (!st.focused) { record(spec.path, "FAIL", items[i], "элемент не принимает фокус"); continue; }
+    const st = await cdp.eval(opts.focusJs, String(i));
+    if (!st) { record(label, "FAIL", items[i], "элемент пропал из DOM"); continue; }
+    if (!st.focused) { record(label, "FAIL", items[i], "элемент не принимает фокус"); continue; }
     if (st.visible) withFocusVisible++;
     await wait(SETTLE_MS);
     const clip = clipOf(st);
@@ -579,14 +707,14 @@ async function checkPage(cdp, spec) {
 
     if (SHOTS) {
       mkdirSync(SHOTS, { recursive: true });
-      const stem = join(SHOTS, `${spec.path.replace(/[^a-z0-9]+/gi, "_")}_${String(i).padStart(2, "0")}`);
+      const stem = join(SHOTS, `${opts.slug}_${String(i).padStart(2, "0")}`);
       writeFileSync(`${stem}-focused.png`, Buffer.from(focused.data, "base64"));
       writeFileSync(`${stem}-blurred.png`, Buffer.from(blurred.data, "base64"));
     }
 
     const diff = await cdp.eval(DIFF_JS, { a: blurred.data, b: focused.data, threshold: MIN_DELTA });
     measured++;
-    if (diff.error) { record(spec.path, "FAIL", items[i], diff.error); continue; }
+    if (diff.error) { record(label, "FAIL", items[i], diff.error); continue; }
 
     const detail = `изменилось ${diff.changed} из ${diff.pixels} пикс. на фоне ${diff.bg}; ` +
       `≥${MIN_DELTA}:1 к окружению — ${diff.strong} пикс. (макс ${diff.max}:1), ` +
@@ -596,7 +724,7 @@ async function checkPage(cdp, spec) {
     // не заявлял, поэтому она замечание, а не провал.
     const verdict = diff.strong < MIN_STRONG_AREA ? "FAIL"
       : diff.strongChange < MIN_STRONG_AREA ? "NOTE" : "PASS";
-    record(spec.path, verdict, items[i],
+    record(label, verdict, items[i],
       verdict === "FAIL" ? `индикатор фокуса не виден — ${detail}`
         : verdict === "NOTE" ? `индикатор виден, но изменение слабое — ${detail}` : detail);
     process.stdout.write({ PASS: ".", NOTE: "~", FAIL: "!" }[verdict]);
@@ -604,10 +732,86 @@ async function checkPage(cdp, spec) {
   process.stdout.write(`\n   проход 2: замерено ${measured}, :focus-visible совпал на ${withFocusVisible}\n`);
 }
 
+// Обход страницы: вход, загрузка, два прохода по всем фокусируемым элементам.
+async function checkPage(cdp, spec) {
+  const who = await ensureLogin(cdp, spec.auth);
+  await navigate(cdp, BASE + spec.path);
+  console.log(`\n── ${spec.path} (${spec.label}) как ${who}`);
+  await runPasses(cdp, spec.path, FOCUSABLE_SELECTOR, {
+    assertOrder: true,
+    focusJs: FOCUS_JS,
+    slug: spec.path.replace(/[^a-z0-9]+/gi, "_"),
+    emptyMessage: "на странице нет ни одного фокусируемого элемента",
+  });
+}
+
+// Обход открытой модалки (ADR-0022): страница грузится заново, по цепочке
+// кликов открывается диалог, и замеряется только его содержимое.
+//
+// Почему это отдельный проход, а не часть страницы: `check-frontend.mjs`
+// (группа 9) видит CSS-правило и может сказать, что цвет кольца посчитан, но
+// не знает, откроется ли диалог и не перекроет ли его подложка, тень или
+// `overflow: auto` у `.modal-content` то, что правило обещает. Живой замер —
+// единственный способ увидеть кольцо внутри окна.
+async function checkModal(cdp, spec) {
+  const who = await ensureLogin(cdp, spec.auth);
+  const label = `${spec.page}+${spec.id}`;
+  await navigate(cdp, BASE + spec.page);
+  console.log(`\n── ${spec.page} → ${spec.label} как ${who}`);
+  await settle(cdp);
+
+  let state = null;
+  for (const step of spec.steps) {
+    const clicked = await cdp.eval(CLICK_JS, step);
+    if (!clicked) {
+      record(label, "FAIL", step, "модалка не открыта: на странице нет элемента по селектору");
+      return;
+    }
+    state = await waitDialog(cdp);
+    if (!state.open) {
+      record(label, "FAIL", step, `модалка не открылась после клика по «${step}»: ${state.reason || "диалог остался скрыт"}`);
+      return;
+    }
+  }
+  if (!state.inside) {
+    record(label, "NOTE", "—", `диалог открыт, но фокус после открытия не уехал в него: activeElement ${state.focus}`);
+  }
+
+  await runPasses(cdp, label, DIALOG_SELECTOR, {
+    trap: true,
+    focusJs: FOCUS_DIALOG_JS,
+    slug: label.replace(/[^a-z0-9]+/gi, "_"),
+    emptyMessage: "в открытом диалоге нет ни одного фокусируемого элемента",
+  });
+
+  // Диалог закрывается, чтобы следующий случай начался с чистого документа:
+  // открытый оверлей перекрывает страницу и меняет порядок Tab у соседа.
+  await cdp.eval(CLOSE_DIALOG_JS);
+}
+
+// Диалог наполняется асинхронно (открыть → fetch → innerHTML), поэтому ждём не
+// класс, а устойчивую подпись его содержимого.
+async function waitDialog(cdp) {
+  let prev = null;
+  for (let i = 0; i < 40; i++) {
+    const state = await cdp.eval(DIALOG_STATE_JS);
+    if (state.open) {
+      const sig = await cdp.eval(SIGNATURE_JS, DIALOG_SELECTOR);
+      if (sig !== undefined && sig === prev) return state;
+      prev = sig;
+    }
+    await wait(150);
+  }
+  return await cdp.eval(DIALOG_STATE_JS);
+}
+
 function usage() {
   console.log(`использование: node scripts/check-focus.mjs [--base=http://127.0.0.1:8162]
                      [--chrome=<путь>] [--page=/register] [--shots=<каталог>] [--pad=18]
-                     [--verbose]
+                     [--no-modals] [--verbose]
+проверяются восемь страниц и пять состояний модального окна на /dashboard (список
+заданий студента, форма сдачи, список преподавателя, форма задания, таблица сдач);
+--no-modals оставляет только страницы, --page=/dashboard — только страницу с модалками
 переменные: SOS_BASE_URL, CHROME_PATH, ADMIN_USERNAME, ADMIN_PASSWORD (для /admin)
 код выхода: 0 — видно, 1 — есть невидимые фокусы, 2 — проверка не выполнялась`);
 }
@@ -637,6 +841,22 @@ function usage() {
         await checkPage(cdp, spec);
       } catch (err) {
         record(spec.path, "FAIL", "—", "страница не проверена: " + (err && err.message || err));
+      }
+    }
+    // Модальные окна (ADR-0022): их содержимое появляется только по клику, и
+    // статическая проверка CSS про него ничего не знает.
+    const modals = flag("no-modals") ? []
+      : ONLY ? (ONLY === "/dashboard" ? MODALS : [])
+      : MODALS;
+    if (flag("no-modals")) console.log("\nмодалки пропущены (--no-modals)");
+    if (ONLY && modals.length === 0 && !flag("no-modals")) {
+      console.log(`\nмодалки пропущены: они живут только на /dashboard, а запрошена ${ONLY}`);
+    }
+    for (const spec of modals) {
+      try {
+        await checkModal(cdp, spec);
+      } catch (err) {
+        record(`${spec.page}+${spec.id}`, "FAIL", "—", "модалка не проверена: " + (err && err.message || err));
       }
     }
   } finally {
