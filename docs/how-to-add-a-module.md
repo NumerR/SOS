@@ -179,6 +179,7 @@ func moduleList(h *handlers.Handlers) []platform.Module {
 gofmt -l internal cmd                     # пусто
 go vet ./...
 go test -race -count=1 ./...              # включая тесты app-уровня
+node scripts/check-docs.mjs               # если тронуты README или docs/*.md (ADR-0025)
 LOG_LEVEL=debug go run ./cmd/server       # в логе — таблица маршрутов и прав
 ```
 
