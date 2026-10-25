@@ -19,6 +19,19 @@ function check(name, ok, detail = "") {
 }
 function wait(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
+// Панель журнала перезагружается сама после каждой смены роли: на время этого
+// запроса в #auditBody лежит заглушка со spinner'ом («Загрузка журнала…»).
+// Проверкам ниже нужна таблица, а не заглушка, поэтому ждём законченного
+// состояния панели — строк, «Событий пока нет» или сообщения об отказе.
+// Без этого чтения становятся гонкой: на одной машине панель успевает
+// перерисоваться, на другой — нет, и прогон теряет две проверки, не меняя
+// продукта. Потолок тот же, что у клика «обновить»: 60 шагов по 50 мс.
+async function waitAuditSettled(doc) {
+    for (let i = 0; i < 60 && doc.getElementById("auditBody").innerHTML.includes("spinner"); i++) {
+        await wait(50);
+    }
+}
+
 async function api(pathname, { method = "GET", body, cookie = "", csrf = "" } = {}) {
     const headers = { "Content-Type": "application/json" };
     if (cookie) headers.Cookie = cookie;
@@ -161,13 +174,14 @@ async function login(identifier, password) {
             roleEvents.slice(0, 2).every((e) => String(e.target_id) === String(sstud.id)),
         roleEvents.map((e) => e.target_type + "#" + e.target_id).join(", "));
 
+    await waitAuditSettled(doc);
     const auditText = doc.getElementById("auditBody").textContent.replace(/\s+/g, " ");
     check("в таблице действия по-русски", /смена роли/.test(auditText), auditText.slice(0, 80));
     check("итог показан чипом", /выполнено/.test(auditText));
 
     if (hasRefresh) {
         doc.getElementById("refreshAuditBtn").click();
-        for (let i = 0; i < 60 && doc.getElementById("auditBody").innerHTML.includes("spinner"); i++) await wait(50);
+        await waitAuditSettled(doc);
         const reRendered = Array.from(doc.querySelectorAll("#auditBody tr"));
         check("обновление журнала перерисовывает таблицу",
             reRendered.length >= 1 && !doc.getElementById("auditBody").innerHTML.includes("message-error"),
