@@ -225,21 +225,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *store.UserStore) {
 	t.Helper()
 
 	db := openTestDBForApp(t)
-
-	userStore := store.NewUserStore(db)
-	h := handlers.New(handlers.Deps{
-		Users:       userStore,
-		Sessions:    store.NewSessionStore(db),
-		Courses:     store.NewCourseStore(db),
-		Enrollments: store.NewEnrollmentStore(db),
-		Assignments: store.NewAssignmentStore(db),
-		Submissions: store.NewSubmissionStore(db),
-		Schedule:    store.NewScheduleStore(db),
-		Resources:   store.NewResourceStore(db),
-		Events:      store.NewEventStore(db),
-		Audit:       store.NewAuditStore(db),
-		Limits:      handlers.NewLimiters(),
-	})
+	h, userStore := newTestHandlers(db)
 
 	// Список модулей живого сервера + тестовый модуль. Вот и весь «плагин»:
 	// одна строка в списке.
