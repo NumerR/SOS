@@ -3,7 +3,6 @@ package handlers
 import (
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/NumerR/SOS/internal/models"
 )
@@ -50,12 +49,9 @@ func (h *Handlers) EventsAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		var eventTimestamp int64 = 0
-		if req.EventDateStr != "" {
-			t, err := time.Parse(time.RFC3339, req.EventDateStr)
-			if err == nil {
-				eventTimestamp = t.Unix()
-			}
+		eventTimestamp, ok := parseDateField(w, "event_date", req.EventDateStr)
+		if !ok {
+			return
 		}
 
 		event, err := h.Events.Create(r.Context(), models.CreateEventInput{

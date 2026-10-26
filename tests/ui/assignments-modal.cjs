@@ -177,6 +177,50 @@ const DANGEROUS = `HW 'tests' <img src=x onerror=alert(1)>`;
         check("новое задание появилось в списке (список пересобрался)", list.textContent.includes(runTag),
             list.textContent.replace(/\s+/g, " ").trim().slice(0, 70));
 
+        // Неразобранная дата (ADR-0032) — проверка через настоящий HTTP, и
+        // потому красной станет любая из двух половин: и подмена пустой строкой
+        // на клиенте, и проглотка ошибки разбора на сервере. До правки modals.js
+        // отдавал на сервер пустое значение, ответ был 201, а задание без срока
+        // не попадало в ленту /schedule.
+        const recreate = doc.querySelector('#modalBody [data-modal-action="open-create"]');
+        check("список заданий снова предлагает создать", Boolean(recreate));
+        recreate.click();
+        await wait(250);
+
+        const badForm = doc.querySelector('form[data-modal-form="create-assignment"]');
+        const badTag = "HW bad date " + Date.now().toString().slice(-6);
+        badForm.querySelector('input[name="title"]').value = badTag;
+        const deadline = badForm.querySelector('input[name="due_date_raw"]');
+        // datetime-local — поле с валидацией, и «31.12.2026» режется до пустой
+        // строки ещё до чтения FormData (в jsdom и в браузере одинаково). Тип
+        // text — это браузер без поддержки datetime-local, где тип откатывается
+        // к текстовому и значение доживает до отправки.
+        deadline.setAttribute("type", "text");
+        deadline.value = "31.12.2026";
+        badForm.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+        await wait(1400);
+
+        // Форма при отказе остаётся открытой; если модалка пересобрана и строки
+        // статуса нет — значит запрос прошёл успешно, и это ровно тот регресс.
+        const badStatus = doc.getElementById("modalStatus");
+        check("отказ называет поле его подписью в форме",
+            Boolean(badStatus) && /due_date must be an ISO8601 datetime/.test(badStatus.textContent)
+            && /Дедлайн/.test(badStatus.textContent),
+            badStatus ? badStatus.textContent.trim() : "нет #modalStatus: окно пересобрано, запрос прошёл");
+        const afterBad = await api("/api/assignments?course_id=1", { cookie: teacher.cookie });
+        check("задание с неразобранной датой не записано",
+            afterBad.status === 200 && !JSON.stringify(afterBad.data).includes(badTag),
+            `записей=${Array.isArray(afterBad.data) ? afterBad.data.length : afterBad.status}`);
+        check("после отказа кнопка создания разблокирована",
+            Boolean(badStatus) && !badForm.querySelector('button[type="submit"]').disabled);
+
+        // В #modalBody сейчас форма создания (отказ её не закрывает), а дальше
+        // сьюту нужен список заданий — окно закрывается и открывается заново.
+        doc.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        await wait(350);
+        doc.querySelector('[data-action="manage-assignments"]').click();
+        await wait(400);
+
         // открыть сдачи задания #1: сервер отдаёт список по created DESC, поэтому берём по id
         const checkBtn = doc.querySelector('#modalBody [data-modal-action="open-submissions"][data-assignment-id="1"]');
         check("есть кнопка «Проверить сдачи»", Boolean(checkBtn));

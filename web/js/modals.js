@@ -437,7 +437,10 @@ const AssignmentsUI = (() => {
             const dueRaw = String(data.get("due_date_raw") || "").trim();
             if (dueRaw) {
                 const parsed = new Date(dueRaw);
-                if (!Number.isNaN(parsed.getTime())) dueIso = parsed.toISOString();
+                // Нечитаемое значение уходит как есть: сервер назовёт поле в
+                // ответе 422, а прежняя подмена пустой строкой создавала
+                // задание без срока — и без жалобы (ADR-0032).
+                dueIso = Number.isNaN(parsed.getTime()) ? dueRaw : parsed.toISOString();
             }
             url = "/api/assignments";
             payload = {

@@ -432,25 +432,53 @@ function bodyOf(post) {
     check("отправка события не роняет обработчик", withDate.thrown === null,
         withDate.thrown ? withDate.thrown.message : "");
 
-    // 5. Дата: нечитаемая и пустая дают одинаковый результат — «без даты».
-    const garbage = await submit(events, "eventForm", {
+    // 5. Дата: пустая — «без даты», нечитаемая уходит серверу как есть.
+    // Подменять её пустой строкой на клиенте означало создать событие без даты
+    // и без жалобы — ровно то, что закрыл ADR-0032. Здесь же проверяется, что
+    // отказ, в котором сервер назвал поле, доходит до человека подписью этого
+    // поля, а не «Событие добавлено».
+    const isoDate = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+    const dates = boot({
+        role: "teacher",
+        routes: {
+            "POST /api/events": ({ record }) => {
+                const payload = JSON.parse(record.body);
+                if (payload.event_date && !isoDate.test(payload.event_date)) {
+                    return json({
+                        error: {
+                            code: "validation",
+                            message: "event_date must be an ISO8601 datetime",
+                            fields: { event_date: "event_date must be an ISO8601 datetime" },
+                        },
+                    }, 422);
+                }
+                return undefined;
+            },
+        },
+    });
+    await wait(150);
+
+    const garbage = await submit(dates, "eventForm", {
         title: "Гараж",
         event_date_raw: { type: "text", value: "31.12.2026" },
     });
     const garbagePayload = bodyOf(garbage.posts[garbage.posts.length - 1]);
-    check("нечитаемая дата (поле без поддержки datetime-local) уходит пустой, а не NaN",
-        garbagePayload && garbagePayload.event_date === "", JSON.stringify(garbagePayload));
-    check("нечитаемая дата не считается ошибкой формы", garbage.message === "Событие добавлено",
+    check("нечитаемая дата (поле без поддержки datetime-local) уходит как есть, а не пустой",
+        garbagePayload && garbagePayload.event_date === "31.12.2026", JSON.stringify(garbagePayload));
+    check("отказ сервера называет поле его подписью из формы",
+        garbage.message === "event_date must be an ISO8601 datetime — поле: Дата и время",
+        JSON.stringify(garbage.message));
+    check("нечитаемая дата больше не притворяется успехом", garbage.message !== "Событие добавлено",
         JSON.stringify(garbage.message));
     check("защита от нечитаемой даты работает — обработчик не упал", garbage.thrown === null,
         garbage.thrown ? garbage.thrown.constructor.name + ": " + garbage.thrown.message : "");
 
-    const noDate = await submit(events, "eventForm", { title: "Без даты", event_date_raw: "" });
+    const noDate = await submit(dates, "eventForm", { title: "Без даты", event_date_raw: "" });
     const noDatePayload = bodyOf(noDate.posts[noDate.posts.length - 1]);
     check("пустая дата тоже уходит пустой строкой",
         noDatePayload && noDatePayload.event_date === "", JSON.stringify(noDatePayload));
 
-    const emptyEvent = await submit(events, "eventForm", { title: "  " });
+    const emptyEvent = await submit(dates, "eventForm", { title: "  " });
     check("форма события проверяет заголовок тем же механизмом",
         emptyEvent.posts.length === noDate.posts.length
         && emptyEvent.message === "Название обязательно", JSON.stringify(emptyEvent.message));

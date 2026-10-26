@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/NumerR/SOS/internal/authz"
 	"github.com/NumerR/SOS/internal/models"
@@ -142,12 +141,9 @@ func (h *Handlers) CreateAssignment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var dueTimestamp int64 = 0
-	if req.DueDateStr != "" {
-		t, err := time.Parse(time.RFC3339, req.DueDateStr)
-		if err == nil {
-			dueTimestamp = t.Unix()
-		}
+	dueTimestamp, ok := parseDateField(w, "due_date", req.DueDateStr)
+	if !ok {
+		return
 	}
 
 	assignment, err := h.Assignments.Create(r.Context(), models.CreateAssignmentInput{

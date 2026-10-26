@@ -51,7 +51,10 @@
     // слово, чем молчание.
     function fieldLabel(form, key) {
         if (!form || !key) return key || "";
-        const control = form.elements ? form.elements[key] : null;
+        // Даты в формах — поле с суффиксом `_raw`: в API уезжает вычисленный
+        // `event_date`/`due_date`, поэтому ключ сервера в elements нет, и без
+        // этой пары человек читал бы «— поле: event_date» вместо «Дата и время».
+        const control = form.elements ? (form.elements[key] || form.elements[key + "_raw"]) : null;
         if (!control) return key;
         const label = control.labels && control.labels.length ? control.labels[0] : null;
         if (!label) return key;
