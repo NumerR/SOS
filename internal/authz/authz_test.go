@@ -48,6 +48,7 @@ var expected = map[authz.Role][]authz.Permission{
 		authz.EventSourceManage,
 		authz.ResourceCreate,
 		authz.ScheduleScopeAll,
+		authz.ScheduleSourceManage,
 		authz.ScheduleView,
 		authz.SubmissionCreateAny,
 		authz.SubmissionGrade,

@@ -7,9 +7,10 @@
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body data-layout="login" data-brand-sub="Вход в систему">
+    <a class="skip-link" href="#main">К основному содержимому</a>
     <header class="site-header"></header>
 
-    <main class="main auth-wrap">
+    <main class="main auth-wrap" id="main" tabindex="-1">
         <section class="panel auth-card">
             <div class="auth-head">
                 <span class="section-index">01</span>
@@ -21,14 +22,16 @@
                 <label class="field">
                     <span class="field-label">Логин или email</span>
                     <input class="control" type="text" name="identifier" required
-                           autocomplete="username" placeholder="student или student@example.com">
-                    <span class="helper">Регистр не важен.</span>
+                           autocomplete="username" placeholder="student или student@example.com"
+                           aria-describedby="identifierHelper message">
+                    <span class="helper" id="identifierHelper">Регистр не важен.</span>
                 </label>
 
                 <label class="field">
                     <span class="field-label">Пароль</span>
                     <input class="control" type="password" name="password" required
-                           autocomplete="current-password" placeholder="••••••••">
+                           autocomplete="current-password" placeholder="••••••••"
+                           aria-describedby="message">
                 </label>
 
                 <div class="form-actions">

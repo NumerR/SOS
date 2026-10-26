@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -42,7 +43,7 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.AssignmentID <= 0 {
-		writeError(w, http.StatusBadRequest, "assignment_id is required")
+		writeFieldError(w, http.StatusBadRequest, "assignment_id", "assignment_id is required")
 		return
 	}
 
@@ -53,13 +54,17 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 
 	assignment, err := h.Assignments.GetByID(r.Context(), req.AssignmentID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "assignment not found")
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "assignment not found")
+			return
+		}
+		internalError(w, r, "failed to load assignment", err)
 		return
 	}
 
 	mine, err := h.Enrollments.ListCoursesByUser(r.Context(), user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to verify enrollment")
+		internalError(w, r, "failed to verify enrollment", err)
 		return
 	}
 
@@ -80,7 +85,7 @@ func (h *Handlers) SubmitWork(w http.ResponseWriter, r *http.Request) {
 
 	sub, err := h.Submissions.Upsert(r.Context(), user.ID, req.AssignmentID, req.Content)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save submission")
+		internalError(w, r, "failed to save submission", err)
 		return
 	}
 
@@ -105,18 +110,22 @@ func (h *Handlers) ListSubmissionsForAssignment(w http.ResponseWriter, r *http.R
 
 	aidStr := r.URL.Query().Get("assignment_id")
 	if aidStr == "" {
-		writeError(w, http.StatusBadRequest, "assignment_id is required")
+		writeFieldError(w, http.StatusBadRequest, "assignment_id", "assignment_id is required")
 		return
 	}
 	aid, err := strconv.ParseInt(aidStr, 10, 64)
 	if err != nil || aid <= 0 {
-		writeError(w, http.StatusBadRequest, "invalid assignment_id")
+		writeFieldError(w, http.StatusBadRequest, "assignment_id", "invalid assignment_id")
 		return
 	}
 
 	assignment, err := h.Assignments.GetByID(r.Context(), aid)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "assignment not found")
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "assignment not found")
+			return
+		}
+		internalError(w, r, "failed to load assignment", err)
 		return
 	}
 
@@ -127,7 +136,7 @@ func (h *Handlers) ListSubmissionsForAssignment(w http.ResponseWriter, r *http.R
 
 	subs, err := h.Submissions.ListByAssignment(r.Context(), aid)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load submissions")
+		internalError(w, r, "failed to load submissions", err)
 		return
 	}
 
@@ -149,7 +158,7 @@ func (h *Handlers) MySubmissions(w http.ResponseWriter, r *http.Request) {
 
 	subs, err := h.Submissions.ListMine(r.Context(), user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load submissions")
+		internalError(w, r, "failed to load submissions", err)
 		return
 	}
 
@@ -178,7 +187,7 @@ func (h *Handlers) GradeSubmission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.SubmissionID <= 0 {
-		writeError(w, http.StatusBadRequest, "submission_id is required")
+		writeFieldError(w, http.StatusBadRequest, "submission_id", "submission_id is required")
 		return
 	}
 
@@ -192,14 +201,22 @@ func (h *Handlers) GradeSubmission(w http.ResponseWriter, r *http.Request) {
 	// 1. Находим сабмит, чтобы узнать, к какому заданию он относится.
 	sub, err := h.Submissions.GetByID(r.Context(), req.SubmissionID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "submission not found")
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "submission not found")
+			return
+		}
+		internalError(w, r, "failed to load submission", err)
 		return
 	}
 
 	// 2. Находим задание и его владельца.
 	assignment, err := h.Assignments.GetByID(r.Context(), sub.AssignmentID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "assignment not found")
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "assignment not found")
+			return
+		}
+		internalError(w, r, "failed to load assignment", err)
 		return
 	}
 
@@ -218,7 +235,7 @@ func (h *Handlers) GradeSubmission(w http.ResponseWriter, r *http.Request) {
 			detail:     "grade failed",
 			ok:         false,
 		})
-		writeError(w, http.StatusInternalServerError, "failed to grade submission")
+		internalError(w, r, "failed to grade submission", err)
 		return
 	}
 

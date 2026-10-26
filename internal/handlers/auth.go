@@ -97,33 +97,36 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 
 	role, ok := normalizeRole(req.Role)
 	if !ok {
-		writeError(w, http.StatusUnprocessableEntity, "role is assigned by an administrator; register as a student")
+		writeFieldError(w, http.StatusUnprocessableEntity, "role",
+			"role is assigned by an administrator; register as a student")
 		return
 	}
 
 	if !usernamePattern.MatchString(req.Username) {
-		writeError(w, http.StatusUnprocessableEntity, "username must contain 3-32 letters, digits, dots, dashes or underscores")
+		writeFieldError(w, http.StatusUnprocessableEntity, "username",
+			"username must contain 3-32 letters, digits, dots, dashes or underscores")
 		return
 	}
 
 	if !emailPattern.MatchString(req.Email) {
-		writeError(w, http.StatusUnprocessableEntity, "invalid email")
+		writeFieldError(w, http.StatusUnprocessableEntity, "email", "invalid email")
 		return
 	}
 
 	if n := utf8.RuneCountInString(req.Password); n < minPasswordLength || n > maxPasswordLength {
-		writeError(w, http.StatusUnprocessableEntity, "password must be between 8 and 200 characters")
+		writeFieldError(w, http.StatusUnprocessableEntity, "password",
+			"password must be between 8 and 200 characters")
 		return
 	}
 
 	if utf8.RuneCountInString(req.FullName) > 100 {
-		writeError(w, http.StatusUnprocessableEntity, "full name is too long")
+		writeFieldError(w, http.StatusUnprocessableEntity, "full_name", "full name is too long")
 		return
 	}
 
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to hash password")
+		internalError(w, r, "failed to hash password", err)
 		return
 	}
 
@@ -141,7 +144,7 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		writeError(w, http.StatusInternalServerError, "failed to create user")
+		internalError(w, r, "failed to create user", err)
 		return
 	}
 
@@ -200,7 +203,7 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 
 	userWithSecret, err := h.Users.GetByIdentifier(r.Context(), req.Identifier)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusInternalServerError, "failed to login")
+		internalError(w, r, "failed to login", err)
 		return
 	}
 
@@ -342,7 +345,7 @@ func (h *Handlers) LogoutAll(w http.ResponseWriter, r *http.Request) {
 			targetID:   auditTargetID(user.ID),
 			ok:         false,
 		})
-		writeError(w, http.StatusInternalServerError, "failed to revoke sessions")
+		internalError(w, r, "failed to revoke sessions", err)
 		return
 	}
 
@@ -389,17 +392,18 @@ func (h *Handlers) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if utf8.RuneCountInString(req.NewPassword) < minPasswordLength {
-		writeError(w, http.StatusUnprocessableEntity, "password must be at least 8 characters")
+		writeFieldError(w, http.StatusUnprocessableEntity, "new_password",
+			"password must be at least 8 characters")
 		return
 	}
 	if utf8.RuneCountInString(req.NewPassword) > maxPasswordLength {
-		writeError(w, http.StatusUnprocessableEntity, "password is too long")
+		writeFieldError(w, http.StatusUnprocessableEntity, "new_password", "password is too long")
 		return
 	}
 
 	withSecret, err := h.Users.GetWithSecretByID(r.Context(), user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load user")
+		internalError(w, r, "failed to load user", err)
 		return
 	}
 
@@ -418,23 +422,24 @@ func (h *Handlers) ChangePassword(w http.ResponseWriter, r *http.Request) {
 			detail:     "invalid current password",
 			ok:         false,
 		})
-		writeError(w, http.StatusUnauthorized, "current password is incorrect")
+		writeCodeError(w, http.StatusUnauthorized, ErrUnauthorized, "current password is incorrect")
 		return
 	}
 
 	if req.CurrentPassword == req.NewPassword {
-		writeError(w, http.StatusUnprocessableEntity, "new password must differ from the current one")
+		writeFieldError(w, http.StatusUnprocessableEntity, "new_password",
+			"new password must differ from the current one")
 		return
 	}
 
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to hash password")
+		internalError(w, r, "failed to hash password", err)
 		return
 	}
 
 	if err := h.Users.SetPassword(r.Context(), user.ID, string(passwordHash)); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update password")
+		internalError(w, r, "failed to update password", err)
 		return
 	}
 
@@ -462,7 +467,7 @@ func (h *Handlers) ChangePassword(w http.ResponseWriter, r *http.Request) {
 			detail: "password changed, sessions not revoked",
 			ok:     false,
 		})
-		writeError(w, http.StatusInternalServerError, "password changed but other sessions could not be revoked")
+		internalError(w, r, "password changed but other sessions could not be revoked", err)
 		return
 	}
 
@@ -507,7 +512,7 @@ func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) startSession(w http.ResponseWriter, r *http.Request, user *models.User) bool {
 	sessionID, err := h.Sessions.Create(r.Context(), user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create session")
+		internalError(w, r, "failed to create session", err)
 		return false
 	}
 

@@ -101,9 +101,10 @@ type Middleware struct {
 	// авторизованного пользователя.
 	Permission func(perm authz.Permission, denyMessage string, next http.Handler) http.Handler
 
-	// Error — формат ошибки транспорта. По умолчанию пишет тот же JSON, что и
-	// обработчики: {"error": "..."} (смену формата на code/message решаем в
-	// docs/02 §4 отдельным изменением).
+	// Error — формат отказа транспорта (405 для неизвестного метода). Поле можно
+	// не передавать: подставляется apierror.Write — тот же конверт, что пишут
+	// обработчики (ADR-0003), поэтому у клиента одна форма отказа независимо от
+	// того, кто отказал.
 	Error func(w http.ResponseWriter, status int, message string)
 }
 

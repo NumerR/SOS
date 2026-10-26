@@ -82,6 +82,18 @@ const (
 	ScheduleView         Permission = "schedule.view"          // открыть ленту
 	ScheduleScopeCreated Permission = "schedule.scope.created" // видеть свои курсы
 	ScheduleScopeAll     Permission = "schedule.scope.all"     // видеть всё
+	// ScheduleSourceManage — управление внешним источником расписания (T4.1):
+	// синхронизация каталога групп и импорт пар из АПЭКС-ВУЗ.
+	//
+	// Отдельно от schedule.view, потому что это разные вещи: первое читает уже
+	// лежащие в базе данные, второе ходит к чужому сайту с токеном из
+	// окружения. Право «дёргать источник» должно оставаться у администратора,
+	// даже когда ленту откроют всем.
+	//
+	// По той же причине здесь нет ScheduleViewAny/импортa для преподавателя:
+	// источник один на всех, и решение о том, какие группы импортировать, —
+	// административное, а не «преподаватель прогружает своё».
+	ScheduleSourceManage Permission = "schedule.source.manage"
 )
 
 // Spec — одна строка реестра: право, что оно значит и кому выдано.
@@ -132,6 +144,7 @@ var registry = []Spec{
 	{ScheduleView, "просмотр ленты расписания", []Role{RoleStudent, RoleTeacher, RoleAdmin}},
 	{ScheduleScopeCreated, "видеть в ленте свои курсы", []Role{RoleTeacher}},
 	{ScheduleScopeAll, "видеть в ленте всё", []Role{RoleAdmin}},
+	{ScheduleSourceManage, "синхронизация каталога групп и импорт пар из АПЭКС-ВУЗ", []Role{RoleAdmin}},
 }
 
 // grants разворачивает registry в «право -> набор ролей» и заполняется один

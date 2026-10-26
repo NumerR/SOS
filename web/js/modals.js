@@ -13,7 +13,14 @@ const ModalManager = (() => {
     const FOCUSABLE = [
         "a[href]",
         "button:not([disabled])",
-        "input:not([disabled])",
+        // `type="hidden"` сюда не входит, и это не мелочь: обе формы диалога
+        // начинаются скрытым полем (`course_id`, `assignment_id`), и с прежним
+        // списком первой под подход FOCUSABLE находилось именно оно — open()
+        // звал focus() на невидимом поле, фокус оставался на <body> за диалогом,
+        // и человек, открывший форму, в окно с клавиатуры не попадал. Поймал это
+        // живой замер состояний фокуса (ADR-0022), а не статика: кольцо у видимых
+        // полей в порядке, а входа в окно нет.
+        'input:not([disabled]):not([type="hidden"])',
         "textarea:not([disabled])",
         "select:not([disabled])",
         '[tabindex]:not([tabindex="-1"])',
@@ -55,6 +62,11 @@ const ModalManager = (() => {
 
         const target = body.querySelector(FOCUSABLE) || closeBtn || dialog;
         if (target && typeof target.focus === "function") target.focus();
+        // Страховка: если ни один кандидат фокус не принял (поле под disabled,
+        // контейнер, который браузер не считает фокусируемым), заходим в диалог
+        // сами. У #modalDialog есть tabindex="-1" и своё кольцо; остаться на
+        // <body> — значит показать окно человеку, которое он не видит клавиатурой.
+        if (!dialog.contains(document.activeElement)) dialog.focus();
         return true;
     }
 
@@ -228,10 +240,12 @@ const AssignmentsUI = (() => {
                             <label class="sr-only" for="score-${GS.escapeHtml(s.id)}">Оценка</label>
                             <input id="score-${GS.escapeHtml(s.id)}" class="control grading-input" type="number"
                                    step="0.1" min="0" max="10" inputmode="decimal" placeholder="Оценка"
+                                   aria-describedby="modalStatus"
                                    value="${s.score >= 0 ? GS.escapeHtml(s.score) : ""}"
                                    data-score-for="${GS.escapeHtml(s.id)}">
                             <label class="sr-only" for="comment-${GS.escapeHtml(s.id)}">Комментарий</label>
                             <textarea id="comment-${GS.escapeHtml(s.id)}" class="control" style="min-height:60px;"
+                                      aria-describedby="modalStatus"
                                       placeholder="Комментарий" data-comment-for="${GS.escapeHtml(s.id)}">${GS.escapeHtml(s.comment || "")}</textarea>
                             <button class="btn btn-secondary" data-modal-action="save-grade"
                                     data-submission-id="${GS.escapeHtml(s.id)}">Сохранить</button>
@@ -257,8 +271,9 @@ const AssignmentsUI = (() => {
             <label class="field">
                 <span class="field-label">Ваша работа</span>
                 <textarea class="control" name="content" required
+                          aria-describedby="submitHelp modalStatus"
                           placeholder="Вставьте ссылку на репозиторий или текст решения..."></textarea>
-                <span class="helper">Сдачу можно обновить до дедлайна — повторная отправка заменяет предыдущую.</span>
+                <span class="helper" id="submitHelp">Сдачу можно обновить до дедлайна — повторная отправка заменяет предыдущую.</span>
             </label>
             <div class="form-actions"><button type="submit" class="btn">Отправить</button></div>
             ${statusLine("modalStatus")}
@@ -270,16 +285,19 @@ const AssignmentsUI = (() => {
             <input type="hidden" name="course_title" value="${GS.escapeHtml(courseTitle || "")}">
             <label class="field">
                 <span class="field-label">Название</span>
-                <input class="control" type="text" name="title" maxlength="200" required placeholder="Домашнее задание 1">
+                <input class="control" type="text" name="title" maxlength="200" required
+                       aria-describedby="modalStatus" placeholder="Домашнее задание 1">
             </label>
             <label class="field">
                 <span class="field-label">Описание</span>
-                <textarea class="control" name="description" maxlength="2000" rows="3" placeholder="Что нужно сделать..."></textarea>
+                <textarea class="control" name="description" maxlength="2000" rows="3"
+                          aria-describedby="modalStatus" placeholder="Что нужно сделать..."></textarea>
             </label>
             <label class="field">
                 <span class="field-label">Дедлайн</span>
-                <input class="control" type="datetime-local" name="due_date_raw">
-                <span class="helper">Оставьте пустым, если дедлайна нет.</span>
+                <input class="control" type="datetime-local" name="due_date_raw"
+                       aria-describedby="deadlineHelp modalStatus">
+                <span class="helper" id="deadlineHelp">Оставьте пустым, если дедлайна нет.</span>
             </label>
             <div class="form-actions"><button type="submit" class="btn">Создать</button></div>
             ${statusLine("modalStatus")}
@@ -291,7 +309,9 @@ const AssignmentsUI = (() => {
         try {
             return await GS.fetchJSON(url);
         } catch (error) {
-            return { error: GS.escapeHtml(error.message || "Не удалось загрузить данные") };
+            // Текст оставляем как есть: errorBlock экранирует его сам, и
+            // повторное экранирование здесь дало бы &amp;#039; на экране.
+            return { error: error.message || "Не удалось загрузить данные" };
         }
     }
 
@@ -417,7 +437,10 @@ const AssignmentsUI = (() => {
             const dueRaw = String(data.get("due_date_raw") || "").trim();
             if (dueRaw) {
                 const parsed = new Date(dueRaw);
-                if (!Number.isNaN(parsed.getTime())) dueIso = parsed.toISOString();
+                // Нечитаемое значение уходит как есть: сервер назовёт поле в
+                // ответе 422, а прежняя подмена пустой строкой создавала
+                // задание без срока — и без жалобы (ADR-0032).
+                dueIso = Number.isNaN(parsed.getTime()) ? dueRaw : parsed.toISOString();
             }
             url = "/api/assignments";
             payload = {
@@ -460,7 +483,10 @@ const AssignmentsUI = (() => {
                 ModalManager.close();
             }, 700);
         } catch (error) {
-            GS.showMessage(statusEl, error.message || "Не удалось сохранить", "error");
+            // Подпись поля из error.fields: модалка создания задания и форма
+            // сдачи — те же формы, что и на странице, и серверное «title is
+            // required» человек должен видеть как «Название».
+            GS.showMessage(statusEl, GS.describeServerError(error, form, "Не удалось сохранить"), "error");
         } finally {
             if (submitButton) {
                 submitButton.classList.remove("is-loading");

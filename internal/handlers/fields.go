@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -47,7 +48,7 @@ func runeLen(value string) int {
 // чтобы фронтенд и тесты не пришлось переписывать.
 func validateLength(w http.ResponseWriter, field, value string, limit int) bool {
 	if runeLen(value) > limit {
-		writeError(w, http.StatusUnprocessableEntity, field+" is too long")
+		writeFieldError(w, http.StatusUnprocessableEntity, field, field+" is too long")
 		return false
 	}
 	return true
@@ -58,8 +59,31 @@ func validateLength(w http.ResponseWriter, field, value string, limit int) bool 
 // раньше, чем мы увидим req.Score.
 func validateScore(w http.ResponseWriter, score float64) bool {
 	if score < minScore || score > maxScore {
-		writeError(w, http.StatusUnprocessableEntity, "score must be between 0 and 10")
+		writeFieldError(w, http.StatusUnprocessableEntity, "score", "score must be between 0 and 10")
 		return false
 	}
 	return true
+}
+
+// parseDateField — ISO8601 из строки запроса в unix, или отказ с названием
+// поля. Пустое значение (и пробелы — их интерфейс присылает вместо невыбранной
+// даты) означает «даты нет» и даёт 0, ровно как поле `due_date` умеет его
+// хранить.
+//
+// Раньше неудача разбора проходила мимо вызывающего: `if err == nil` писал
+// ноль, обработчик отвечал 201, а запись исчезала из ленты /schedule, которая
+// фильтрует due_date > 0 / event_date > 0 во всех четырёх запросах. Клиент
+// получал «создано» и «ничего не видно» одновременно — см. ADR-0032.
+func parseDateField(w http.ResponseWriter, field, value string) (int64, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0, true
+	}
+
+	parsed, err := time.Parse(time.RFC3339, trimmed)
+	if err != nil {
+		writeFieldError(w, http.StatusUnprocessableEntity, field, field+" must be an ISO8601 datetime")
+		return 0, false
+	}
+	return parsed.Unix(), true
 }

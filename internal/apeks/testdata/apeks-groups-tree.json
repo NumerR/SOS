@@ -1,0 +1,435 @@
+{
+ "groups": {
+  "1": {
+   "id": 1,
+   "name": "Инженерно-технологический институт",
+   "branch_id": null,
+   "department_id": 1,
+   "items": {
+    "1": {
+     "name": "1 курс",
+     "course_id": "1-1",
+     "active": 1,
+     "items": {
+      "895": {
+       "id": 895,
+       "name": "А-РиОЭ-1",
+       "name_public": "А-РиОЭ-1",
+       "department_id": 1,
+       "education_plan_id": 935,
+       "start_date": null,
+       "type": "group",
+       "student_count": 5,
+       "tags": []
+      },
+      "894": {
+       "id": 894,
+       "name": "А-ФКС-1",
+       "name_public": "А-ФКС-1",
+       "department_id": 1,
+       "education_plan_id": 946,
+       "start_date": null,
+       "type": "group",
+       "student_count": null,
+       "tags": []
+      },
+      "837": {
+       "id": 837,
+       "name": "Б-Арх-11",
+       "name_public": "Б-Арх-11",
+       "department_id": 1,
+       "education_plan_id": 813,
+       "start_date": null,
+       "type": "group",
+       "student_count": 24,
+       "tags": []
+      }
+     }
+    },
+    "2": {
+     "name": "2 курс",
+     "course_id": "1-2",
+     "active": 1,
+     "items": {
+      "622": {
+       "id": 622,
+       "name": "А-РиОЭ-2",
+       "name_public": "А-РиОЭ-2",
+       "department_id": 1,
+       "education_plan_id": 598,
+       "start_date": null,
+       "type": "group",
+       "student_count": 3,
+       "tags": []
+      },
+      "262": {
+       "id": 262,
+       "name": "Б-Арх-11",
+       "name_public": "Б-Арх-11",
+       "department_id": 1,
+       "education_plan_id": 14,
+       "start_date": null,
+       "type": "group",
+       "student_count": null,
+       "tags": []
+      },
+      "320": {
+       "id": 320,
+       "name": "Б-Арх-12",
+       "name_public": "Б-Арх-12",
+       "department_id": 1,
+       "education_plan_id": 14,
+       "start_date": null,
+       "type": "group",
+       "student_count": 5,
+       "tags": []
+      },
+      "494": {
+       "id": 494,
+       "name": "Б-ИСиТ-22",
+       "name_public": "Б-ИСиТ-22",
+       "department_id": 1,
+       "education_plan_id": 15,
+       "start_date": null,
+       "type": "group",
+       "student_count": 30,
+       "tags": []
+      }
+     }
+    }
+   },
+   "archive": {
+    "2026": {
+     "name": "2026 год выпуска",
+     "course_id": "1-2026",
+     "items": {
+      "1": {
+       "id": 1,
+       "name": "Б-Арх-51",
+       "name_public": "Б-Арх-51",
+       "department_id": 1,
+       "education_plan_id": 10,
+       "start_date": null,
+       "type": "group",
+       "student_count": 2,
+       "tags": []
+      },
+      "84": {
+       "id": 84,
+       "name": "Б-ГиМУ-41",
+       "name_public": "Б-ГиМУ-41",
+       "department_id": 1,
+       "education_plan_id": 155,
+       "start_date": null,
+       "type": "group",
+       "student_count": null,
+       "tags": []
+      },
+      "82": {
+       "id": 82,
+       "name": "Б-ИСиТ-41",
+       "name_public": "Б-ИСиТ-41",
+       "department_id": 1,
+       "education_plan_id": 150,
+       "start_date": null,
+       "type": "group",
+       "student_count": null,
+       "tags": []
+      },
+      "83": {
+       "id": 83,
+       "name": "Б-ИСиТ-42",
+       "name_public": "Б-ИСиТ-42",
+       "department_id": 1,
+       "education_plan_id": 150,
+       "start_date": null,
+       "type": "group",
+       "student_count": null,
+       "tags": []
+      },
+      "137": {
+       "id": 137,
+       "name": "Б-ПФМ-51",
+       "name_public": "Б-ПФМ-51",
+       "department_id": 1,
+       "education_plan_id": 88,
+       "start_date": null,
+       "type": "group",
+       "student_count": null,
+       "tags": []
+      },
+      "306": {
+       "id": 306,
+       "name": "Бу-ИСиТ-31",
+       "name_public": "Бу-ИСиТ-31",
+       "department_id": 1,
+       "education_plan_id": 359,
+       "start_date": null,
+       "type": "group",
+       "student_count": 2,
+       "tags": []
+      },
+      "86": {
+       "id": 86,
+       "name": "М-ИСиТ-21",
+       "name_public": "М-ИСиТ-21",
+       "department_id": 1,
+       "education_plan_id": 295,
+       "start_date": null,
+       "type": "group",
+       "student_count": null,
+       "tags": []
+      }
+     }
+    }
+   }
+  },
+  "51": {
+   "id": 51,
+   "name": "Факультеты, Медицинский институт",
+   "branch_id": null,
+   "department_id": 51,
+   "items": [],
+   "archive": []
+  },
+  "10": {
+   "id": 10,
+   "name": "Медицинский институт",
+   "branch_id": null,
+   "department_id": 10,
+   "items": {
+    "1": {
+     "name": "1 курс",
+     "course_id": "10-1",
+     "active": 1,
+     "items": {
+      "900": {
+       "id": 900,
+       "name": "А-ВБ-1",
+       "name_public": "А-ВБ-1",
+       "department_id": 10,
+       "education_plan_id": 933,
+       "start_date": null,
+       "type": "group",
+       "student_count": 2,
+       "tags": []
+      },
+      "899": {
+       "id": 899,
+       "name": "А-Х-1",
+       "name_public": "А-Х-1",
+       "department_id": 10,
+       "education_plan_id": 934,
+       "start_date": null,
+       "type": "group",
+       "student_count": 2,
+       "tags": []
+      },
+      "793": {
+       "id": 793,
+       "name": "О-Акушерство-1",
+       "name_public": "О-Акушерство-1",
+       "department_id": 10,
+       "education_plan_id": 911,
+       "start_date": null,
+       "type": "group",
+       "student_count": 4,
+       "tags": []
+      }
+     }
+    },
+    "2": {
+     "name": "2 курс",
+     "course_id": "10-2",
+     "active": 1,
+     "items": {
+      "656": {
+       "id": 656,
+       "name": "А-ВБ-2",
+       "name_public": "",
+       "department_id": 10,
+       "education_plan_id": 634,
+       "start_date": null,
+       "type": "group",
+       "student_count": 2,
+       "tags": []
+      },
+      "658": {
+       "id": 658,
+       "name": "А-Х-2",
+       "name_public": "",
+       "department_id": 10,
+       "education_plan_id": 632,
+       "start_date": null,
+       "type": "group",
+       "student_count": 2,
+       "tags": []
+      },
+      "396": {
+       "id": 396,
+       "name": "О-Акушерство-1",
+       "name_public": "О-Акушерство-1",
+       "department_id": 10,
+       "education_plan_id": 580,
+       "start_date": null,
+       "type": "group",
+       "student_count": null,
+       "tags": []
+      }
+     }
+    }
+   },
+   "archive": {
+    "2026": {
+     "name": "2026 год выпуска",
+     "course_id": "10-2026",
+     "items": {
+      "397": {
+       "id": 397,
+       "name": "О-Акушерство-2",
+       "name_public": "О-Акушерство-2",
+       "department_id": 10,
+       "education_plan_id": 589,
+       "start_date": null,
+       "type": "group",
+       "student_count": null,
+       "tags": []
+      },
+      "400": {
+       "id": 400,
+       "name": "О-Дерматовенерология-2",
+       "name_public": "О-Дерматовенерология-2",
+       "department_id": 10,
+       "education_plan_id": 594,
+       "start_date": null,
+       "type": "group",
+       "student_count": 1,
+       "tags": []
+      },
+      "403": {
+       "id": 403,
+       "name": "О-Онкология-2",
+       "name_public": "О-Онкология-2",
+       "department_id": 10,
+       "education_plan_id": 593,
+       "start_date": null,
+       "type": "group",
+       "student_count": 1,
+       "tags": []
+      },
+      "405": {
+       "id": 405,
+       "name": "О-Офтальмология-2",
+       "name_public": "О-Офтальмология-2",
+       "department_id": 10,
+       "education_plan_id": 592,
+       "start_date": null,
+       "type": "group",
+       "student_count": null,
+       "tags": []
+      },
+      "407": {
+       "id": 407,
+       "name": "О-Педиатрия-2",
+       "name_public": "О-Педиатрия-2",
+       "department_id": 10,
+       "education_plan_id": 590,
+       "start_date": null,
+       "type": "group",
+       "student_count": null,
+       "tags": []
+      },
+      "409": {
+       "id": 409,
+       "name": "О-СкораяПомощь-2",
+       "name_public": "О-СкораяПомощь-2",
+       "department_id": 10,
+       "education_plan_id": 595,
+       "start_date": null,
+       "type": "group",
+       "student_count": 8,
+       "tags": []
+      },
+      "411": {
+       "id": 411,
+       "name": "О-Терапия-2",
+       "name_public": "О-Терапия-2",
+       "department_id": 10,
+       "education_plan_id": 591,
+       "start_date": null,
+       "type": "group",
+       "student_count": null,
+       "tags": []
+      },
+      "413": {
+       "id": 413,
+       "name": "О-Хирургия-2",
+       "name_public": "О-Хирургия-2",
+       "department_id": 10,
+       "education_plan_id": 596,
+       "start_date": null,
+       "type": "group",
+       "student_count": 1,
+       "tags": []
+      },
+      "309": {
+       "id": 309,
+       "name": "С-ЛД-61",
+       "name_public": "С-ЛД-61",
+       "department_id": 10,
+       "education_plan_id": 312,
+       "start_date": null,
+       "type": "group",
+       "student_count": 3,
+       "tags": []
+      },
+      "310": {
+       "id": 310,
+       "name": "С-ЛД-62",
+       "name_public": "С-ЛД-62",
+       "department_id": 10,
+       "education_plan_id": 312,
+       "start_date": null,
+       "type": "group",
+       "student_count": 4,
+       "tags": []
+      },
+      "311": {
+       "id": 311,
+       "name": "С-ЛД-63",
+       "name_public": "С-ЛД-63",
+       "department_id": 10,
+       "education_plan_id": 312,
+       "start_date": null,
+       "type": "group",
+       "student_count": 2,
+       "tags": []
+      },
+      "312": {
+       "id": 312,
+       "name": "С-ЛД-64",
+       "name_public": "С-ЛД-64",
+       "department_id": 10,
+       "education_plan_id": 312,
+       "start_date": null,
+       "type": "group",
+       "student_count": 5,
+       "tags": []
+      },
+      "315": {
+       "id": 315,
+       "name": "Су-ЛД-31",
+       "name_public": "Су-ЛД-31",
+       "department_id": 10,
+       "education_plan_id": 363,
+       "start_date": null,
+       "type": "group",
+       "student_count": 2,
+       "tags": []
+      }
+     }
+    }
+   }
+  }
+ }
+}

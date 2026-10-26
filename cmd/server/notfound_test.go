@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/NumerR/SOS/internal/apierror"
 )
 
 // Тесты страницы-заглушки для неизвестного пути (T3.1, ADR-0013).
@@ -85,8 +87,10 @@ func TestUnknownAPIPathAnswersJSON(t *testing.T) {
 	if !strings.HasPrefix(contentType, "application/json") {
 		t.Errorf("API-отказ должен быть JSON, получено %q (%s)", contentType, body)
 	}
-	if !strings.Contains(body, `"error"`) {
-		t.Errorf("в JSON-ответе нет поля error: %s", body)
+	// Конверт ADR-0003, а не просто «JSON с полем error»: у неизвестного пути
+	// тот же код, что у неизвестного курса — клиент различает их по статусу.
+	if code := errorCode(t, body); code != apierror.ErrNotFound {
+		t.Errorf("код отказа %q, ожидалось %q", code, apierror.ErrNotFound)
 	}
 
 	// Тот же ответ для метода, который у существующего маршрута неизвестен,

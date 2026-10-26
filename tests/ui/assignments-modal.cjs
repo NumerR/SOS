@@ -69,7 +69,10 @@ async function openDashboard(account) {
         .map((file) => fs.readFileSync(path.join(REPO, "web/js", file), "utf8"))
         .join("\n;\n");
     window.eval(bundle);
-    window.document.dispatchEvent(new window.Event("DOMContentLoaded", { bubbles: true }));
+    // DOMContentLoaded диспатчит сам jsdom на следующем тике после разбора
+    // (приём из session-expiry.cjs): ручной диспатч запускает обработчик
+    // страницы дважды, а с ним дважды вешаются и делегаты на местах, которые
+    // страница не перерисовывает.
 
     // ждём, пока дашборд отрисует карточки с действиями
     for (let i = 0; i < 60; i++) {
@@ -150,6 +153,21 @@ const DANGEROUS = `HW 'tests' <img src=x onerror=alert(1)>`;
         await wait(250);
         const cform = doc.querySelector('form[data-modal-form="create-assignment"]');
         check("форма создания задания открылась", Boolean(cform));
+
+        // Разметку формы генерирует modals.js, поэтому проверять её надо в DOM:
+        // статическая проверка (check-frontend.mjs, группа 8) видит отсутствие
+        // атрибута в шаблоне, а здесь видно, что сгенерированные id действительно
+        // существуют в документе и ссылка не ведёт в никуда.
+        const cfields = [...cform.querySelectorAll("input.control, textarea.control, select.control")];
+        check("у каждого поля сгенерированной формы есть aria-describedby",
+            cfields.length === 3 && cfields.every((f) => (f.getAttribute("aria-describedby") || "").trim().length > 0),
+            `полей ${cfields.length}`);
+        const crefs = cfields.flatMap((f) => (f.getAttribute("aria-describedby") || "").trim().split(/\s+/));
+        check("ссылки aria-describedby сгенерированной формы ведут на существующие элементы",
+            crefs.every((id) => Boolean(doc.getElementById(id))), JSON.stringify(crefs));
+        check("подсказка дедлайна подключена к своему полю",
+            crefs.includes("deadlineHelp") && crefs.includes("modalStatus"),
+            doc.getElementById("deadlineHelp") ? doc.getElementById("deadlineHelp").textContent.trim() : "нет #deadlineHelp");
         const runTag = "HW run " + Date.now().toString().slice(-6);
         cform.querySelector('input[name="title"]').value = runTag;
         cform.querySelector('textarea[name="description"]').value = "Вторая работа";
@@ -158,6 +176,50 @@ const DANGEROUS = `HW 'tests' <img src=x onerror=alert(1)>`;
         const list = doc.getElementById("modalBody");
         check("новое задание появилось в списке (список пересобрался)", list.textContent.includes(runTag),
             list.textContent.replace(/\s+/g, " ").trim().slice(0, 70));
+
+        // Неразобранная дата (ADR-0032) — проверка через настоящий HTTP, и
+        // потому красной станет любая из двух половин: и подмена пустой строкой
+        // на клиенте, и проглотка ошибки разбора на сервере. До правки modals.js
+        // отдавал на сервер пустое значение, ответ был 201, а задание без срока
+        // не попадало в ленту /schedule.
+        const recreate = doc.querySelector('#modalBody [data-modal-action="open-create"]');
+        check("список заданий снова предлагает создать", Boolean(recreate));
+        recreate.click();
+        await wait(250);
+
+        const badForm = doc.querySelector('form[data-modal-form="create-assignment"]');
+        const badTag = "HW bad date " + Date.now().toString().slice(-6);
+        badForm.querySelector('input[name="title"]').value = badTag;
+        const deadline = badForm.querySelector('input[name="due_date_raw"]');
+        // datetime-local — поле с валидацией, и «31.12.2026» режется до пустой
+        // строки ещё до чтения FormData (в jsdom и в браузере одинаково). Тип
+        // text — это браузер без поддержки datetime-local, где тип откатывается
+        // к текстовому и значение доживает до отправки.
+        deadline.setAttribute("type", "text");
+        deadline.value = "31.12.2026";
+        badForm.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+        await wait(1400);
+
+        // Форма при отказе остаётся открытой; если модалка пересобрана и строки
+        // статуса нет — значит запрос прошёл успешно, и это ровно тот регресс.
+        const badStatus = doc.getElementById("modalStatus");
+        check("отказ называет поле его подписью в форме",
+            Boolean(badStatus) && /due_date must be an ISO8601 datetime/.test(badStatus.textContent)
+            && /Дедлайн/.test(badStatus.textContent),
+            badStatus ? badStatus.textContent.trim() : "нет #modalStatus: окно пересобрано, запрос прошёл");
+        const afterBad = await api("/api/assignments?course_id=1", { cookie: teacher.cookie });
+        check("задание с неразобранной датой не записано",
+            afterBad.status === 200 && !JSON.stringify(afterBad.data).includes(badTag),
+            `записей=${Array.isArray(afterBad.data) ? afterBad.data.length : afterBad.status}`);
+        check("после отказа кнопка создания разблокирована",
+            Boolean(badStatus) && !badForm.querySelector('button[type="submit"]').disabled);
+
+        // В #modalBody сейчас форма создания (отказ её не закрывает), а дальше
+        // сьюту нужен список заданий — окно закрывается и открывается заново.
+        doc.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        await wait(350);
+        doc.querySelector('[data-action="manage-assignments"]').click();
+        await wait(400);
 
         // открыть сдачи задания #1: сервер отдаёт список по created DESC, поэтому берём по id
         const checkBtn = doc.querySelector('#modalBody [data-modal-action="open-submissions"][data-assignment-id="1"]');
@@ -169,6 +231,10 @@ const DANGEROUS = `HW 'tests' <img src=x onerror=alert(1)>`;
         check("сдача студента видна преподавателю", Boolean(row), row ? row.textContent.trim().slice(0, 40) : "");
 
         const scoreInput = row.querySelector("[data-score-for]");
+        check("поле оценки ссылается на строку состояния модалки",
+            (scoreInput.getAttribute("aria-describedby") || "").split(/\s+/).includes("modalStatus")
+            && Boolean(doc.getElementById("modalStatus")),
+            scoreInput.getAttribute("aria-describedby") || "атрибута нет");
         scoreInput.value = "4.5";
         row.querySelector("[data-comment-for]").value = "Хорошо";
         row.querySelector('[data-modal-action="save-grade"]').click();

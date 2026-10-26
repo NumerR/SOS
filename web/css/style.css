@@ -9,16 +9,35 @@
   --surface:        #efe9dc;
   --ink:            #2c2a26;
   --ink-soft:       #57534a;
-  --muted:          #8d8676;
+  /* --muted был #8d8676: 2.81:1 на parchment и 2.48:1 на parchment-deep — ниже
+     порога 4.5:1, а этот цвет несёт не декор, а текст (подсказки форм, меты
+     карточек, «Обновлено …», подписи столбцов). Значение #625b4c подобрано по
+     расчёту WCAG: 5.22:1 на parchment, 5.56:1 на surface, 4.62:1 на
+     parchment-deep, 6.73:1 на белом — то есть AA на всех подложках, где цвет
+     встречается. Тон тот же (тёплый серый), палитра не меняется. */
+  --muted:          #625b4c;
   --line:           #d3c9b4;
+  /* --line несёт разделители (линия под шапкой, линейка секции) — там он
+     декоративный. Граница поля ввода другим цветом: у контура контрола по WCAG
+     1.4.11 должна быть хотя бы 3:1 с тем, что вокруг, иначе «куда нажимать»
+     видно только по neumorphic-тени. #877f6f: 3.08:1 на parchment, 3.28:1 на
+     surface. Тон тот же, что у прежнего --muted. */
+  --line-strong:    #877f6f;
 
+  /* Состояния кнопки: подпись #f5f0e6 на этих подложках посчитана и держит AA с
+     запасом — 8.57:1 на hover и 10.30:1 на press (база --teal — 6.63:1). Держится
+     проверкой покрытия в scripts/check-frontend.mjs: новый оттенок без расчёта CI
+     краснит, а не тихо меняет картинку. */
   --teal:        #155e5c;
   --teal-hover:  #114c4a;
   --teal-press:  #0d3f3d;
   --teal-tint:   #d6e2df;
   --teal-ink:    #0f4745;
 
-  --danger:      #a8443a;
+  /* Красный был #a8443a: текст отказа на --danger-tint давал 4.38:1 — чуть ниже
+     AA, а этот текст сообщает причину отказа. #a13f35 даёт 4.74:1 на tint и
+     5.64:1 для белой подписи кнопки «удалить». */
+  --danger:      #a13f35;
   --danger-tint: #efd9d4;
   --ok:          #2f6b5e;
   --ok-tint:     #d7e6df;
@@ -83,6 +102,8 @@ button { font: inherit; }
   box-shadow: var(--e1);
   text-decoration: none;
 }
+/* #f4efe4 на --teal = 6.57:1 (тот же приём, что у подписи кнопок: литерал, а не
+   белый, и он тоже в списке измеренных пар). */
 .brand-mark {
   width: 30px; height: 30px; display: grid; place-items: center;
   border-radius: var(--r-sm); background: var(--teal); color: #f4efe4;
@@ -95,6 +116,30 @@ button { font: inherit; }
 
 .nav { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .main { flex: 1; padding-block: 26px 40px; position: relative; z-index: 1; }
+
+/* Skip-link: единственный элемент на странице, который нужен только с
+   клавиатуры. Держим его вне вьюпорта, а не display:none — во втором случае
+   скринридер тоже не нашёл бы ссылки. Фокус по Tab возвращает её наверх, и
+   дальше Enter переносит фокус в <main id="main" tabindex="-1">: без tabindex
+   браузер перематывает страницу, но фокус остаётся в шапке. */
+.skip-link {
+  position: absolute; left: 12px; top: -60px; z-index: 20;
+  padding: 10px 16px; border-radius: var(--r-sm);
+  background: var(--teal); color: #f4efe4;
+  font-size: 13px; font-weight: 700; letter-spacing: 0.02em;
+  text-decoration: none; box-shadow: var(--e2);
+}
+.skip-link:focus { top: 12px; outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* Заголовок страницы. Раньше его не было вовсе: название читалось только из
+   <title> и из подписи в шапке, а структура документа начиналась с h3 карточки.
+   Размер и вес — как у .auth-title, чтобы страница входа и кабинет звучали
+   одинаково. */
+.page-title { font-size: 22px; font-weight: 800; letter-spacing: -0.015em; }
+
+/* Рамка фокуса вокруг всей области содержимого — не подсказка, а шум: фокус и
+   так оказался там, куда просили перейти. */
+.main:focus { outline: none; }
 
 .site-footer { padding-block: 22px 30px; position: relative; z-index: 1; }
 .footer-row {
@@ -149,6 +194,11 @@ button { font: inherit; }
 .btn-icon:hover { background: var(--parchment); color: var(--teal); }
 .btn-icon:active { box-shadow: var(--inset1); }
 
+/* Подпись отключённой кнопки #b3aa97 на --parchment-deep даёт 1.58:1 — ниже AA, но
+   WCAG 1.4.3 освобождает неактивные компоненты, и в этом проекте disabled — это почти
+   всегда отправка: .btn.is-loading ниже прячет текст совсем (color: transparent) и
+   показывает спиннер. Исключение занесено в CONTRAST_EXEMPT проверкой — если цвет
+   поедет, CI об этом спросит. */
 .btn[disabled] { cursor: not-allowed; --btn-bg: var(--parchment-deep); --btn-fg: #b3aa97; box-shadow: var(--e1); opacity: .85; }
 .btn[disabled]:hover { background: var(--parchment-deep); }
 
@@ -170,7 +220,7 @@ button { font: inherit; }
 .control {
   width: 100%; padding: 12px 14px; font: inherit; font-size: 14px;
   color: var(--ink); background: var(--parchment);
-  border: var(--bw-thin) solid transparent; border-radius: var(--r-md);
+  border: var(--bw-thin) solid var(--line-strong); border-radius: var(--r-md);
   box-shadow: var(--inset1);
   transition: box-shadow .15s ease, border-color .15s ease, background .15s ease;
 }
@@ -224,7 +274,19 @@ select.control { appearance: none; cursor: pointer; padding-right: 34px; }
   background: var(--surface);
   box-shadow: var(--e1), inset 0 0 0 1.5px var(--teal);
 }
-.radio-card input:focus-visible ~ .radio-dot { box-shadow: var(--inset1), 0 0 0 3px var(--teal-tint); }
+/* Кольцо фокуса у радиокнопки: сам input невидим (width:0, opacity:0), и всё
+   «куда попал Tab» рисует эта тень. До ADR-0020 здесь был только --teal-tint:
+   живой замер (scripts/check-focus.mjs, /register, кадр элемента ±18px) дал 211
+   изменившихся пикселей из 8464 и НОЛЬ из них с контрастом хотя бы 3:1 —
+   максимум 1.33:1, потому что подложка вокруг --surface (1.10:1 к tint), а на
+   фоне страницы было бы 1.03:1. То есть фокус существовал, но не виделся.
+   Кольцо то же, что у кнопки: светлая подложка плюс внешний --teal
+   (6.23:1 к surface, 5.17:1 к parchment-deep — худшая из подложек проекта);
+   после правки тот же кадр даёт 148 пикселей ≥3:1. Выбор цвета держит группа 9
+   scripts/check-frontend.mjs: он считает кольцо против каждой из трёх подложек. */
+.radio-card input:focus-visible ~ .radio-dot {
+  box-shadow: var(--inset1), 0 0 0 3px var(--teal-tint), 0 0 0 5px var(--teal);
+}
 
 .radio-body { display: flex; flex-direction: column; gap: 2px; }
 .radio-title { font-size: 14px; font-weight: 700; }
@@ -253,6 +315,9 @@ select.control { appearance: none; cursor: pointer; padding-right: 34px; }
 .card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
 .card-actions .btn { padding: 8px 14px; font-size: 12px; }
 
+/* Подписи на бирюзовом: #f3eee3 у чипа — 6.51:1, #f1ece1 у баннера — 6.39:1,
+   #f5f0e6 у кнопки — 6.63:1. Три разных литерала вместо одного токена; все три
+   стоят в списке измеренных пар, поэтому правка любого замечается CI. */
 .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; padding: 4px 10px; border-radius: var(--r-pill); background: var(--teal); color: #f3eee3; box-shadow: inset 0 1px 0 rgba(255,255,255,.2); }
 .chip-outline { background: transparent; color: var(--teal-ink); box-shadow: inset 0 0 0 1.5px var(--teal); }
 .chip-muted { background: var(--parchment-deep); color: var(--ink-soft); box-shadow: var(--inset1); }
@@ -555,15 +620,7 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
 
 .mt-4 { margin-top: 16px; }
 .mb-4 { margin-bottom: 16px; }
-/* ---------- schedule: embed frame + feed ---------- */
-.schedule-frame {
-  display: block;
-  width: 100%;
-  height: min(70vh, 720px);
-  border: 0;
-  background: var(--parchment);
-}
-
+/* ---------- schedule: feed (дедлайны и события платформы) ---------- */
 .date-filter {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -604,27 +661,107 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
 .feed-state-graded { background: var(--ok-tint); color: var(--ok); }
 .feed-state-own { background: transparent; color: var(--teal-ink); box-shadow: inset 0 0 0 1.5px var(--teal); }
 .feed-score { font-size: 11px; font-weight: 800; }
-/* ---------- schedule: official-embed card (replaces blocked iframe) ---------- */
-.sched-embed-card {
+/* ---------- schedule: официальный таймтейбл (данные из источника) ---------- */
+/* Раньше здесь лежал блок .sched-embed-card — заглушка со ссылкой на сайт вуза,
+   пока расписание не было подключено. Классы ниже живут на реальных данных,
+   а пустой слот загрузки — у .empty-state (он же в ленте), без второго
+   набора стилей на тот же случай. */
+.sched-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.sched-group-field { flex: 1 1 260px; min-width: 0; }
+.sched-month { display: flex; align-items: center; gap: 10px; }
+.sched-month-label {
+  min-width: 12ch;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--ink-soft);
+}
+
+.sched-days { display: grid; gap: 12px; }
+.empty-state.plain { border: 0; box-shadow: none; background: transparent; }
+
+.sched-day {
+  background: var(--parchment);
+  border-radius: var(--r-md);
+  box-shadow: var(--inset1);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sched-day.is-today { border-left: var(--bw-thick) solid var(--teal); }
+.sched-day-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.sched-day-weekday { font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--teal); }
+.sched-day-date { font-size: 13.5px; font-weight: 700; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.sched-day-count { margin-left: auto; font-size: 11px; color: var(--muted); }
+
+.lesson-list { display: grid; gap: 8px; }
+.lesson {
   display: flex;
   align-items: flex-start;
-  gap: 18px;
+  gap: 12px;
+  background: var(--surface);
+  border-radius: var(--r-sm);
+  box-shadow: var(--e1);
+  padding: 10px 12px;
 }
-.sched-embed-icon {
+.lesson-num {
   flex: none;
-  width: 52px; height: 52px;
-  border-radius: var(--r-lg);
+  width: 26px; height: 26px;
+  border-radius: var(--r-xs);
   display: grid; place-items: center;
   background: var(--teal-tint); color: var(--teal-ink);
+  font-size: 12px; font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.lesson-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.lesson-title { font-size: 14px; font-weight: 700; }
+.lesson-meta { font-size: 11.5px; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+.lesson-time { font-weight: 600; color: var(--ink-soft); }
+.lesson-type {
+  flex: none;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: var(--r-pill);
+  background: var(--parchment-deep); color: var(--ink-soft);
   box-shadow: var(--inset1);
 }
-.sched-embed-icon svg { width: 26px; height: 26px; }
-.sched-embed-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.sched-embed-title { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
-.sched-embed-note { font-size: 13.5px; color: var(--ink-soft); line-height: 1.5; }
+.lesson-sub { font-size: 11.5px; color: var(--muted); }
+
+.sched-updated { font-size: 11.5px; color: var(--muted); margin-top: 14px; }
+
+.sched-source-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: var(--bw-thin) solid var(--line);
+}
+.sched-source-text { font-size: 12.5px; color: var(--muted); line-height: 1.5; max-width: 62ch; }
+.sched-source-text code { font-family: var(--font-mono); font-size: 11.5px; }
+.sched-source-line .btn { padding: 8px 14px; font-size: 12px; }
+
+/* панель источника: цифры состояния и кнопки импорта */
+.source-stats { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 12px; }
+.stat { display: flex; flex-direction: column; gap: 2px; }
+.stat-label { font-size: 10px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+.stat-value { font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.source-actions { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+.source-count { min-width: 170px; }
 
 @media (max-width: 640px) {
-  .sched-embed-card { flex-direction: column; gap: 12px; }
+  .sched-controls { align-items: stretch; }
+  .sched-month { justify-content: space-between; width: 100%; }
+  .sched-source-line { flex-direction: column; align-items: flex-start; }
+  .lesson { align-items: flex-start; }
 }
 /* ---------- schedule: events + resources ---------- */
 .feed-item.is-event { border-left-color: var(--ok); }

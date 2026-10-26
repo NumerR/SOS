@@ -22,7 +22,7 @@ func (h *Handlers) CoursesAPI(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		courses, err := h.Courses.List(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to load courses")
+			internalError(w, r, "failed to load courses", err)
 			return
 		}
 
@@ -45,7 +45,7 @@ func (h *Handlers) CoursesAPI(w http.ResponseWriter, r *http.Request) {
 		req.Teacher = strings.TrimSpace(req.Teacher)
 
 		if req.Title == "" {
-			writeError(w, http.StatusUnprocessableEntity, "title is required")
+			writeFieldError(w, http.StatusUnprocessableEntity, "title", "title is required")
 			return
 		}
 
@@ -73,7 +73,7 @@ func (h *Handlers) CoursesAPI(w http.ResponseWriter, r *http.Request) {
 			user.ID,
 		)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create course")
+			internalError(w, r, "failed to create course", err)
 			return
 		}
 

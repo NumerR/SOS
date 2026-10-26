@@ -48,7 +48,7 @@ func (h *Handlers) ScheduleFeed(w http.ResponseWriter, r *http.Request) {
 
 	items, err := h.Schedule.Feed(r.Context(), user, from, to)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to build schedule feed")
+		internalError(w, r, "failed to build schedule feed", err)
 		return
 	}
 

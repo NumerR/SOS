@@ -14,12 +14,6 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	}
 }
 
-func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{
-		"error": message,
-	})
-}
-
 func methodNotAllowed(w http.ResponseWriter) {
 	writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 }
@@ -33,7 +27,9 @@ func readJSON(w http.ResponseWriter, r *http.Request, destination any) bool {
 	decoder.DisallowUnknownFields()
 
 	if err := decoder.Decode(destination); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
+		// Не validation: клиент прислал не разбираемое тело, а не корректный
+		// JSON с плохими значениями полей. Разница видна в коде, а не в тексте.
+		writeCodeError(w, http.StatusBadRequest, ErrInvalidJSON, "invalid json")
 		return false
 	}
 

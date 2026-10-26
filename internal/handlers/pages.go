@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/NumerR/SOS/internal/authz"
+	"github.com/NumerR/SOS/internal/models"
 )
 
 // Index отдаёт главную страницу.
@@ -57,8 +58,7 @@ func (h *Handlers) RegisterPage(w http.ResponseWriter, r *http.Request) {
 // отказ здесь — redirect на вход, а не 403 в JSON (docs/02 §3: HTML-страницы
 // идут мимо Registry).
 func (h *Handlers) ProfilePage(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.authenticatedUser(r); !ok {
-		http.Redirect(w, r, "/login", http.StatusFound)
+	if _, ok := h.pageUser(w, r); !ok {
 		return
 	}
 
@@ -67,12 +67,33 @@ func (h *Handlers) ProfilePage(w http.ResponseWriter, r *http.Request) {
 
 // DashboardPage отдаёт личный кабинет, если пользователь авторизован.
 func (h *Handlers) DashboardPage(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.authenticatedUser(r); !ok {
-		http.Redirect(w, r, "/login", http.StatusFound)
+	if _, ok := h.pageUser(w, r); !ok {
 		return
 	}
 
 	serveWebFile(w, r, "dashboard.html")
+}
+
+// pageUser — пользователь защищённой HTML-страницы, либо ответ уже отправлен.
+//
+// Отказ бывает двух разных видов, и прежний `!ok` склеивал их в redirect: при
+// недоступном хранилище человек попадал на форму входа, где его ждал тот же
+// сбой — уже без причины (ADR-0031). Сломанная база теперь отвечает 500 через
+// internalError, страницы при этом остаются JSON-ответом: отдельной страницы
+// 500 в web/ нет, и это записано в docs/01 §4.
+func (h *Handlers) pageUser(w http.ResponseWriter, r *http.Request) (*models.User, bool) {
+	user, err := h.authenticatedUser(r)
+	if err != nil {
+		internalError(w, r, sessionFailureReason, err)
+		return nil, false
+	}
+
+	if user == nil {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return nil, false
+	}
+
+	return user, true
 }
 
 // AdminPage отдаёт админ-панель только администраторам.
@@ -81,9 +102,8 @@ func (h *Handlers) DashboardPage(w http.ResponseWriter, r *http.Request) {
 // выглядит как redirect на /dashboard, а не как 403 в JSON. Поэтому проверка
 // остаётся в обработчике, но спрашивает она authz, а не сравнивает строку роли.
 func (h *Handlers) AdminPage(w http.ResponseWriter, r *http.Request) {
-	user, ok := h.authenticatedUser(r)
+	user, ok := h.pageUser(w, r)
 	if !ok {
-		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 

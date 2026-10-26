@@ -102,20 +102,28 @@
 
     // Ошибка одна и та же по форме для всех сбоев: status (0 — сети нет),
     // message (уже по-русски, страницы печатают его как есть), data (тело
-    // ответа, если там был JSON), retryAfter (секунды из 429), code.
+    // ответа, если там был JSON), retryAfter (секунды из 429), code и fields
+    // из серверного конверта {"error":{"code","message","fields"}} (ADR-0003).
     function apiError(status, message, data, retryAfter) {
         const error = new Error(message);
         error.name = "ApiError";
         error.status = status;
         error.data = data === undefined ? null : data;
         error.retryAfter = retryAfter || 0;
-        error.code = data && typeof data === "object" && data.code ? data.code : null;
+
+        const envelope = data && typeof data === "object" ? data.error : null;
+        // Старый плоский ответ ({error: "текст"}) кодом не обладает: код тогда
+        // остаётся null, и страница ведёт себя как до миграции формата.
+        error.code = envelope && typeof envelope === "object" && typeof envelope.code === "string"
+            ? envelope.code
+            : null;
+        error.fields = envelope && typeof envelope === "object" && envelope.fields && typeof envelope.fields === "object"
+            ? envelope.fields
+            : {};
         return error;
     }
 
-    // Тело ответа — либо JSON (и тогда {"error": "строка"}), либо текст.
-    // Формат {"error": {...}} c кодами — docs/02 §4, он не мигрирован: код
-    // клиента к нему готов (error.code), но сервер пока отдаёт строку.
+    // Тело ответа — либо JSON (конверт успеха или {"error": {...}}), либо текст.
     async function readPayload(response) {
         const type = response.headers ? response.headers.get("content-type") || "" : "";
         if (type.includes("application/json")) {
@@ -130,6 +138,9 @@
     }
 
     function serverMessage(payload) {
+        if (payload && typeof payload === "object" && payload.error && typeof payload.error === "object") {
+            return typeof payload.error.message === "string" ? payload.error.message : "";
+        }
         if (payload && typeof payload === "object" && typeof payload.error === "string") {
             return payload.error;
         }

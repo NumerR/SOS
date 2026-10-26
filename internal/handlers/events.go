@@ -3,7 +3,6 @@ package handlers
 import (
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/NumerR/SOS/internal/models"
 )
@@ -21,7 +20,7 @@ func (h *Handlers) EventsAPI(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		events, err := h.Events.List(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to load events")
+			internalError(w, r, "failed to load events", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, events)
@@ -42,7 +41,7 @@ func (h *Handlers) EventsAPI(w http.ResponseWriter, r *http.Request) {
 		req.Description = strings.TrimSpace(req.Description)
 
 		if req.Title == "" {
-			writeError(w, http.StatusUnprocessableEntity, "title is required")
+			writeFieldError(w, http.StatusUnprocessableEntity, "title", "title is required")
 			return
 		}
 		if !validateLength(w, "title", req.Title, maxTitleLength) ||
@@ -50,12 +49,9 @@ func (h *Handlers) EventsAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		var eventTimestamp int64 = 0
-		if req.EventDateStr != "" {
-			t, err := time.Parse(time.RFC3339, req.EventDateStr)
-			if err == nil {
-				eventTimestamp = t.Unix()
-			}
+		eventTimestamp, ok := parseDateField(w, "event_date", req.EventDateStr)
+		if !ok {
+			return
 		}
 
 		event, err := h.Events.Create(r.Context(), models.CreateEventInput{
@@ -64,7 +60,7 @@ func (h *Handlers) EventsAPI(w http.ResponseWriter, r *http.Request) {
 			EventDate:   eventTimestamp,
 		}, user.ID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create event")
+			internalError(w, r, "failed to create event", err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, event)

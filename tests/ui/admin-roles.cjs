@@ -18,6 +18,25 @@ function check(name, ok, detail = "") {
     console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? " — " + detail : ""}`);
 }
 function wait(ms) { return new Promise((r) => setTimeout(r, ms)); }
+// Пустое adminMsg означает, что страница за бюджет ожидания ответа не получила,
+// а это другой диагноз, чем «ответил не то»: печатаем его явно.
+function msgDetail(el) {
+    const text = (el.textContent || "").trim();
+    return text || "сообщение не появилось за 3 с — запрос не дошёл или страница его не ждёт";
+}
+
+// Панель журнала перезагружается сама после каждой смены роли: на время этого
+// запроса в #auditBody лежит заглушка со spinner'ом («Загрузка журнала…»).
+// Проверкам ниже нужна таблица, а не заглушка, поэтому ждём законченного
+// состояния панели — строк, «Событий пока нет» или сообщения об отказе.
+// Без этого чтения становятся гонкой: на одной машине панель успевает
+// перерисоваться, на другой — нет, и прогон теряет две проверки, не меняя
+// продукта. Потолок тот же, что у клика «обновить»: 60 шагов по 50 мс.
+async function waitAuditSettled(doc) {
+    for (let i = 0; i < 60 && doc.getElementById("auditBody").innerHTML.includes("spinner"); i++) {
+        await wait(50);
+    }
+}
 
 async function api(pathname, { method = "GET", body, cookie = "", csrf = "" } = {}) {
     const headers = { "Content-Type": "application/json" };
@@ -38,17 +57,57 @@ async function login(identifier, password) {
     return { cookie, csrf, user: res.data };
 }
 
+// Сьют меняет роль s_stud кнопкой на странице и возвращает её через тот же
+// интерфейс, но если прогон оборвался между повышением и понижением, в базе
+// остаётся teacher, и следующий запуск на той же базе падает с «Роль не
+// изменилась» — красный прогон, который ничего не проверял (остаток ADR-0026).
+// Поэтому роль приводится к сидовой с двух сторон: на входе — чтобы снять
+// последствие чужого обрыва, в том числе SIGKILL, против которого обработчика
+// нет; на выходе — чтобы не оставить такое последствие за собой. Выходов три:
+// упавшая проверка, throw и Ctrl-C.
+//
+// Цель возврата — состояние сида, а не то, что было в базе на старте: иначе
+// прогон, начавшийся на уже отравленной базе, вернул бы отравление и следующий
+// запуск снова был бы красным. Тот же ориентир проверяет и сам сьют («роль
+// возвращена через тот же интерфейс» ожидает student), и `seed.sh`, который
+// создаёт s_stud студентом.
+const SEED_ROLE = "student";
+let cleanup = null;
+
+async function ensureSeedRole(reason) {
+    if (!cleanup) return;
+    const { admin, targetId } = cleanup;
+    const users = await api("/api/admin/users", { cookie: admin.cookie });
+    const current = (users.data || []).find((u) => u.id === targetId);
+    if (!current) { console.log(`возврат роли (${reason}): пользователь не найден — возвращать нечего`); return; }
+    if (current.role === SEED_ROLE) { console.log(`возврат роли (${reason}): роль уже сидовая (${SEED_ROLE})`); return; }
+    const res = await api("/api/admin/users/role", {
+        method: "POST",
+        body: { user_id: targetId, role: SEED_ROLE },
+        cookie: admin.cookie,
+        csrf: admin.csrf,
+    });
+    console.log(`возврат роли (${reason}): роль ${current.role} возвращена в ${SEED_ROLE} — код ${res.status}`);
+}
+
 (async () => {
     if (!ADMIN_USER || !ADMIN_PASS) {
         throw new Error("нужны ADMIN_USERNAME и ADMIN_PASSWORD — те же, что у запущенного сервера");
     }
 
     const admin = await login(ADMIN_USER, ADMIN_PASS);
-    const student = await login("s_stud", "password123");
 
     const before = await api("/api/admin/users", { cookie: admin.cookie });
     const sstud = before.data.find((u) => u.username === "s_stud");
     if (!sstud) throw new Error("s_stud не найден — сначала выполните ./seed.sh");
+    cleanup = { admin, targetId: sstud.id };
+    process.on("SIGINT", () => { ensureSeedRole("Ctrl-C").finally(() => process.exit(130)); });
+
+    // Порядок важен: смена роли отзывает входные сессии цели, а проверке
+    // «студенту журнал закрыт» нужна живая сессия — иначе вместо 403 она
+    // получила бы 401 и сказала бы не про права, а про сессию.
+    await ensureSeedRole("старт прогона");
+    const student = await login("s_stud", "password123");
 
     const html = fs.readFileSync(path.join(REPO, "web/admin.html"), "utf8");
     const dom = new JSDOM(html, { url: BASE + "/admin", runScripts: "outside-only", pretendToBeVisual: true });
@@ -68,8 +127,10 @@ async function login(identifier, password) {
         .map((f) => fs.readFileSync(path.join(REPO, "web/js", f), "utf8"))
         .join("\n;\n");
     window.eval(bundle);
-    doc.dispatchEvent(new window.Event("DOMContentLoaded", { bubbles: true }));
-
+    // DOMContentLoaded не диспатчим руками: jsdom сам стреляет им на следующем тике
+    // после разбора (тот же приём, что в session-expiry.cjs). Ручной диспатч
+    // добавлял второй запуск страницы: вторая перерисовка #usersBody detach'ала
+    // строку, уже снятую сьютом ниже, и клик по ней не доходил до сервера.
     for (let i = 0; i < 60 && !doc.querySelector("[data-action='save-role']"); i++) await wait(50);
 
     const rows = Array.from(doc.querySelectorAll("#usersBody tr"));
@@ -115,7 +176,7 @@ async function login(identifier, password) {
 
     for (let i = 0; i < 60 && !(doc.getElementById("adminMsg").textContent || "").trim(); i++) await wait(50);
     const status = doc.getElementById("adminMsg");
-    check("сервер принял изменение роли через UI", /обновлен/i.test(status.textContent), status.textContent.trim());
+    check("сервер принял изменение роли через UI", /обновлен/i.test(status.textContent), msgDetail(status));
     check("сообщение предупреждает об отзыве сессий", /сесс/i.test(status.textContent));
 
     const after = await api("/api/admin/users", { cookie: admin.cookie });
@@ -161,13 +222,14 @@ async function login(identifier, password) {
             roleEvents.slice(0, 2).every((e) => String(e.target_id) === String(sstud.id)),
         roleEvents.map((e) => e.target_type + "#" + e.target_id).join(", "));
 
+    await waitAuditSettled(doc);
     const auditText = doc.getElementById("auditBody").textContent.replace(/\s+/g, " ");
     check("в таблице действия по-русски", /смена роли/.test(auditText), auditText.slice(0, 80));
     check("итог показан чипом", /выполнено/.test(auditText));
 
     if (hasRefresh) {
         doc.getElementById("refreshAuditBtn").click();
-        for (let i = 0; i < 60 && doc.getElementById("auditBody").innerHTML.includes("spinner"); i++) await wait(50);
+        await waitAuditSettled(doc);
         const reRendered = Array.from(doc.querySelectorAll("#auditBody tr"));
         check("обновление журнала перерисовывает таблицу",
             reRendered.length >= 1 && !doc.getElementById("auditBody").innerHTML.includes("message-error"),
@@ -185,9 +247,13 @@ async function login(identifier, password) {
 
     const failed = results.filter((r) => !r.ok);
     console.log(`\nИТОГ: ${results.length - failed.length}/${results.length} проверок пройдено`);
+    // На зелёном прогоне это no-op (роль уже возвращена через интерфейс), на
+    // упавшем — именно здесь база перестаёт быть отравленной для следующего запуска.
+    await ensureSeedRole(failed.length ? "упавший прогон" : "прогон завершён");
     window.close();
     process.exit(failed.length ? 1 : 0);
-})().catch((error) => {
+})().catch(async (error) => {
     console.error("СБОЙ ПРОВЕРКИ:", error.message || error);
+    await ensureSeedRole("throw");
     process.exit(2);
 });

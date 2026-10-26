@@ -28,7 +28,7 @@ func (h *Handlers) MyEnrollments(w http.ResponseWriter, r *http.Request) {
 
 	courses, err := h.Enrollments.ListCoursesByUser(r.Context(), user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load enrollments")
+		internalError(w, r, "failed to load enrollments", err)
 		return
 	}
 
@@ -57,7 +57,7 @@ func (h *Handlers) Enroll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.CourseID <= 0 {
-		writeError(w, http.StatusBadRequest, "course_id is required")
+		writeFieldError(w, http.StatusBadRequest, "course_id", "course_id is required")
 		return
 	}
 
@@ -67,7 +67,7 @@ func (h *Handlers) Enroll(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "course not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to enroll")
+		internalError(w, r, "failed to enroll", err)
 		return
 	}
 
@@ -103,12 +103,12 @@ func (h *Handlers) CancelEnrollment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.CourseID <= 0 {
-		writeError(w, http.StatusBadRequest, "course_id is required")
+		writeFieldError(w, http.StatusBadRequest, "course_id", "course_id is required")
 		return
 	}
 
 	if err := h.Enrollments.Cancel(r.Context(), user.ID, req.CourseID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to cancel enrollment")
+		internalError(w, r, "failed to cancel enrollment", err)
 		return
 	}
 
@@ -138,14 +138,14 @@ func (h *Handlers) CourseStudents(w http.ResponseWriter, r *http.Request) {
 
 	courseID, err := strconv.ParseInt(r.URL.Query().Get("course_id"), 10, 64)
 	if err != nil || courseID <= 0 {
-		writeError(w, http.StatusBadRequest, "valid course_id is required")
+		writeFieldError(w, http.StatusBadRequest, "course_id", "valid course_id is required")
 		return
 	}
 
 	if !canHere(user, authz.CourseStudentsAny) {
 		owner, found, err := h.Enrollments.CourseOwner(r.Context(), courseID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to check course ownership")
+			internalError(w, r, "failed to check course ownership", err)
 			return
 		}
 		if !found {
@@ -160,7 +160,7 @@ func (h *Handlers) CourseStudents(w http.ResponseWriter, r *http.Request) {
 
 	users, err := h.Enrollments.ListUsersByCourse(r.Context(), courseID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load students")
+		internalError(w, r, "failed to load students", err)
 		return
 	}
 

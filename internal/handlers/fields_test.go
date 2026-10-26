@@ -62,12 +62,18 @@ func errorMessage(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
 
 	var payload struct {
-		Error string `json:"error"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("разобрать ответ %q: %v", rec.Body.String(), err)
 	}
-	return payload.Error
+	if payload.Error.Code != "validation" {
+		t.Fatalf("ожидался код %q, получён %q в %s", "validation", payload.Error.Code, rec.Body.String())
+	}
+	return payload.Error.Message
 }
 
 func TestCreateAssignmentFieldLimits(t *testing.T) {

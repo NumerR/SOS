@@ -7,15 +7,17 @@
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body data-layout="profile" data-brand-sub="Профиль" data-footer-note="Account · sessions · password">
+    <a class="skip-link" href="#main">К основному содержимому</a>
     <header class="site-header"></header>
 
-    <main class="main">
+    <main class="main" id="main" tabindex="-1">
         <div class="container stack">
+            <h1 class="page-title">Профиль</h1>
             <p id="profileStatus" class="message hidden" role="status"></p>
 
             <section class="section">
                 <div class="section-head">
-                    <span class="section-label"><span class="section-index">01</span> Идентичность</span>
+                    <h2 class="section-label"><span class="section-index">01</span> Идентичность</h2>
                     <span class="section-rule"></span>
                     <span class="section-note">GET /api/auth/me</span>
                 </div>
@@ -58,7 +60,7 @@
 
             <section class="section">
                 <div class="section-head">
-                    <span class="section-label"><span class="section-index">02</span> Доступ и пароль</span>
+                    <h2 class="section-label"><span class="section-index">02</span> Доступ и пароль</h2>
                     <span class="section-rule"></span>
                     <span class="section-note">POST /api/auth/change-password · /api/auth/logout-all</span>
                 </div>
@@ -66,18 +68,21 @@
                 <form id="passwordForm" class="form" novalidate>
                     <label class="field">
                         <span class="field-label">Текущий пароль</span>
-                        <input class="control" type="password" name="current_password" required autocomplete="current-password">
+                        <input class="control" type="password" name="current_password" required autocomplete="current-password"
+                               aria-describedby="passwordMessage">
                     </label>
 
                     <label class="field">
                         <span class="field-label">Новый пароль</span>
-                        <input class="control" type="password" name="new_password" required minlength="8" maxlength="200" autocomplete="new-password">
-                        <span class="helper">Минимум 8 символов. После смены все остальные устройства разлогинятся, это останется только вы.</span>
+                        <input class="control" type="password" name="new_password" required minlength="8" maxlength="200" autocomplete="new-password"
+                               aria-describedby="newPasswordHelper passwordMessage">
+                        <span class="helper" id="newPasswordHelper">Минимум 8 символов. После смены все остальные устройства разлогинятся, это останется только вы.</span>
                     </label>
 
                     <label class="field">
                         <span class="field-label">Повторите новый пароль</span>
-                        <input class="control" type="password" name="repeat_password" required minlength="8" maxlength="200" autocomplete="new-password">
+                        <input class="control" type="password" name="repeat_password" required minlength="8" maxlength="200" autocomplete="new-password"
+                               aria-describedby="passwordMessage">
                     </label>
 
                     <div class="form-actions">
@@ -91,7 +96,7 @@
 
             <section class="section">
                 <div class="section-head">
-                    <span class="section-label"><span class="section-index">03</span> Группа и предпочтения</span>
+                    <h2 class="section-label"><span class="section-index">03</span> Группа и предпочтения</h2>
                     <span class="section-rule"></span>
                     <span class="section-note">полей в схеме пока нет</span>
                 </div>

@@ -49,7 +49,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
             GS.api.navigate(GS.api.dashboardPath());
         } catch (error) {
-            GS.showMessage(messageElement, error.message || "Ошибка запроса", "error");
+            // describeServerError добавляет к тексту сервера подпись поля, если
+            // сервер назвал поле: «invalid email — поле: Email» вместо голого
+            // «invalid email», когда под формой четыре поля.
+            GS.showMessage(messageElement, GS.describeServerError(error, form, "Ошибка запроса"), "error");
 
             if (submitButton) {
                 submitButton.disabled = false;

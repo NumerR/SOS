@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/NumerR/SOS/internal/authz"
 	"github.com/NumerR/SOS/internal/models"
@@ -26,12 +25,12 @@ func (h *Handlers) ListAssignments(w http.ResponseWriter, r *http.Request) {
 
 	courseIDStr := r.URL.Query().Get("course_id")
 	if courseIDStr == "" {
-		writeError(w, http.StatusBadRequest, "course_id is required")
+		writeFieldError(w, http.StatusBadRequest, "course_id", "course_id is required")
 		return
 	}
 	courseID, err := strconv.ParseInt(courseIDStr, 10, 64)
 	if err != nil || courseID <= 0 {
-		writeError(w, http.StatusBadRequest, "invalid course_id")
+		writeFieldError(w, http.StatusBadRequest, "course_id", "invalid course_id")
 		return
 	}
 
@@ -42,7 +41,11 @@ func (h *Handlers) ListAssignments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	owner, found, err := h.Enrollments.CourseOwner(r.Context(), courseID)
-	if err != nil || !found {
+	if err != nil {
+		internalError(w, r, "failed to check course ownership", err)
+		return
+	}
+	if !found {
 		writeError(w, http.StatusNotFound, "course not found")
 		return
 	}
@@ -50,18 +53,26 @@ func (h *Handlers) ListAssignments(w http.ResponseWriter, r *http.Request) {
 	// Видеть задания чужого курса можно, если ты его владелец или записан на
 	// него. Право assignment.view.any снимает обе проверки — оно есть только у
 	// администратора и заменяло собой сравнение user.Role == "admin".
+	//
+	// Ошибка хранилища здесь — 500, а не 403: «не удалось прочитать список
+	// записей» и «тебя в списке нет» для клиента разные случаи, и во втором
+	// человек хотя бы понимает, что делать (записаться), а в первом ему
+	// остаётся только повторить. Тот же порядок уже в ListStudentsByCourse и
+	// в SubmitAssignment.
 	isOwner := owner == user.ID
 	canSeeAny := canHere(user, authz.AssignmentViewAny)
 	isEnrolled := false
 
 	if !isOwner && !canSeeAny {
 		mine, err := h.Enrollments.ListCoursesByUser(r.Context(), user.ID)
-		if err == nil {
-			for _, c := range mine {
-				if c.ID == courseID {
-					isEnrolled = true
-					break
-				}
+		if err != nil {
+			internalError(w, r, "failed to verify enrollment", err)
+			return
+		}
+		for _, c := range mine {
+			if c.ID == courseID {
+				isEnrolled = true
+				break
 			}
 		}
 	}
@@ -73,7 +84,7 @@ func (h *Handlers) ListAssignments(w http.ResponseWriter, r *http.Request) {
 
 	assignments, err := h.Assignments.ListByCourse(r.Context(), courseID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load assignments")
+		internalError(w, r, "failed to load assignments", err)
 		return
 	}
 
@@ -103,7 +114,7 @@ func (h *Handlers) CreateAssignment(w http.ResponseWriter, r *http.Request) {
 
 	req.Title = strings.TrimSpace(req.Title)
 	if req.Title == "" {
-		writeError(w, http.StatusUnprocessableEntity, "title is required")
+		writeFieldError(w, http.StatusUnprocessableEntity, "title", "title is required")
 		return
 	}
 
@@ -116,18 +127,23 @@ func (h *Handlers) CreateAssignment(w http.ResponseWriter, r *http.Request) {
 
 	if !canHere(user, authz.AssignmentCreateAny) {
 		owner, found, err := h.Enrollments.CourseOwner(r.Context(), req.CourseID)
-		if err != nil || !found || owner != user.ID {
+		if err != nil {
+			internalError(w, r, "failed to check course ownership", err)
+			return
+		}
+		if !found {
+			writeError(w, http.StatusNotFound, "course not found")
+			return
+		}
+		if owner != user.ID {
 			writeError(w, http.StatusForbidden, "you can only create assignments for your own courses")
 			return
 		}
 	}
 
-	var dueTimestamp int64 = 0
-	if req.DueDateStr != "" {
-		t, err := time.Parse(time.RFC3339, req.DueDateStr)
-		if err == nil {
-			dueTimestamp = t.Unix()
-		}
+	dueTimestamp, ok := parseDateField(w, "due_date", req.DueDateStr)
+	if !ok {
+		return
 	}
 
 	assignment, err := h.Assignments.Create(r.Context(), models.CreateAssignmentInput{
@@ -138,7 +154,7 @@ func (h *Handlers) CreateAssignment(w http.ResponseWriter, r *http.Request) {
 	}, user.ID)
 
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create assignment")
+		internalError(w, r, "failed to create assignment", err)
 		return
 	}
 
