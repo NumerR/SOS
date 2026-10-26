@@ -134,19 +134,30 @@ func isStaticPath(path string) bool {
 // не отдаёт, а без них строка доступа бесполезна.
 type statusRecorder struct {
 	http.ResponseWriter
-	status int
-	bytes  int
+	status     int
+	bytes      int
+	sentHeader bool
 }
 
 func (s *statusRecorder) WriteHeader(status int) {
+	s.sentHeader = true
 	s.status = status
 	s.ResponseWriter.WriteHeader(status)
 }
 
 func (s *statusRecorder) Write(body []byte) (int, error) {
+	// Write без WriteHeader — это неявный 200, и заголовки ушли всё равно:
+	// Recover обязан читать именно это, а не status != 200.
+	s.sentHeader = true
 	written, err := s.ResponseWriter.Write(body)
 	s.bytes += written
 	return written, err
+}
+
+// headerSent отвечает на вопрос «можно ли ещё вообще изменить статус ответа».
+// Реализует responseStarter, который спрашивает Recover (ADR-0033).
+func (s *statusRecorder) headerSent() bool {
+	return s.sentHeader
 }
 
 // Flush нужен, если обработчик решит стримить ответ; без проброса промежуточный

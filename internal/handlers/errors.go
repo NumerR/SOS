@@ -42,6 +42,17 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	apierror.Write(w, status, message)
 }
 
+// logFailure — одна строка отказа в логе: причина, текст клиента и request id.
+//
+// Формулировка живёт в одном месте намеренно (ADR-0033): Recover пишет тот же
+// отказ, что и helper, но без возможности сменить статус — если бы тексты
+// разъехались, поиск по логу снова стал бы перебором вариантов (то же
+// обоснование, что у sessionFailureReason в ADR-0031).
+func logFailure(r *http.Request, message string, cause error, attrs ...any) {
+	fields := append([]any{slog.String("reason", message), slog.Any("error", cause)}, attrs...)
+	requestLogger(r).Error("отказ сервера", fields...)
+}
+
 // internalError — единственный разрешённый выход 500 (ADR-0030): причина
 // уходит в лог вместе с request id, клиент получает конверт ADR-0003 с кодом
 // internal и тем же текстом.
@@ -54,8 +65,7 @@ func writeError(w http.ResponseWriter, status int, message string) {
 // Текст причины в поле `reason` совпадает с тем, что увидел клиент: искать
 // отказ в логу можно по той же фразе, которую человек продиктовал.
 func internalError(w http.ResponseWriter, r *http.Request, message string, cause error, attrs ...any) {
-	fields := append([]any{slog.String("reason", message), slog.Any("error", cause)}, attrs...)
-	requestLogger(r).Error("отказ сервера", fields...)
+	logFailure(r, message, cause, attrs...)
 	writeError(w, http.StatusInternalServerError, message)
 }
 

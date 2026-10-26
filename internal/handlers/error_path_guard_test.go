@@ -93,6 +93,22 @@ func TestInternalFailuresGoThroughHelper(t *testing.T) {
 	}
 }
 
+// functionBody вырезает определение по префиксу сигнатуры — так, чтобы проверка
+// не зависела от того, в каком порядке идут функции в файле.
+func functionBody(t *testing.T, source string, signature string) string {
+	t.Helper()
+
+	start := strings.Index(source, signature)
+	if start < 0 {
+		t.Fatalf("в errors.go нет %s — переименовано или переехало", signature)
+	}
+	end := strings.Index(source[start:], "\n}")
+	if end < 0 {
+		t.Fatalf("тело %s не находится — правь тест вместе с функцией", signature)
+	}
+	return source[start : start+end]
+}
+
 func TestHelperLogsCauseAndWritesEnvelope(t *testing.T) {
 	body, err := os.ReadFile("errors.go")
 	if err != nil {
@@ -100,28 +116,33 @@ func TestHelperLogsCauseAndWritesEnvelope(t *testing.T) {
 	}
 	source := string(body)
 
-	start := strings.Index(source, "func internalError(")
-	if start < 0 {
-		t.Fatal("в errors.go нет internalError — helper переименован или удалён")
-	}
-	end := strings.Index(source[start:], "\n}")
-	if end < 0 {
-		t.Fatal("тело internalError не находится — правь тест вместе с helper'ом")
-	}
-	definition := source[start : start+end]
+	// ADR-0033 разделил helper на две функции: logFailure пишет строку отказа,
+	// internalError ещё и отвечает 500. Recover умеет только первое — статус он
+	// менять не всегда может, — и проверка обязана держать обе части, иначе
+	// «причина в логе» можно выкинуть из logFailure, оставив тест зелёным.
+	logFailure := functionBody(t, source, "func logFailure(")
+	internalErrorBody := functionBody(t, source, "func internalError(")
 
 	for _, want := range []string{
 		`requestLogger(r).Error("отказ сервера"`,
 		`slog.Any("error", cause)`,
 		`slog.String("reason", message)`,
-		"writeError(w, http.StatusInternalServerError, message)",
 	} {
-		if !strings.Contains(definition, want) {
-			t.Errorf("internalError больше не делает %s — лог или конверт рассинхронизируются", want)
+		if !strings.Contains(logFailure, want) {
+			t.Errorf("logFailure больше не делает %s — лог и текст клиента разойдутся", want)
 		}
 	}
 
-	if strings.Contains(definition, "slog.String(\"error\"") {
+	for _, want := range []string{
+		"logFailure(r, message, cause, attrs...)",
+		"writeError(w, http.StatusInternalServerError, message)",
+	} {
+		if !strings.Contains(internalErrorBody, want) {
+			t.Errorf("internalError больше не делает %s — helper теряет одну из двух обязанностей", want)
+		}
+	}
+
+	if strings.Contains(source, "slog.String(\"error\"") {
 		t.Error("причина записана строкой: error= теряет тип и текст сбоя, нужен slog.Any")
 	}
 }
