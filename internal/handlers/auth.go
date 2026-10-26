@@ -126,7 +126,7 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to hash password")
+		internalError(w, r, "failed to hash password", err)
 		return
 	}
 
@@ -144,7 +144,7 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		writeError(w, http.StatusInternalServerError, "failed to create user")
+		internalError(w, r, "failed to create user", err)
 		return
 	}
 
@@ -203,7 +203,7 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 
 	userWithSecret, err := h.Users.GetByIdentifier(r.Context(), req.Identifier)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusInternalServerError, "failed to login")
+		internalError(w, r, "failed to login", err)
 		return
 	}
 
@@ -345,7 +345,7 @@ func (h *Handlers) LogoutAll(w http.ResponseWriter, r *http.Request) {
 			targetID:   auditTargetID(user.ID),
 			ok:         false,
 		})
-		writeError(w, http.StatusInternalServerError, "failed to revoke sessions")
+		internalError(w, r, "failed to revoke sessions", err)
 		return
 	}
 
@@ -403,7 +403,7 @@ func (h *Handlers) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	withSecret, err := h.Users.GetWithSecretByID(r.Context(), user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load user")
+		internalError(w, r, "failed to load user", err)
 		return
 	}
 
@@ -434,12 +434,12 @@ func (h *Handlers) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to hash password")
+		internalError(w, r, "failed to hash password", err)
 		return
 	}
 
 	if err := h.Users.SetPassword(r.Context(), user.ID, string(passwordHash)); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update password")
+		internalError(w, r, "failed to update password", err)
 		return
 	}
 
@@ -467,7 +467,7 @@ func (h *Handlers) ChangePassword(w http.ResponseWriter, r *http.Request) {
 			detail: "password changed, sessions not revoked",
 			ok:     false,
 		})
-		writeError(w, http.StatusInternalServerError, "password changed but other sessions could not be revoked")
+		internalError(w, r, "password changed but other sessions could not be revoked", err)
 		return
 	}
 
@@ -512,7 +512,7 @@ func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) startSession(w http.ResponseWriter, r *http.Request, user *models.User) bool {
 	sessionID, err := h.Sessions.Create(r.Context(), user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create session")
+		internalError(w, r, "failed to create session", err)
 		return false
 	}
 

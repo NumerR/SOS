@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/NumerR/SOS/internal/apierror"
@@ -40,6 +42,23 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	apierror.Write(w, status, message)
 }
 
+// internalError — единственный разрешённый выход 500 (ADR-0030): причина
+// уходит в лог вместе с request id, клиент получает конверт ADR-0003 с кодом
+// internal и тем же текстом.
+//
+// До этого вызова в обработчиках было 47 мест `writeError(w, 500, …)`, и лишь
+// пять из них писали в лог, что именно случилось. Строка доступа (ADR-0025,
+// `logging.go:117`) поднимает такой ответ до Error и называет путь, код и
+// request id — но не причину, а комментарий `internal/handlers/logging.go:18`
+// обещает, что по логу можно связать жалобу человека с конкретной неудачей.
+// Текст причины в поле `reason` совпадает с тем, что увидел клиент: искать
+// отказ в логу можно по той же фразе, которую человек продиктовал.
+func internalError(w http.ResponseWriter, r *http.Request, message string, cause error, attrs ...any) {
+	fields := append([]any{slog.String("reason", message), slog.Any("error", cause)}, attrs...)
+	requestLogger(r).Error("отказ сервера", fields...)
+	writeError(w, http.StatusInternalServerError, message)
+}
+
 // writeFieldError — ошибка конкретного поля (валидация формы).
 func writeFieldError(w http.ResponseWriter, status int, field, message string) {
 	apierror.WriteField(w, status, field, message)
@@ -57,3 +76,10 @@ func writeCodeError(w http.ResponseWriter, status int, code, message string) {
 func codeForStatus(status int) string {
 	return apierror.CodeForStatus(status)
 }
+
+// errDependencyNotConnected — 500 без сбоя хранилища: модуль не подключён при
+// сборке маршрутов (проверка `h.Audit == nil` в `AdminAudit`). Причина известна
+// заранее и её обязано быть видно в логу: это конфигурация сервера, а не
+// случайность конкретного запроса, и по «audit log is not available» в логе
+// человек иначе стал бы искать битую базу.
+var errDependencyNotConnected = errors.New("модуль не подключён при сборке сервера")

@@ -43,7 +43,7 @@ func (h *Handlers) ListAssignments(w http.ResponseWriter, r *http.Request) {
 
 	owner, found, err := h.Enrollments.CourseOwner(r.Context(), courseID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to check course ownership")
+		internalError(w, r, "failed to check course ownership", err)
 		return
 	}
 	if !found {
@@ -67,7 +67,7 @@ func (h *Handlers) ListAssignments(w http.ResponseWriter, r *http.Request) {
 	if !isOwner && !canSeeAny {
 		mine, err := h.Enrollments.ListCoursesByUser(r.Context(), user.ID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to verify enrollment")
+			internalError(w, r, "failed to verify enrollment", err)
 			return
 		}
 		for _, c := range mine {
@@ -85,7 +85,7 @@ func (h *Handlers) ListAssignments(w http.ResponseWriter, r *http.Request) {
 
 	assignments, err := h.Assignments.ListByCourse(r.Context(), courseID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load assignments")
+		internalError(w, r, "failed to load assignments", err)
 		return
 	}
 
@@ -129,7 +129,7 @@ func (h *Handlers) CreateAssignment(w http.ResponseWriter, r *http.Request) {
 	if !canHere(user, authz.AssignmentCreateAny) {
 		owner, found, err := h.Enrollments.CourseOwner(r.Context(), req.CourseID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to check course ownership")
+			internalError(w, r, "failed to check course ownership", err)
 			return
 		}
 		if !found {
@@ -158,7 +158,7 @@ func (h *Handlers) CreateAssignment(w http.ResponseWriter, r *http.Request) {
 	}, user.ID)
 
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create assignment")
+		internalError(w, r, "failed to create assignment", err)
 		return
 	}
 

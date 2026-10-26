@@ -110,7 +110,8 @@ func (h *Handlers) AdminAudit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.Audit == nil {
-		writeError(w, http.StatusInternalServerError, "audit log is not available")
+		internalError(w, r, "audit log is not available", errDependencyNotConnected,
+			slog.String("module", "audit"))
 		return
 	}
 
@@ -159,8 +160,7 @@ func (h *Handlers) AdminAudit(w http.ResponseWriter, r *http.Request) {
 
 	events, err := h.Audit.List(r.Context(), filter)
 	if err != nil {
-		requestLogger(r).Error("аудит: не удалось прочитать журнал", slog.Any("error", err))
-		writeError(w, http.StatusInternalServerError, "failed to load audit log")
+		internalError(w, r, "failed to load audit log", err)
 		return
 	}
 

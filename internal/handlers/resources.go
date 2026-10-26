@@ -21,7 +21,7 @@ func (h *Handlers) ResourcesAPI(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		resources, err := h.Resources.List(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to load resources")
+			internalError(w, r, "failed to load resources", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, resources)
@@ -61,7 +61,7 @@ func (h *Handlers) ResourcesAPI(w http.ResponseWriter, r *http.Request) {
 			Description: req.Description,
 		}, user.ID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create resource")
+			internalError(w, r, "failed to create resource", err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, resource)

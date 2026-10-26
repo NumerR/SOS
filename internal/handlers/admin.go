@@ -21,7 +21,7 @@ func (h *Handlers) AdminUsers(w http.ResponseWriter, r *http.Request) {
 
 	users, err := h.Users.List(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load users")
+		internalError(w, r, "failed to load users", err)
 		return
 	}
 
@@ -91,7 +91,7 @@ func (h *Handlers) AdminSetRole(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "user not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to load user")
+		internalError(w, r, "failed to load user", err)
 		return
 	}
 
@@ -109,7 +109,7 @@ func (h *Handlers) AdminSetRole(w http.ResponseWriter, r *http.Request) {
 			detail:     "from=" + target.Role + " to=" + role,
 			ok:         false,
 		})
-		writeError(w, http.StatusInternalServerError, "failed to update role")
+		internalError(w, r, "failed to update role", err)
 		return
 	}
 
@@ -124,7 +124,7 @@ func (h *Handlers) AdminSetRole(w http.ResponseWriter, r *http.Request) {
 			detail:     "from=" + target.Role + " to=" + role + ", sessions not revoked",
 			ok:         false,
 		})
-		writeError(w, http.StatusInternalServerError, "role updated but sessions could not be revoked")
+		internalError(w, r, "role updated but sessions could not be revoked", err)
 		return
 	}
 

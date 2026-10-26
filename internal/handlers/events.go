@@ -21,7 +21,7 @@ func (h *Handlers) EventsAPI(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		events, err := h.Events.List(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to load events")
+			internalError(w, r, "failed to load events", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, events)
@@ -64,7 +64,7 @@ func (h *Handlers) EventsAPI(w http.ResponseWriter, r *http.Request) {
 			EventDate:   eventTimestamp,
 		}, user.ID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create event")
+			internalError(w, r, "failed to create event", err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, event)

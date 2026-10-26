@@ -61,7 +61,7 @@ func (h *Handlers) ScheduleGroupsAPI(w http.ResponseWriter, r *http.Request) {
 
 	groups, err := h.ScheduleSource.ListGroups(r.Context(), apeks.Source, user, limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load group catalogue")
+		internalError(w, r, "failed to load group catalogue", err)
 		return
 	}
 
@@ -127,7 +127,7 @@ func (h *Handlers) ScheduleLessonsAPI(w http.ResponseWriter, r *http.Request) {
 
 	lessons, err := h.ScheduleSource.ListLessons(r.Context(), apeks.Source, group.ExternalID, fromKey, toKey)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load schedule")
+		internalError(w, r, "failed to load schedule", err)
 		return
 	}
 
@@ -204,7 +204,7 @@ func (h *Handlers) ScheduleStatusAPI(w http.ResponseWriter, r *http.Request) {
 
 	stats, err := h.ScheduleSource.Stats(r.Context(), apeks.Source)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to read source status")
+		internalError(w, r, "failed to read source status", err)
 		return
 	}
 
@@ -321,7 +321,6 @@ func (h *Handlers) ScheduleSyncGroupsAPI(w http.ResponseWriter, r *http.Request)
 
 	added, err := h.ScheduleSource.UpsertGroups(r.Context(), apeks.Source, rows)
 	if err != nil {
-		requestLogger(r).Error("расписание: каталог групп не сохранён", slog.Any("error", err))
 		h.recordAudit(r, auditWrite{
 			action:     store.AuditScheduleGroupsSync,
 			actor:      user,
@@ -329,7 +328,7 @@ func (h *Handlers) ScheduleSyncGroupsAPI(w http.ResponseWriter, r *http.Request)
 			detail:     fmt.Sprintf("source=%s fetched=%d", apeks.Source, len(rows)),
 			ok:         false,
 		})
-		writeError(w, http.StatusInternalServerError, "failed to store group catalogue")
+		internalError(w, r, "failed to store group catalogue", err)
 		return
 	}
 
@@ -441,9 +440,6 @@ func (h *Handlers) ScheduleImportAPI(w http.ResponseWriter, r *http.Request) {
 
 		stored, err := h.ScheduleSource.ReplaceMonth(r.Context(), apeks.Source, group.ExternalID, slot.month, slot.year, rows)
 		if err != nil {
-			requestLogger(r).Error("расписание: импорт месяца не сохранён",
-				slog.String("group", group.ExternalID),
-				slog.Any("error", err))
 			h.recordAudit(r, auditWrite{
 				action:     store.AuditScheduleImport,
 				actor:      user,
@@ -452,7 +448,9 @@ func (h *Handlers) ScheduleImportAPI(w http.ResponseWriter, r *http.Request) {
 				detail:     fmt.Sprintf("month=%02d.%d parsed=%d", slot.year, slot.month, len(rows)),
 				ok:         false,
 			})
-			writeError(w, http.StatusInternalServerError, "failed to store imported schedule")
+			internalError(w, r, "failed to store imported schedule", err,
+				slog.String("group", group.ExternalID),
+				slog.String("month", fmt.Sprintf("%02d.%d", slot.month, slot.year)))
 			return
 		}
 
@@ -627,8 +625,7 @@ func (h *Handlers) writeScheduleSourceError(w http.ResponseWriter, r *http.Reque
 		// который будет выбирать группу вручную.
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 	default:
-		requestLogger(r).Error("расписание: ошибка чтения каталога групп", slog.Any("error", err))
-		writeError(w, http.StatusInternalServerError, "failed to read group catalogue")
+		internalError(w, r, "failed to read group catalogue", err, slog.String("field", field))
 	}
 }
 
