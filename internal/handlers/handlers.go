@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/NumerR/SOS/internal/apeks"
@@ -39,6 +41,12 @@ func sessionCookieNameFor(r *http.Request) string {
 type contextKey string
 
 const userContextKey contextKey = "user"
+
+// sessionFailureReason — текст отказа, когда хранилище сессий не ответило.
+// Одно имя на middleware и страницы, потому что по нему ищут в логе: reason
+// совпадает с тем, что видит клиент (ADR-0030), и две формулировки одного и
+// того же сбоя превратили бы разбор жалобы в перебор вариантов.
+const sessionFailureReason = "failed to verify session"
 
 // Deps — зависимости обработчиков. Собираются в main.go инициализатором
 // с именами полей: девять позиционных аргументов подряд легко перепутать
@@ -146,31 +154,52 @@ func sessionIDFromRequest(r *http.Request) string {
 }
 
 // authenticatedUser проверяет cookie-сессию и возвращает пользователя.
-func (h *Handlers) authenticatedUser(r *http.Request) (*models.User, bool) {
+//
+// Исхода три, а не два, как давал прежний bool: «входа нет» (nil, nil),
+// «хранилище не ответило» (nil, err) и вход состоялся (user, nil). Склейка
+// первых двух отвечала 401 там, где база лежала: человек с жалобой «не
+// пускает» получал страницу входа, мониторинг — всплеск 401 вместо 500, а в
+// логе не появлялось ничего, кроме строки доступа. Это ровно та подмена,
+// которую ADR-0029 убрал из проверки прав, только на пути входа, и ADR-0030
+// требует, чтобы у настоящего сбоя была причина в логе.
+func (h *Handlers) authenticatedUser(r *http.Request) (*models.User, error) {
 	sessionID := sessionIDFromRequest(r)
 	if sessionID == "" {
-		return nil, false
+		return nil, nil
 	}
 
 	session, err := h.Sessions.Get(r.Context(), sessionID)
 	if err != nil {
-		return nil, false
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("чтение сессии: %w", err)
 	}
 
 	user, err := h.Users.GetByID(r.Context(), session.UserID)
 	if err != nil {
-		return nil, false
+		// Сессия живая, а пользователя нет: аккаунт удалили или связь сгорела.
+		// Это «входа нет», а не отказ сервера — иначе выход удалённого
+		// пользователя превратился бы в 500.
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("чтение пользователя сессии: %w", err)
 	}
 
-	return user, true
+	return user, nil
 }
 
 // RequireAuth — middleware: доступ только авторизованным.
 // Попутно выпускает csrf-cookie, если её ещё нет (совместимость со старыми сессиями).
 func (h *Handlers) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, ok := h.authenticatedUser(r)
-		if !ok {
+		user, err := h.authenticatedUser(r)
+		if err != nil {
+			internalError(w, r, sessionFailureReason, err)
+			return
+		}
+		if user == nil {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
