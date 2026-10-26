@@ -278,6 +278,35 @@ func TestScheduleGroupsAPIListsCatalog(t *testing.T) {
 	}
 }
 
+// Без limit отдаётся весь каталог: страница строит из него datalist и подпись
+// «В каталоге N групп», поэтому первые 200 из 588 оставляли дальние по
+// алфавиту группы без подсказки и врали о размере каталога (ADR-0035).
+func TestScheduleGroupsAPIReturnsWholeCatalogueByDefault(t *testing.T) {
+	e := newScheduleSourceEnv(t)
+
+	groups := make([]store.SourceGroup, 0, 205)
+	for i := 1; i <= 205; i++ {
+		groups = append(groups, store.SourceGroup{
+			ExternalID: strconv.Itoa(1000 + i),
+			Name:       "Г-" + strconv.Itoa(1000+i),
+		})
+	}
+	e.seedCatalog(t, groups...)
+
+	payload := decode(t, sourceQuery(e.h, "/api/schedule/groups"))
+	if payload["count"] != float64(205) {
+		t.Fatalf("без limit count = %v, ожидалось 205", payload["count"])
+	}
+	if raw, _ := payload["groups"].([]any); len(raw) != 205 {
+		t.Fatalf("без limit groups содержит %d записей", len(raw))
+	}
+
+	narrow := decode(t, sourceQuery(e.h, "/api/schedule/groups?limit=50"))
+	if narrow["count"] != float64(50) {
+		t.Errorf("limit=50 отдал %v групп", narrow["count"])
+	}
+}
+
 func TestScheduleLessonsAPIServesImportedWeek(t *testing.T) {
 	e := newScheduleSourceEnv(t)
 	e.seedCatalog(t, store.SourceGroup{ExternalID: "494", Name: "Б-ИСиТ-22"})

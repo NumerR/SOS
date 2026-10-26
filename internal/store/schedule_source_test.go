@@ -205,6 +205,39 @@ func TestListGroupsSearchesCyrillicCaseInsensitively(t *testing.T) {
 	}
 }
 
+// Каталог больше прежнего умолчания: 0 — «весь список», а не первые 200.
+// Страница строит из ответа datalist и подпись «В каталоге N групп», и
+// усечённый каталог молча оставлял без подсказки все группы после 200-й.
+func TestListGroupsWithoutLimitReturnsWholeCatalogue(t *testing.T) {
+	s, _ := newSourceStore(t)
+	ctx := context.Background()
+
+	groups := make([]store.SourceGroup, 0, 205)
+	for i := 1; i <= 205; i++ {
+		groups = append(groups, store.SourceGroup{
+			ExternalID: strconv.Itoa(1000 + i),
+			Name:       "Г-" + strconv.Itoa(1000+i),
+		})
+	}
+	mustGroups(t, s, groups...)
+
+	all, err := s.ListGroups(ctx, testSource, "", 0)
+	if err != nil {
+		t.Fatalf("ListGroups без лимита: %v", err)
+	}
+	if len(all) != 205 {
+		t.Fatalf("без лимита %d групп, ожидалось 205 (умолчание снова режет каталог)", len(all))
+	}
+
+	limited, err := s.ListGroups(ctx, testSource, "", 50)
+	if err != nil {
+		t.Fatalf("ListGroups с лимитом: %v", err)
+	}
+	if len(limited) != 50 {
+		t.Fatalf("лимит 50 вернул %d строк", len(limited))
+	}
+}
+
 func TestResolveGroup(t *testing.T) {
 	s, _ := newSourceStore(t)
 	ctx := context.Background()

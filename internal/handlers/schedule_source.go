@@ -39,13 +39,18 @@ import (
 // параметре не должна превращаться в сотни обращений к источнику.
 const maxScheduleImportMonths = 3
 
-// maxScheduleGroupLimit — сколько групп отдаём на страницу за раз.
-const maxScheduleGroupLimit = 500
+// maxScheduleGroupLimit — потолок явного limit, тот же, что у хранилища.
+const maxScheduleGroupLimit = 2000
 
 // ScheduleGroupsAPI — GET /api/schedule/groups?q=&limit=
 //
 // Список групп из уже синхронизированного каталога. Пустой каталог — не ошибка:
 // страница тогда честно говорит «расписание ещё не импортировано».
+//
+// Без limit отдаётся весь каталог: страница строит из ответа datalist и
+// подпись «В каталоге N групп», а каталог — это несколько сотен строк, которые
+// хранилище всё равно читает целиком. Первые 200 из 588 делали подсказку
+// неполной и врали о размере каталога.
 func (h *Handlers) ScheduleGroupsAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w)
@@ -57,7 +62,8 @@ func (h *Handlers) ScheduleGroupsAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := r.URL.Query().Get("q")
-	limit := queryInt(r, "limit", 200)
+	// 0 — весь каталог; queryInt отдаёт fallback и на неразобранное значение.
+	limit := queryInt(r, "limit", 0)
 
 	groups, err := h.ScheduleSource.ListGroups(r.Context(), apeks.Source, user, limit)
 	if err != nil {

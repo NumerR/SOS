@@ -224,7 +224,11 @@ func (s *ScheduleSourceStore) UpsertGroups(ctx context.Context, source string, g
 // память запроса целиком; при переезде на PostgreSQL (T2.1) фильтр можно будет
 // вернуть в SQL через ILIKE, изменив только этот метод.
 func (s *ScheduleSourceStore) ListGroups(ctx context.Context, source, query string, limit int) ([]SourceGroup, error) {
-	if limit <= 0 || limit > 2000 {
+	// limit 0 — весь каталог: хранилище и так читает все строки, а странице
+	// нужен полный список для datalist и честного «В каталоге N групп».
+	// Отрицательный или чрезмерный лимит — ошибка вызывающего, а не команда
+	// «отдай всё»: на ней остаётся прежнее умолчание 200.
+	if limit < 0 || limit > 2000 {
 		limit = 200
 	}
 
@@ -254,7 +258,7 @@ func (s *ScheduleSourceStore) ListGroups(ctx context.Context, source, query stri
 		if needle != "" && !strings.Contains(strings.ToLower(g.Name), needle) {
 			continue
 		}
-		if len(groups) >= limit {
+		if limit > 0 && len(groups) >= limit {
 			break
 		}
 		groups = append(groups, g)
