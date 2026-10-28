@@ -39,11 +39,16 @@
 //  10. сьюты не догружают страницы руками (ADR-0026): ручной диспатч события
 //      загрузки в `tests/ui/*.cjs` красный — jsdom стреляет им сам, а второй
 //      запуск обработчиков отсоединяет узлы, уже снятые сьютом.
+//  11. у локальных CSS/JS в адресе есть ?v=дата, и она не старше самих файлов
+//      (ADR-0037): иначе правка статики остаётся невидимой за старым кэшем.
+//  12. правило, которое анимирует масштабом деталь внутри <svg>, обязано задать
+//      transform-box и transform-origin (ADR-0038): без них Chromium отсчитывает
+//      scale от угла viewBox, и значок «идёт» уезжает по диагонали за такт.
 //
 // Запуск локально: node scripts/check-frontend.mjs
 // Код выхода 0 — всё в порядке, 1 — есть находки (они печатаются списком).
 
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join, posix } from "node:path";
 
 const ROOT = process.argv[2] || ".";
@@ -93,6 +98,35 @@ function resolveLocalHref(href) {
   return join(WEB, clean.replace(/^\//, ""));
 }
 
+// Версия статики в адресе (ADR-0037). no-cache действует на ответы, которые
+// браузер уже запросил; копия, скачанная до его появления, может считаться
+// свежей и не запрашиваться вовсе — тогда страница собирается из смеси нового
+// JS и старого CSS, и человек видит «правки не применились». Дата в ?v=
+// меняет сам адрес, поэтому хватает обычной перезагрузки. Дата не должна быть
+// старше самих файлов: это ловит правку CSS/JS без поднятия версии.
+function assetDateFloor() {
+  const files = [
+    ...readdirSync(join(WEB, "css")).filter((n) => n.endsWith(".css")).map((n) => join(WEB, "css", n)),
+    ...jsFiles(JS_DIR).map((n) => join(JS_DIR, n)),
+  ];
+  let newest = 0;
+  for (const file of files) newest = Math.max(newest, statSync(file).mtimeMs);
+  return Number(new Date(newest).toISOString().slice(0, 10).replaceAll("-", ""));
+}
+
+const assetFloor = assetDateFloor();
+
+function checkAssetVersion(page, href) {
+  const file = resolveLocalHref(href);
+  if (file === null || !/\.(css|js)$/.test(file)) return;
+  const match = href.match(/[?&]v=(\d{8})\b/);
+  if (!match) {
+    fail(page, `у ${href} нет ?v=даты — браузер может показать копию из старого кэша`);
+  } else if (Number(match[1]) < assetFloor) {
+    fail(page, `версия ${match[1]} у ${href} старше самих CSS/JS (${assetFloor}) — поднимите дату в адресах всех страниц`);
+  }
+}
+
 // Атрибуты вида id="modalTitle" — и в HTML, и в JS-шаблонных строках.
 const ID_DECLARATION = /\bid=["']([A-Za-z0-9_:.#$%&+*~=@-]+)["']/g;
 const GET_ELEMENT = /getElementById\(\s*["']([^"']+)["']\s*\)/g;
@@ -129,6 +163,7 @@ for (const page of pages) {
   const pageScripts = [];
 
   for (const href of scriptHrefs) {
+    checkAssetVersion(page, href);
     const file = resolveLocalHref(href);
     if (file === null) {
       notes.push(`${page}: внешняя ссылка на скрипт ${href} — не проверяется`);
@@ -146,6 +181,7 @@ for (const page of pages) {
   }
 
   for (const href of [...html.matchAll(/<link\b[^>]*\bhref=["']([^"']+)["'][^>]*>/gi)].map((m) => m[1])) {
+    checkAssetVersion(page, href);
     const file = resolveLocalHref(href);
     if (file !== null && !existsSync(file)) {
       fail(page, `подключён несуществующий файл стилей ${href}`);
@@ -275,6 +311,24 @@ for (const m of css.matchAll(/(--[a-z-]+):\s*(#[0-9a-fA-F]{6})\s*;/g)) {
   if (!(m[1] in tokens)) tokens[m[1]] = m[2];
 }
 
+// Тёмная тема объявляет те же токены вторым блоком. Проверять контраст только
+// по первому вхождению нельзя: в тёмной теме значения другие, и зелёный CI по
+// светлым парам ничего не говорит о тёмных. Блок начинается с :root, поэтому
+// проверка покрытия ниже его пропускает — здесь он читается явно.
+const darkTokens = { ...tokens };
+const darkBlock = /:root\[data-theme="dark"\]\s*\{([\s\S]*?)\}/.exec(css);
+if (!darkBlock) {
+  fail("css/style.css", 'не найден блок :root[data-theme="dark"] — тёмная тема не объявлена');
+} else {
+  for (const m of darkBlock[1].matchAll(/(--[a-z-]+):\s*(#[0-9a-fA-F]{6})\s*;/g)) {
+    darkTokens[m[1]] = m[2];
+  }
+}
+const THEMES = [
+  { name: "светлая", values: tokens },
+  { name: "тёмная", values: darkTokens },
+];
+
 // Пары, где цвет действительно несёт текст (или границу контрола). Новый член
 // списка добавляется вместе с комментарием в CSS, объясняющим выбор значения.
 // Ниже есть проверка покрытия: пара, которую задаёт правило style.css, обязана
@@ -288,9 +342,8 @@ const CONTRAST_PAIRS = [
   ["--ink-soft", "--surface", 3.0, "пиктограмма `.btn-icon` (1.4.11 — как граница компонента)"],
   ["--ink", "--parchment", 4.5, "основной текст"],
   ["--ink", "--surface", 4.5, "текст на панелях и светлых кнопках `.btn-secondary`"],
-  ["--teal", "--parchment", 4.5, "ссылки и номер секции"],
-  ["--teal", "--surface", 4.5, "ссылка на панели"],
-  ["--teal", "--teal-tint", 4.5, "`.section-index` (10px) и `.btn-icon:hover`"],
+  ["--accent", "--parchment", 4.5, "ссылки, подписи секций, день недели в расписании, `.btn-icon:hover`"],
+  ["--accent", "--surface", 4.5, "ссылка и подпись на панели"],
   ["--teal-ink", "--teal-tint", 4.5, "аватары, `.card-icon`, `.lesson-num`, статус «сдано», `.btn-outline:hover`"],
   ["--teal-ink", "--parchment-deep", 4.5, "моноширинный `code`"],
   ["--teal-ink", "--surface", 4.5, "текст `.btn-outline`"],
@@ -298,7 +351,11 @@ const CONTRAST_PAIRS = [
   ["--danger", "--danger-tint", 4.5, "текст отказа"],
   ["--danger", "--parchment", 4.5, "красный текст на фоне страницы (`.modal-close:hover` — на tint)"],
   ["#f5f0e6", "--teal", 4.5, "подпись синей кнопки"],
-  ["#f5f0e6", "--danger", 4.5, "подпись кнопки удаления"],
+  ["#f5f0e6", "--danger-btn", 4.5, "подпись кнопки удаления (заливка `--danger-btn`)"],
+  ["#f5f0e6", "--danger-btn-hover", 4.5, "подпись кнопки удаления в `:hover`"],
+  ["--pending-ink", "--pending-bg", 4.5, "плашка «не начата»"],
+  ["--active-ink", "--active-bg", 4.5, "плашка «идёт»"],
+  ["--done-ink", "--done-bg", 4.5, "плашка «закончена»"],
   ["#f5f0e6", "--teal-hover", 4.5, "подпись синей кнопки в `:hover`"],
   ["#f5f0e6", "--teal-press", 4.5, "подпись синей кнопки в `:active`"],
   ["#f4efe4", "--teal", 4.5, "логотип в шапке и skip-link в фокусе"],
@@ -317,27 +374,31 @@ const CONTRAST_EXEMPT = [
 
 const contrastNotes = [];
 // Пара может задавать и литеральный цвет (подпись кнопок — #f5f0e6, он нигде
-// не объявлен токеном); тогда он участвует в проверке как есть.
-function resolveColor(ref) {
+// не объявлен токеном); тогда он участвует в проверке как есть. Литералы равны
+// в обеих темах, токены берутся из набора своей темы.
+function resolveColor(ref, values = tokens) {
   if (ref.startsWith("#")) return ref;
-  return tokens[ref] || null;
+  return values[ref] || null;
 }
 
 for (const [fg, bg, min, why] of CONTRAST_PAIRS) {
-  const [fgValue, bgValue] = [resolveColor(fg), resolveColor(bg)];
-  if (!fgValue || !bgValue) {
-    fail("css/style.css", "контраст-проверка: токен " + (fgValue ? bg : fg) + " не найден в :root — список пар устарел");
-    continue;
-  }
-  const value = ratio(fgValue, bgValue);
-  if (value === null) {
-    fail("css/style.css", `контраст ${fg}/${bg}: значение не цвет sRGB hex`);
-    continue;
-  }
-  if (value < min) {
-    fail("css/style.css", `контраст ${fg} на ${bg} = ${value.toFixed(2)}:1, нужно ${min}:1 (${why})`);
-  } else {
-    contrastNotes.push(`контраст ${fg} на ${bg} = ${value.toFixed(2)}:1 (порог ${min}) — ${why}`);
+  for (const theme of THEMES) {
+    const [fgValue, bgValue] = [resolveColor(fg, theme.values), resolveColor(bg, theme.values)];
+    if (!fgValue || !bgValue) {
+      fail("css/style.css", `контраст-проверка [${theme.name} тема]: токен ` +
+        (fgValue ? bg : fg) + " не найден — список пар устарел");
+      continue;
+    }
+    const value = ratio(fgValue, bgValue);
+    if (value === null) {
+      fail("css/style.css", `контраст ${fg}/${bg} [${theme.name} тема]: значение не цвет sRGB hex`);
+      continue;
+    }
+    if (value < min) {
+      fail("css/style.css", `контраст ${fg} на ${bg} [${theme.name} тема] = ${value.toFixed(2)}:1, нужно ${min}:1 (${why})`);
+    } else {
+      contrastNotes.push(`контраст ${fg} на ${bg} [${theme.name}] = ${value.toFixed(2)}:1 (порог ${min}) — ${why}`);
+    }
   }
 }
 
@@ -647,46 +708,21 @@ const COLOR_REF = /var\((--[a-zA-Z-]+)\)|(#[0-9a-fA-F]{6})/g;
 // Токенизированные тени (--e1, --inset1) разворачиваются в rgba-список, не в
 // цвет: они в кадре есть, но контрастом не считаются — несущий цвет кольца всегда
 // стоит отдельным var() или hex.
-function colorRefs(value) {
+function colorRefs(value, values) {
   const out = [];
   for (const m of value.matchAll(COLOR_REF)) {
     const ref = (m[1] || m[2]).toLowerCase();
-    const hex = resolveColor(ref);
+    const hex = resolveColor(ref, values);
     if (hex) out.push({ ref, hex });
   }
   return out;
-}
-
-const focusSurfaces = [];
-for (const name of FOCUS_SURFACES) {
-  const hex = tokens[name];
-  if (!hex) {
-    fail("css/style.css", `контраст-проверка: подложка ${name} не найдена в :root — список FOCUS_SURFACES устарел`);
-    continue;
-  }
-  focusSurfaces.push({ name, hex });
-}
-
-// Для каждого нарисованного цвета считаем худшую из подложек: кольцо пригодно,
-// только если проходит и на светлой панели, и на утопленном поле.
-function worstSurface(color) {
-  let worst = Infinity;
-  let where = null;
-  for (const surface of focusSurfaces) {
-    const value = ratio(color.hex, surface.hex);
-    if (value === null) return null;
-    if (value < worst) {
-      worst = value;
-      where = surface.name;
-    }
-  }
-  return { worst, where };
 }
 
 let focusRules = 0;
 let focusRings = 0;
 let focusWorst = null;
 const seenExempts = new Set();
+const focusBlocks = [];
 
 for (const block of bareCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
   const selector = block[1].trim().replace(/\s+/g, " ");
@@ -697,49 +733,95 @@ for (const block of bareCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     seenExempts.add(selector);
     continue;
   }
+  focusBlocks.push({ selector, body: block[2] });
+}
 
-  const drawn = [];
-  let indicatorDecls = 0;
-  let removesOutline = false;
-  for (const m of block[2].matchAll(INDICATOR_DECL)) {
-    indicatorDecls += 1;
-    if (m[1] === "outline" && /^\s*(?:none|0)\b/.test(m[2])) removesOutline = true;
-    drawn.push(...colorRefs(m[2]));
+// Кольцо проверяется в каждой теме отдельно: --ring в тёмной теме светлый, и
+// контраст, посчитанный только по светлым подложкам, о нём ничего не говорит.
+const ringCounts = [];
+for (const theme of THEMES) {
+  const focusSurfaces = [];
+  for (const name of FOCUS_SURFACES) {
+    const hex = theme.values[name];
+    if (!hex) {
+      fail("css/style.css", `контраст-проверка [${theme.name} тема]: подложка ${name} не найдена — список FOCUS_SURFACES устарел`);
+      continue;
+    }
+    focusSurfaces.push({ name, hex });
   }
 
-  // Правило не трогало ни контур, ни тень, ни рамку — системный индикатор
-  // остался на месте, рисовать нечего.
-  if (!indicatorDecls) continue;
+  // Для каждого нарисованного цвета считаем худшую из подложек: кольцо
+  // пригодно, только если проходит и на светлой панели, и на утопленном поле.
+  function worstSurface(color) {
+    let worst = Infinity;
+    let where = null;
+    for (const surface of focusSurfaces) {
+      const value = ratio(color.hex, surface.hex);
+      if (value === null) return null;
+      if (value < worst) {
+        worst = value;
+        where = surface.name;
+      }
+    }
+    return { worst, where };
+  }
 
-  if (!drawn.length) {
-    fail("css/style.css", `правило «${selector}» ${removesOutline ? "снимает системный контур и не задаёт ни одного посчитаемого цвета" : "рисует индикатор фокуса без цвета из токенов или hex"} — чем показан фокус, непонятно`);
-    continue;
-  }
-  focusRings += 1;
+  let rings = 0;
+  let themeWorst = null;
+  for (const { selector, body } of focusBlocks) {
+    const drawn = [];
+    let indicatorDecls = 0;
+    let removesOutline = false;
+    for (const m of body.matchAll(INDICATOR_DECL)) {
+      indicatorDecls += 1;
+      if (m[1] === "outline" && /^\s*(?:none|0)\b/.test(m[2])) removesOutline = true;
+      drawn.push(...colorRefs(m[2], theme.values));
+    }
 
-  let best = null;
-  for (const color of drawn) {
-    const candidate = worstSurface(color);
-    if (!candidate) continue;
-    if (!best || candidate.worst > best.worst) best = { ...candidate, ref: color.ref };
+    // Правило не трогало ни контур, ни тень, ни рамку — системный индикатор
+    // остался на месте, рисовать нечего.
+    if (!indicatorDecls) continue;
+
+    if (!drawn.length) {
+      fail("css/style.css", `правило «${selector}» [${theme.name} тема] ${removesOutline ? "снимает системный контур и не задаёт ни одного посчитаемого цвета" : "рисует индикатор фокуса без цвета из токенов или hex"} — чем показан фокус, непонятно`);
+      continue;
+    }
+    rings += 1;
+
+    let best = null;
+    for (const color of drawn) {
+      const candidate = worstSurface(color);
+      if (!candidate) continue;
+      if (!best || candidate.worst > best.worst) best = { ...candidate, ref: color.ref };
+    }
+    if (!best) {
+      fail("css/style.css", `правило «${selector}» [${theme.name} тема]: цвета индикатора (${drawn.map((c) => c.ref).join(", ")}) не sRGB hex — контраст кольца посчитать нечем`);
+      continue;
+    }
+    if (best.worst < MIN_FOCUS_RATIO) {
+      fail("css/style.css", `правило «${selector}» [${theme.name} тема]: самый контрастный цвет индикатора ${best.ref} даёт ${best.worst.toFixed(2)}:1 против ${best.where} — нужно ${MIN_FOCUS_RATIO}:1, кольцо фокуса на этой подложке не видно (WCAG 1.4.11/2.4.7)`);
+      continue;
+    }
+    if (!themeWorst || best.worst < themeWorst.worst) {
+      themeWorst = { ...best, selector };
+    }
+    if (!focusWorst || best.worst < focusWorst.worst) {
+      focusWorst = { ...best, selector, theme: theme.name };
+    }
   }
-  if (!best) {
-    fail("css/style.css", `правило «${selector}»: цвета индикатора (${drawn.map((c) => c.ref).join(", ")}) не sRGB hex — контраст кольца посчитать нечем`);
-    continue;
-  }
-  if (best.worst < MIN_FOCUS_RATIO) {
-    fail("css/style.css", `правило «${selector}»: самый контрастный цвет индикатора ${best.ref} даёт ${best.worst.toFixed(2)}:1 против ${best.where} — нужно ${MIN_FOCUS_RATIO}:1, кольцо фокуса на этой подложке не видно (WCAG 1.4.11/2.4.7)`);
-    continue;
-  }
-  if (!focusWorst || best.worst < focusWorst.worst) focusWorst = { ...best, selector };
+
+  ringCounts.push(rings);
+  focusRings += rings;
+  contrastNotes.push(`фокус [${theme.name}]: колец ${rings}, порог ${MIN_FOCUS_RATIO}:1 против каждой из подложек (${FOCUS_SURFACES.join(", ")})` +
+    (themeWorst ? ` — самое слабое: ${themeWorst.ref} в «${themeWorst.selector}», ${themeWorst.worst.toFixed(2)}:1 против ${themeWorst.where}` : ""));
 }
 
 // Стражи вырождения: пустая проверка выглядит как зелёный CI.
 if (focusRules === 0) {
   fail("css/style.css", "в style.css не найдено ни одного правила с :focus — проверке индикатора фокуса нечего считать");
 }
-if (focusRings === 0) {
-  fail("css/style.css", "ни одно правило фокуса не рисует индикатора с посчитанным цветом — кольцам проверять нечего");
+if (focusRings === 0 || ringCounts.some((n) => n === 0)) {
+  fail("css/style.css", "ни одно правило фокуса не рисует индикатора с посчитанным цветом хотя бы в одной теме — кольцам проверять нечего");
 }
 for (const [selector, reason] of FOCUS_EXEMPT) {
   if (!seenExempts.has(selector)) {
@@ -750,7 +832,7 @@ for (const [selector, reason] of FOCUS_EXEMPT) {
 contrastNotes.push(`фокус: правил ${focusRules}, колец с посчитанным контрастом ${focusRings}, ` +
   `порог ${MIN_FOCUS_RATIO}:1 против каждой из подложек (${FOCUS_SURFACES.join(", ")}), ` +
   `исключений ${FOCUS_EXEMPT.size}` +
-  (focusWorst ? ` — самое слабое проходящее кольцо: ${focusWorst.ref} в «${focusWorst.selector}», ${focusWorst.worst.toFixed(2)}:1 против ${focusWorst.where}` : ""));
+  (focusWorst ? ` — самое слабое проходящее кольцо: ${focusWorst.ref} в «${focusWorst.selector}» [${focusWorst.theme} тема], ${focusWorst.worst.toFixed(2)}:1 против ${focusWorst.where}` : ""));
 for (const [selector, reason] of FOCUS_EXEMPT) {
   if (seenExempts.has(selector)) contrastNotes.push(`фокус: освобождено «${selector}» — ${reason}`);
 }
@@ -792,6 +874,72 @@ if (!existsSync(SUITE_DIR)) {
     fail("tests/ui", "в каталоге нет ни одного .cjs-сьюта — проверка вырождается в зелёный CI");
   }
   notes.push(`сьюты: файлов ${suites.length}, ручных диспатчей события загрузки — ${dispatchedLoad} (приём ADR-0026)`);
+}
+
+// ---------- 12. масштабируемая деталь внутри SVG обязана задавать transform-box ----------
+//
+// Значок «идёт» — кружок внутри <svg> (STATUS_ICONS в schedule.js), и pulse-dot
+// масштабировал его без transform-box. Началом отсчёта в Chromium служит левый
+// верхний угол viewBox (вычисленный transform-origin — 0 0), поэтому кружок за
+// такт уезжал по диагонали на 2.3px: глаз читает это как «иконка дрожит»
+// (ADR-0038). Живые слои такую правку не ловят: check-focus замораживает
+// анимации, а jsdom их не исполняет вовсе — значит проверять надо текст CSS.
+
+// Ключевые кадры, которые двигают геометрию: transform со scale() или свойство
+// scale. rotate/translate внутри <svg> центром не обязаны, а scale — обязан.
+const scalingKeyframes = new Set();
+for (const m of bareCss.matchAll(/@keyframes\s+([\w-]+)\s*\{([\s\S]*?\n\})/g)) {
+  if (/transform\s*:[^;}]*scale\(/.test(m[2]) || /(?:^|[;\s])scale\s*:/.test(m[2])) {
+    scalingKeyframes.add(m[1]);
+  }
+}
+
+// Классы, объявленные внутри <svg> ... </svg>: и в HTML-разметке, и в строковых
+// шаблонах JS — значки собирается именно там, и статический HTML страницы их не
+// содержит.
+const svgClasses = new Set();
+const markupFiles = [
+  ...htmlFiles(WEB).map((page) => join(WEB, page)),
+  ...jsFiles(JS_DIR).map((file) => join(JS_DIR, file)),
+];
+for (const file of markupFiles) {
+  const text = readFileSync(file, "utf8");
+  for (const frag of text.matchAll(/<svg[\s\S]*?<\/svg>/g)) {
+    for (const cls of frag[0].matchAll(/class="([^"]*)"/g)) {
+      for (const name of cls[1].trim().split(/\s+/)) svgClasses.add(name);
+    }
+  }
+}
+
+let scaledInsideSvg = 0;
+for (const block of bareCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+  const selector = block[1].trim().replace(/\s+/g, " ");
+  if (selector.startsWith(":root") || selector.startsWith("@")) continue;
+  const anim = /(?:^|[;\s])animation(?:-name)?\s*:\s*([^;]+)/.exec(block[2]);
+  if (!anim) continue;
+  const names = [...anim[1].matchAll(/[\w-]+/g)].map((m) => m[0]).filter((n) => scalingKeyframes.has(n));
+  if (!names.length) continue;
+  // Деталь ищется в последней части селектора: правило
+  // `.lesson-status.is-active .status-dot` анимирует `.status-dot`, а не плашку.
+  const tail = selector.split(/[\s>+~]+/).pop();
+  const classes = [...tail.matchAll(/\.([\w-]+)/g)].map((m) => m[1]);
+  if (!classes.some((c) => svgClasses.has(c))) continue;
+  scaledInsideSvg += 1;
+  const missing = ["transform-box", "transform-origin"].filter((p) => !new RegExp(`(?:^|[;\\s])${p}\\s*:`).test(block[2]));
+  if (missing.length) {
+    fail("css/style.css", `правило «${selector}» крутит кадры «${names.join(", ")}» на детали внутри <svg> ` +
+      `и не задаёт ${missing.join(" и ")} — началом отсчёта станет левый верхний угол viewBox, и деталь ` +
+      `будет уезжать за такт вместо того, чтобы дышать на месте (ADR-0038)`);
+  }
+}
+
+if (scalingKeyframes.size && !svgClasses.size) {
+  fail("css/style.css", "в фронтенде нет ни одного класса внутри <svg>, но есть масштабирующие @keyframes — " +
+    "проверка ADR-0038 съехала на новую разметку и ничего не считает");
+}
+if (scalingKeyframes.size) {
+  notes.push(`масштаб в SVG: кадров ${scalingKeyframes.size}, классов внутри <svg> ${svgClasses.size}, ` +
+    `правил, анимирующих деталь в <svg> — ${scaledInsideSvg} (приём ADR-0038)`);
 }
 
 if (problems.length > 0) {

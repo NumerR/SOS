@@ -81,8 +81,8 @@ func TestProfilePageRequiresSession(t *testing.T) {
 		`id="profileIdentity"`,    // блок идентичности из GET /api/auth/me
 		`id="passwordForm"`,       // панель смены пароля переехала сюда
 		`id="logoutAllBtn"`,       // и «выйти везде» тоже
-		`src="js/core/layout.js"`, // порядок загрузки соблюдён
-		`src="js/profile.js"`,     // страничный скрипт подключён
+		`src="js/core/layout.js?`, // порядок загрузки соблюдён (за src — версия ?v=, ADR-0037)
+		`src="js/profile.js?`,     // страничный скрипт подключён
 	} {
 		if !strings.Contains(html, marker) {
 			t.Errorf("в ответе нет %q — страница собрана не из того файла?", marker)

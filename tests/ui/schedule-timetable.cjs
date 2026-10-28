@@ -121,12 +121,15 @@ const STATUS = {
 // boot сеет localStorage до исполнения скриптов страницы: выбор группы и
 // месяца переживает перезагрузку, и без этого нельзя получить детерминированный
 // «декабрь 2026» для проверки перехода в январь.
-function boot({ role = "teacher", routes = {}, seed = null } = {}) {
+function boot({ role = "teacher", routes = {}, seed = null, now = null } = {}) {
     const html = fs.readFileSync(path.join(REPO, "web", "schedule.html"), "utf8");
     const dom = new JSDOM(html, { url: BASE + "/schedule", runScripts: "outside-only", pretendToBeVisual: true });
     const { window } = dom;
 
     if (seed) window.localStorage.setItem("sos.schedule.choice", JSON.stringify(seed));
+    // Часы страницы фиксируются до первого рендера: состояния «идёт/не начата»
+    // иначе зависели бы от времени прогона.
+    if (now) window.Date.now = () => now;
 
     const calls = [];
     const hits = {};
@@ -251,13 +254,99 @@ async function until(page, predicate, tries = 60) {
         guest.doc.querySelectorAll("#timetable img, #timetable script").length === 0
         && /Физика/.test(text(guest.doc, "timetable")));
 
-    // ---------- 3. пустые состояния ----------
+    // ---------- 3. сегодня, счёт по номерам, состояния с таймером ----------
+    //
+    // Часы страницы — полдень сегодняшнего дня: так «прошедшая», «идущая» и
+    // «будущая» пары детерминированы, а карточка «сегодня» существует в любом
+    // месяце. Вчерашний день нужен для состояния «Закончена».
+    const noon = new Date();
+    noon.setHours(12, 0, 0, 0);
+    const dayKeyOf = (date) => date.getFullYear() * 10000 + (date.getMonth() + 1) * 100 + date.getDate();
+    const dateOf = (date) => `${String(date.getDate()).padStart(2, "0")}.${String(date.getMonth() + 1).padStart(2, "0")}.${date.getFullYear()}`;
+    const yesterday = new Date(noon.getTime() - 24 * 3600 * 1000);
+
+    const today = dayKeyOf(noon);
+    const statusDays = [
+        {
+            day_key: dayKeyOf(yesterday), date: dateOf(yesterday), weekday: "Вчера",
+            lessons: [
+                lesson(2, "Прошедшая пара", {
+                    external_id: "done-2", day_key: dayKeyOf(yesterday), date: dateOf(yesterday), weekday: "Вчера",
+                    time: "09:00 – 10:00", start_time: "09:00", end_time: "10:00",
+                }),
+            ],
+        },
+        {
+            day_key: today, date: dateOf(noon), weekday: "Сегодня",
+            // Две подгруппы одной четвёртой пары — это одна пара, поэтому вместе
+            // с пятой их две, а не три (страница считает номера, не строки).
+            lessons: [
+                lesson(4, "Четвёртая, первая подгруппа", {
+                    external_id: "active-4a", day_key: today, date: dateOf(noon),
+                    time: "11:30 – 13:30", start_time: "11:30", end_time: "13:30", subgroup: "/1",
+                }),
+                lesson(4, "Четвёртая, вторая подгруппа", {
+                    external_id: "active-4b", day_key: today, date: dateOf(noon),
+                    time: "11:30 – 13:30", start_time: "11:30", end_time: "13:30", subgroup: "/2",
+                }),
+                lesson(5, "Пятая, ещё не началась", {
+                    external_id: "pending-5", day_key: today, date: dateOf(noon),
+                    time: "14:00 – 15:30", start_time: "14:00", end_time: "15:30",
+                }),
+            ],
+        },
+    ];
+    const statusFixture = lessons({
+        days: statusDays,
+        imported_months: [{ month: new Date().getMonth() + 1, year: new Date().getFullYear(), lessons: 4, imported_at: 1761300000 }],
+    });
+
+    const statusPage = boot({
+        role: "guest",
+        seed: { group: "494", name: "Б-ИСиТ-22" },
+        now: noon.getTime(),
+        routes: { "GET /api/schedule/lessons": json(statusFixture) },
+    });
+    await until(statusPage, () => /Сегодня/.test(text(statusPage.doc, "timetable")));
+
+    const todayCard = statusPage.doc.querySelector(".sched-day.is-today");
+    check("сегодняшний день помечен карточкой и чипом",
+        statusPage.doc.querySelectorAll(".sched-day.is-today").length === 1
+        && todayCard.querySelector(".sched-today-chip") !== null,
+        todayCard ? todayCard.className : "карточки нет");
+    check("счёт пар по номерам: две четвёртые и пятая — две пары",
+        /2 пары/.test(todayCard.textContent.replace(/\s+/g, " ")),
+        todayCard.textContent.replace(/\s+/g, " ").slice(0, 120));
+    check("идущая пара помечена «Идёт» и показывает остаток",
+        todayCard.querySelectorAll(".lesson-status.is-active").length === 2
+        && /Идёт/.test(todayCard.textContent) && /осталось 1 ч 30 мин/.test(todayCard.textContent),
+        todayCard.textContent.replace(/\s+/g, " ").slice(0, 200));
+    check("будущая пара помечена «Не начата» и считает до начала",
+        todayCard.querySelectorAll(".lesson-status.is-pending").length === 1
+        && /Не начата/.test(todayCard.textContent) && /через 2 ч/.test(todayCard.textContent),
+        todayCard.textContent.replace(/\s+/g, " ").slice(0, 200));
+
+    const doneBadge = statusPage.doc.querySelector(".lesson-status.is-done");
+    check("прошедшая пара помечена «Закончена»",
+        doneBadge !== null && /Закончена/.test(doneBadge.textContent),
+        doneBadge ? doneBadge.textContent : "плашки нет");
+    check("у законченной пары нет таймера",
+        doneBadge !== null && doneBadge.closest(".lesson-state").querySelector(".lesson-status-timer").textContent === "");
+
+    // ---------- 4. пустые состояния ----------
     const notImported = boot({
         role: "guest",
-        seed: { group: "494", name: "Б-ИСиТ-22", month: 12, year: 2026 },
-        routes: { "GET /api/schedule/lessons": json(lessons({ days: [], updated_at: 0 })) },
+        seed: { group: "494", name: "Б-ИСиТ-22" },
+        routes: { "GET /api/schedule/lessons": () => json(lessons({ days: [], updated_at: 0 })) },
     });
-    await until(notImported, () => /не импортирован/.test(text(notImported.doc, "timetable")));
+    // Страница всегда открывается на текущем месяце, поэтому «декабрь» — это
+    // два нажатия вперёд, а не сохранённый выбор.
+    await until(notImported, () => find(notImported.calls, "GET /api/schedule/lessons").length >= 1);
+    notImported.doc.getElementById("nextMonth").click();
+    await until(notImported, () => find(notImported.calls, "GET /api/schedule/lessons").length >= 2);
+    notImported.doc.getElementById("nextMonth").click();
+    await until(notImported, () => find(notImported.calls, "GET /api/schedule/lessons").length >= 3
+        && /не импортирован/i.test(text(notImported.doc, "timetable")));
     check("месяц без импорта назван неимпортированным", /ещё не импортирован/i.test(text(notImported.doc, "timetable")),
         text(notImported.doc, "timetable"));
     check("в пустом месяце нет карточек дней", notImported.doc.querySelectorAll("#timetable .sched-day").length === 0);
@@ -280,21 +369,27 @@ async function until(page, predicate, tries = 60) {
         emptyCatalog.calls.map((c) => c.key).join(", "));
     check("пустой каталог показывает выбор группы, а не спиннер", /Выберите группу/.test(text(emptyCatalog.doc, "timetable")));
 
-    // ---------- 4. навигация по месяцам ----------
+    // ---------- 5. навигация по месяцам ----------
     //
     // Декабрь 2026 -> январь 2027: границы месяца считает сервер (month/year),
-    // поэтому от клиента нужен только корректный переход через год.
-    const dec = boot({ role: "guest", seed: { group: "494", name: "Б-ИСиТ-22", month: 12, year: 2026 } });
-    await until(dec, () => find(dec.calls, "GET /api/schedule/lessons").length > 0);
+    // поэтому от клиента нужен только корректный переход через год. Открытие
+    // всегда на текущем месяце, так что до декабря доходим стрелкой.
+    const dec = boot({ role: "guest", seed: { group: "494", name: "Б-ИСиТ-22" } });
+    await until(dec, () => find(dec.calls, "GET /api/schedule/lessons").length >= 1);
     dec.doc.getElementById("nextMonth").click();
-    await until(dec, () => find(dec.calls, "GET /api/schedule/lessons").length > 1);
+    await until(dec, () => find(dec.calls, "GET /api/schedule/lessons").length >= 2);
+    dec.doc.getElementById("nextMonth").click();
+    await until(dec, () => find(dec.calls, "GET /api/schedule/lessons").length >= 3
+        && /декабрь 2026/i.test(text(dec.doc, "monthLabel")));
+    dec.doc.getElementById("nextMonth").click();
+    await until(dec, () => find(dec.calls, "GET /api/schedule/lessons").length >= 4);
     const january = find(dec.calls, "GET /api/schedule/lessons").pop();
     check("стрелка вперёд перелистывает через год", january.params.get("month") === "1" && january.params.get("year") === "2027",
         january.search);
     check("подпись месяца обновилась", /январь 2027/i.test(text(dec.doc, "monthLabel")), text(dec.doc, "monthLabel"));
 
     dec.doc.getElementById("currentMonth").click();
-    await until(dec, () => find(dec.calls, "GET /api/schedule/lessons").length > 2);
+    await until(dec, () => find(dec.calls, "GET /api/schedule/lessons").length >= 5);
     const backToNow = find(dec.calls, "GET /api/schedule/lessons").pop();
     const realMonth = String(new Date().getMonth() + 1);
     check("кнопка текущего месяца возвращает к сегодняшнему", backToNow.params.get("month") === realMonth

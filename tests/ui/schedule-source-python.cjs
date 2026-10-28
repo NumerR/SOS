@@ -30,6 +30,7 @@ const YEAR = Number(process.env.SCHEDULE_YEAR || 2026);
 const SOURCE_HOST = /apeks\.tksu\.ru|tksu\.ru/i;
 
 const results = [];
+const windows = [];
 function check(name, ok, detail = "") {
     results.push({ name, ok, detail });
     console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? " — " + detail : ""}`);
@@ -70,6 +71,7 @@ async function bootPage({ seed }) {
     const dom = new JSDOM(html, { url: BASE + "/schedule", runScripts: "outside-only", pretendToBeVisual: true });
     const { window } = dom;
     const doc = window.document;
+    windows.push(window);
 
     if (seed) window.localStorage.setItem("sos.schedule.choice", JSON.stringify(seed));
 
@@ -102,6 +104,21 @@ async function until(page, predicate, tries = 60) {
 function text(doc, id) {
     const el = doc.getElementById(id);
     return el ? el.textContent.replace(/\s+/g, " ").trim() : "";
+}
+
+// Страница открывается на текущем месяце, поэтому нужный месяц — это
+// последовательность нажатий, а не seed из localStorage (месяц больше не
+// запоминается). Стрелки вызываются только после первого ответа расписания:
+// до DOMContentLoaded кнопки ещё без обработчиков.
+async function showMonth(page, month, year) {
+    const now = new Date();
+    const diff = (year - now.getFullYear()) * 12 + (month - (now.getMonth() + 1));
+    const arrow = diff >= 0 ? "nextMonth" : "prevMonth";
+    for (let i = 0; i < Math.abs(diff); i++) {
+        const before = page.calls.filter((p) => p === "/api/schedule/lessons").length;
+        page.doc.getElementById(arrow).click();
+        await until(page, () => page.calls.filter((p) => p === "/api/schedule/lessons").length > before);
+    }
 }
 
 (async () => {
@@ -162,7 +179,9 @@ function text(doc, id) {
         again.status === 200 && rowsAfter === rows, `строк ${rows} -> ${rowsAfter}`);
 
     // ---------- 5. страница гостя на импортированных данных ----------
-    const page = await bootPage({ seed: { group: GROUP, name: GROUP, month: MONTH, year: YEAR } });
+    const page = await bootPage({ seed: { group: GROUP, name: GROUP } });
+    await until(page, () => page.calls.includes("/api/schedule/lessons"));
+    await showMonth(page, MONTH, YEAR);
     const drawn = await until(page, () => page.doc.querySelectorAll("#timetable .lesson").length > 0);
     const timetableText = text(page.doc, "timetable");
     check("гость видит таймтейбл без входа", drawn,
@@ -188,14 +207,18 @@ function text(doc, id) {
         page.doc.getElementById("sourceManageSection").classList.contains("hidden"));
 
     // ---------- 6. месяц без пар ----------
-    const empty = await bootPage({ seed: { group: GROUP, name: GROUP, month: 12, year: YEAR } });
+    const empty = await bootPage({ seed: { group: GROUP, name: GROUP } });
+    await until(empty, () => empty.calls.includes("/api/schedule/lessons"));
+    await showMonth(empty, 12, YEAR);
     const told = await until(empty, () => /пар нет|не импортирован/.test(text(empty.doc, "timetable")));
     check("пустой месяц различим", told, text(empty.doc, "timetable").slice(0, 120));
 
     const failed = results.filter((r) => !r.ok);
     console.log(`\n${results.length - failed.length}/${results.length} проверок пройдено`);
+    for (const w of windows) w.close();
     if (failed.length) process.exitCode = 1;
 })().catch((err) => {
     console.error("ПРОГОН УПАЛ: " + (err && err.stack ? err.stack : err));
+    for (const w of windows) w.close();
     process.exitCode = 1;
 });

@@ -189,7 +189,9 @@ async function settled(page, limit = 160) {
     check("первый клик не отправил запрос", panel.calls.length === beforeLogout, panel.calls.length + " запросов");
 
     // --- 8. Порядок загрузки и навигация страницы. ---
-    const scriptSrcs = [...panel.doc.querySelectorAll("script")].map((s) => s.getAttribute("src"));
+    // В адресах статики есть ?v=дата (ADR-0037): порядок и состав проверяем по
+    // путям, а не по полной строке src — версия меняется при каждой правке.
+    const scriptSrcs = [...panel.doc.querySelectorAll("script")].map((s) => s.getAttribute("src").split("?")[0]);
     check("layout.js раньше common.js и profile.js", scriptSrcs.indexOf("js/core/layout.js") < scriptSrcs.indexOf("js/common.js")
         && scriptSrcs.indexOf("js/common.js") < scriptSrcs.indexOf("js/profile.js"), JSON.stringify(scriptSrcs));
     check("account.js подключён на странице профиля", scriptSrcs.includes("js/account.js"), JSON.stringify(scriptSrcs));

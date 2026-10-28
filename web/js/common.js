@@ -184,6 +184,46 @@
         });
     }
 
+    // Рябь по нажатию: одна делегированная подписка на документ вместо
+    // обработчика в каждой кнопке. Цвет берётся из currentColor, поэтому на
+    // бирюзовой кнопке рябь светлая, на вторичной — тёмная, и ни один цвет не
+    // дублируется в JS.
+    //
+    // Условия, при которых рябь не рисуется:
+    //   prefers-reduced-motion — движение отключает сам человек;
+    //   нулевой getBoundingClientRect — jsdom и скрытые кнопки: координат нет,
+    //   а в тестах лишний узел только мешает сверять разметку.
+    function bindButtonRipple() {
+        const reduce = global.matchMedia
+            && global.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        if (reduce) return;
+
+        document.addEventListener("pointerdown", (event) => {
+            const button = event.target && event.target.closest
+                ? event.target.closest(".btn")
+                : null;
+            if (!button || button.disabled) return;
+
+            const rect = button.getBoundingClientRect();
+            if (!rect.width || !rect.height) return;
+
+            const size = Math.max(rect.width, rect.height) * 2;
+            const ripple = document.createElement("span");
+            ripple.className = "ripple";
+            ripple.style.width = `${size}px`;
+            ripple.style.height = `${size}px`;
+            ripple.style.left = `${event.clientX - rect.left - size / 2}px`;
+            ripple.style.top = `${event.clientY - rect.top - size / 2}px`;
+            ripple.addEventListener("animationend", () => ripple.remove(), { once: true });
+            // Страховка на случай, когда animationend не придёт (вкладка была
+            // в фоне): узел не должен копиться в разметке.
+            global.setTimeout(() => ripple.remove(), 700);
+            button.appendChild(ripple);
+        });
+    }
+
+    bindButtonRipple();
+
     let format = global.GS.format;
     if (!format) {
         // Не падаем сразу: странице ещё может хватить fetchJSON. Но и молча

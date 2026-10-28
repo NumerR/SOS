@@ -4,6 +4,8 @@
    ========================================================= */
 
 :root {
+  color-scheme: light;
+
   --parchment:      #e9e2d3;
   --parchment-deep: #ded5c2;
   --surface:        #efe9dc;
@@ -42,6 +44,34 @@
   --ok:          #2f6b5e;
   --ok-tint:     #d7e6df;
 
+  /* --accent — цвет текста-ссылки и подписи секции; --teal остаётся подложкой
+     залитых кнопок. В светлой теме это один и тот же оттенок, в тёмной — разные:
+     тёмная бирюза годится под белой подписью, но как текст на тёмном фоне не
+     видна. --ring — цвет кольца фокуса: в светлой теме тёмный, в тёмной светлый,
+     иначе кольцо совпадает с подложкой. */
+  --accent:      #155e5c;
+  --ring:        #155e5c;
+
+  /* --danger-btn отделён от --danger: --danger — текст на светлой подложке
+     отказа, а кнопка красит --danger-btn подписью #f5f0e6. В тёмной теме эти
+     роли требуют разных оттенков (светлый текст на тёмной плашке против
+     светлого текста отказа на тёмной странице). */
+  --danger-btn:       #a13f35;
+  --danger-btn-hover: #8f342c;
+
+  /* Состояния пары в расписании. Пары «текст на плашке» посчитаны и стоят в
+     CONTRAST_PAIRS: 5.93 / 5.98 / 5.82 в светлой теме и 8.70 / 8.44 / 8.67 в
+     тёмной (WCAG AA для обычного текста). */
+  --pending-ink: #7a4d0c;
+  --pending-bg:  #f6e7c6;
+  --pending-line: #d9a63f;
+  --active-ink:  #145a8c;
+  --active-bg:   #dceaf7;
+  --active-line: #5b9bd5;
+  --done-ink:    #57534a;
+  --done-bg:     #e6e0d3;
+  --done-line:   #b9b1a2;
+
   --sh-dark:   rgba(122, 104, 74, 0.42);
   --sh-darker: rgba(96, 80, 54, 0.50);
   --sh-light:  rgba(255, 251, 242, 0.92);
@@ -66,6 +96,65 @@
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
   --maxw: 1120px;
+}
+
+/* ---------- тёмная тема ----------
+   Тот же набор имён, другие значения: компоненты не знают, какая тема включена.
+   Пороги считаны для обеих тем (scripts/check-frontend.mjs прогоняет один и тот
+   же список пар дважды): текст 4.5:1, границы и кольца 3:1. Тени в тёмной теме
+   строятся не из «светлого блика», а из чёрной глубины и едва заметного
+   подсвета сверху — иначе неуморфизм на тёмном фоне выглядит как грязь. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --parchment:      #14161a;
+  --parchment-deep: #0e1013;
+  --surface:        #1b1e24;
+  --ink:            #f1ece2;
+  --ink-soft:       #c9c2b4;
+  --muted:          #a49c8e;
+  --line:           #2e323a;
+  --line-strong:    #7a818c;
+
+  --teal:        #1e6f69;
+  --teal-hover:  #195d58;
+  --teal-press:  #144b47;
+  --teal-tint:   #16332f;
+  --teal-ink:    #93d8cf;
+
+  --accent: #67cbbf;
+  --ring:   #67cbbf;
+
+  --danger:           #ff9e90;
+  --danger-tint:      #3c1f1c;
+  --danger-btn:       #b5493c;
+  --danger-btn-hover: #9d3f34;
+  --ok:               #8ad9b6;
+  --ok-tint:          #16322a;
+
+  --pending-ink:  #ffc46b;
+  --pending-bg:   #3a2b13;
+  --pending-line: #8a6326;
+  --active-ink:   #8cc8ff;
+  --active-bg:    #15283c;
+  --active-line:  #2f6da3;
+  --done-ink:     #cec7ba;
+  --done-bg:      #262930;
+  --done-line:    #4a4e57;
+
+  --sh-dark:   rgba(0, 0, 0, 0.55);
+  --sh-darker: rgba(0, 0, 0, 0.72);
+  --sh-light:  rgba(255, 255, 255, 0.045);
+}
+
+/* Смена темы: короткий переход только на время переключения, чтобы картинка не
+   мигала. Класс ставит core/theme.js; постоянный transition на всём дереве
+   задерживал бы каждую перерисовку списков. */
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+  transition: background-color .25s ease, color .25s ease,
+              border-color .25s ease, box-shadow .25s ease !important;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -93,6 +182,9 @@ button { font: inherit; }
 
 .site-header { padding-block: 18px; position: relative; z-index: 2; }
 .header-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
+/* Навигация и переключатель темы — одна группа: у шапки два края (марка и
+   действия), а не три, иначе на узком экране кнопка отрывается от ссылок. */
+.header-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 
 .brand {
   display: inline-flex; align-items: center; gap: 12px;
@@ -158,7 +250,7 @@ button { font: inherit; }
 .section { margin-bottom: 22px; }
 .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; margin-bottom: 12px; flex-wrap: wrap; }
 .section-label { display: inline-flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-soft); }
-.section-index { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; color: var(--teal); background: var(--teal-tint); padding: 2px 7px; border-radius: var(--r-xs); }
+.section-index { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; color: var(--teal-ink); background: var(--teal-tint); padding: 2px 7px; border-radius: var(--r-xs); }
 .section-rule { flex: 1; height: 1px; background: var(--line); min-width: 30px; }
 .section-note { font-size: 9.5px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
 
@@ -169,30 +261,49 @@ button { font: inherit; }
 .btn {
   --btn-bg: var(--teal); --btn-fg: #f5f0e6;
   appearance: none; border: 0; cursor: pointer;
+  position: relative; overflow: hidden;
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   padding: 11px 20px; font-size: 13px; font-weight: 700; letter-spacing: 0.02em;
   color: var(--btn-fg); background: var(--btn-bg); border-radius: var(--r-pill);
   box-shadow: var(--e1), inset 0 1px 0 rgba(255,255,255,.22);
   text-decoration: none; user-select: none;
-  transition: transform .08s ease, box-shadow .15s ease, background .15s ease;
+  transition: transform .16s cubic-bezier(.2,.7,.3,1), box-shadow .2s ease,
+              background .18s ease, color .18s ease;
 }
-.btn svg { width: 16px; height: 16px; }
-.btn:hover { background: var(--teal-hover); }
-.btn:active { background: var(--teal-press); box-shadow: var(--inset2); transform: translateY(1px); }
-.btn:focus-visible { outline: none; box-shadow: var(--e1), 0 0 0 3px var(--teal-tint), 0 0 0 5px var(--teal); }
+.btn svg { width: 16px; height: 16px; transition: transform .2s ease; }
+.btn:hover:not([disabled]) { background: var(--teal-hover); transform: translateY(-1px); box-shadow: var(--e2), inset 0 1px 0 rgba(255,255,255,.22); }
+.btn:hover:not([disabled]) svg { transform: scale(1.08); }
+.btn:active:not([disabled]) { background: var(--teal-press); box-shadow: var(--inset2); transform: translateY(1px) scale(.985); }
+.btn:focus-visible { outline: none; box-shadow: var(--e1), 0 0 0 3px var(--teal-tint), 0 0 0 5px var(--ring); }
+
+/* Волна от точки нажатия: тот же жест, что у мобильных кнопок, и единственная
+   анимация, которую видно на залитой кнопке (подъём при hover на ней незаметен).
+   Скорость и масштаб подобраны так, чтобы волна успевала уйти до смены экрана. */
+.btn .ripple {
+  position: absolute; border-radius: 50%; pointer-events: none;
+  background: currentColor; opacity: .28;
+  transform: scale(0); animation: ripple .55s ease-out forwards;
+}
+@keyframes ripple { to { transform: scale(2.6); opacity: 0; } }
 
 .btn-secondary { --btn-bg: var(--surface); --btn-fg: var(--ink); box-shadow: var(--e1); }
-.btn-secondary:hover { background: var(--parchment); }
-.btn-secondary:active { box-shadow: var(--inset1); }
+.btn-secondary:hover:not([disabled]) { background: var(--parchment); }
+.btn-secondary:active:not([disabled]) { box-shadow: var(--inset1); }
 
 /* «Выйти везде» после первого клика становится подтверждениям — цвет предупреждает. */
-.btn-danger { --btn-bg: var(--danger); --btn-fg: #f5f0e6; }
-.btn-danger:hover { background: var(--danger); filter: brightness(.94); }
+.btn-danger { --btn-bg: var(--danger-btn); --btn-fg: #f5f0e6; }
+.btn-danger:hover { background: var(--danger-btn-hover); }
 .btn-danger:focus-visible { box-shadow: var(--e1), 0 0 0 3px var(--danger-tint), 0 0 0 5px var(--danger); }
 
 .btn-icon { width: 40px; height: 40px; padding: 0; border-radius: var(--r-md); --btn-bg: var(--surface); --btn-fg: var(--ink-soft); box-shadow: var(--e1); }
-.btn-icon:hover { background: var(--parchment); color: var(--teal); }
-.btn-icon:active { box-shadow: var(--inset1); }
+.btn-icon:hover:not([disabled]) { background: var(--parchment); color: var(--accent); }
+.btn-icon:hover:not([disabled]) svg { transform: rotate(8deg) scale(1.1); }
+.btn-icon:active:not([disabled]) { box-shadow: var(--inset1); }
+
+/* Тема: солнце/луна — два значка в одной кнопке, видимый выбирает CSS. */
+.theme-toggle .icon-moon { display: none; }
+:root[data-theme="dark"] .theme-toggle .icon-moon { display: block; }
+:root[data-theme="dark"] .theme-toggle .icon-sun { display: none; }
 
 /* Подпись отключённой кнопки #b3aa97 на --parchment-deep даёт 1.58:1 — ниже AA, но
    WCAG 1.4.3 освобождает неактивные компоненты, и в этом проекте disabled — это почти
@@ -213,6 +324,14 @@ button { font: inherit; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* Появление списка: короткий подъём снизу. Задержка на элемент задаётся
+   переменной --i (её ставит страница), чтобы карточки входили лесенкой, а не
+   все разом. При prefers-reduced-motion ниже анимации отключаются целиком. */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 .form { display: grid; gap: 16px; }
 .field { display: grid; gap: 7px; }
 .field-label { font-size: 10.5px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-soft); }
@@ -225,7 +344,7 @@ button { font: inherit; }
   transition: box-shadow .15s ease, border-color .15s ease, background .15s ease;
 }
 .control::placeholder { color: var(--muted); }
-.control:focus { outline: none; background: var(--surface); border-color: var(--teal); box-shadow: var(--inset1), 0 0 0 3px var(--teal-tint); }
+.control:focus { outline: none; background: var(--surface); border-color: var(--ring); box-shadow: var(--inset1), 0 0 0 3px var(--teal-tint), 0 0 0 4px var(--ring); }
 textarea.control { resize: vertical; min-height: 96px; line-height: 1.5; }
 select.control { appearance: none; cursor: pointer; padding-right: 34px; }
 
@@ -237,7 +356,7 @@ select.control { appearance: none; cursor: pointer; padding-right: 34px; }
 
 .form-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .form-foot { margin-top: 4px; font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.form-foot a { color: var(--teal); font-weight: 700; text-decoration: none; }
+.form-foot a { color: var(--accent); font-weight: 700; text-decoration: none; }
 .form-foot a:hover { text-decoration: underline; }
 
 /* ---------- radio group (role picker) ---------- */
@@ -266,7 +385,7 @@ select.control { appearance: none; cursor: pointer; padding-right: 34px; }
 }
 .radio-dot::after {
   content: ""; width: 8px; height: 8px; border-radius: 50%;
-  background: var(--teal); transform: scale(0); transition: transform .15s ease;
+  background: var(--accent); transform: scale(0); transition: transform .15s ease;
 }
 .radio-card input:checked ~ .radio-dot::after { transform: scale(1); }
 
@@ -285,7 +404,7 @@ select.control { appearance: none; cursor: pointer; padding-right: 34px; }
    после правки тот же кадр даёт 148 пикселей ≥3:1. Выбор цвета держит группа 9
    scripts/check-frontend.mjs: он считает кольцо против каждой из трёх подложек. */
 .radio-card input:focus-visible ~ .radio-dot {
-  box-shadow: var(--inset1), 0 0 0 3px var(--teal-tint), 0 0 0 5px var(--teal);
+  box-shadow: var(--inset1), 0 0 0 3px var(--teal-tint), 0 0 0 5px var(--ring);
 }
 
 .radio-body { display: flex; flex-direction: column; gap: 2px; }
@@ -293,18 +412,18 @@ select.control { appearance: none; cursor: pointer; padding-right: 34px; }
 .radio-desc { font-size: 12px; color: var(--muted); }
 
 .hero { padding: 30px 28px; }
-.hero-eyebrow { font-size: 10.5px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; color: var(--teal); display: inline-flex; align-items: center; gap: 8px; margin-bottom: 14px; }
-.hero-eyebrow::before { content: ""; width: 22px; height: 2px; background: var(--teal); border-radius: 2px; }
+.hero-eyebrow { font-size: 10.5px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent); display: inline-flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.hero-eyebrow::before { content: ""; width: 22px; height: 2px; background: var(--accent); border-radius: 2px; }
 .hero-title { font-size: clamp(28px, 4.4vw, 44px); line-height: 1.06; font-weight: 800; letter-spacing: -0.025em; max-width: 16ch; }
-.hero-title em { font-style: normal; color: var(--teal); }
+.hero-title em { font-style: normal; color: var(--accent); }
 .hero-text { margin-top: 14px; max-width: 56ch; color: var(--ink-soft); font-size: 15px; }
 .hero-actions { margin-top: 22px; display: flex; gap: 12px; flex-wrap: wrap; }
 
 .grid { display: grid; gap: 16px; }
 .grid-cards { grid-template-columns: repeat(auto-fill, minmax(248px, 1fr)); }
 
-.card { background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--e1); padding: 18px; display: flex; flex-direction: column; gap: 10px; transition: box-shadow .18s ease, transform .12s ease; }
-.card:hover { box-shadow: var(--e2); transform: translateY(-2px); }
+.card { background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--e1); padding: 18px; display: flex; flex-direction: column; gap: 10px; transition: box-shadow .18s ease, transform .12s ease; animation: rise .32s ease both; }
+.card:hover { box-shadow: var(--e3); transform: translateY(-3px); }
 .card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .card-icon { width: 38px; height: 38px; border-radius: var(--r-md); display: grid; place-items: center; background: var(--teal-tint); color: var(--teal-ink); box-shadow: var(--inset1); }
 .card-icon svg { width: 20px; height: 20px; }
@@ -319,7 +438,7 @@ select.control { appearance: none; cursor: pointer; padding-right: 34px; }
    #f5f0e6 у кнопки — 6.63:1. Три разных литерала вместо одного токена; все три
    стоят в списке измеренных пар, поэтому правка любого замечается CI. */
 .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; padding: 4px 10px; border-radius: var(--r-pill); background: var(--teal); color: #f3eee3; box-shadow: inset 0 1px 0 rgba(255,255,255,.2); }
-.chip-outline { background: transparent; color: var(--teal-ink); box-shadow: inset 0 0 0 1.5px var(--teal); }
+.chip-outline { background: transparent; color: var(--teal-ink); box-shadow: inset 0 0 0 1.5px var(--accent); }
 .chip-muted { background: var(--parchment-deep); color: var(--ink-soft); box-shadow: var(--inset1); }
 
 .user-box { display: flex; align-items: center; gap: 12px; }
@@ -344,7 +463,7 @@ select.control { appearance: none; cursor: pointer; padding-right: 34px; }
 .empty-text { color: var(--ink-soft); font-weight: 600; }
 .empty-hint { color: var(--muted); font-size: 12.5px; }
 
-.spinner { width: 22px; height: 22px; border-radius: 50%; border: 2.5px solid var(--teal-tint); border-top-color: var(--teal); animation: spin .7s linear infinite; }
+.spinner { width: 22px; height: 22px; border-radius: 50%; border: 2.5px solid var(--teal-tint); border-top-color: var(--accent); animation: spin .7s linear infinite; }
 
 /* ---------- people list (enrolled students) ---------- */
 .people-list { display: grid; gap: 8px; }
@@ -406,7 +525,7 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
 
 /* Модальное окно: ловушка фокуса заканчивается на контейнере, поэтому у него
    должен быть видимый индикатор фокуса, когда на него попадает Tab. */
-#modalDialog:focus-visible { outline: 2px solid var(--teal); outline-offset: 4px; }
+#modalDialog:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; }
 
 .submission-content {
   white-space: pre-wrap;
@@ -421,6 +540,7 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
 
 @media (max-width: 640px) {
   .header-row { align-items: flex-start; }
+  .header-tools { width: 100%; justify-content: space-between; }
   .nav, .top-actions { width: 100%; }
   .top-actions { justify-content: space-between; }
   .hero { padding: 24px 20px; }
@@ -613,10 +733,10 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
 .btn-outline {
   --btn-bg: transparent;
   --btn-fg: var(--teal-ink);
-  box-shadow: inset 0 0 0 1.5px var(--teal), var(--e1);
+  box-shadow: inset 0 0 0 1.5px var(--accent), var(--e1);
 }
-.btn-outline:hover { background: var(--teal-tint); }
-.btn-outline:active { box-shadow: inset 0 0 0 1.5px var(--teal), var(--inset1); }
+.btn-outline:hover:not([disabled]) { background: var(--teal-tint); }
+.btn-outline:active:not([disabled]) { box-shadow: inset 0 0 0 1.5px var(--accent), var(--inset1); }
 
 .mt-4 { margin-top: 16px; }
 .mb-4 { margin-bottom: 16px; }
@@ -638,8 +758,11 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
   display: flex;
   flex-direction: column;
   gap: 8px;
-  border-left: var(--bw-thick) solid var(--teal);
+  border-left: var(--bw-thick) solid var(--accent);
+  animation: rise .28s ease both;
+  transition: transform .16s ease, box-shadow .16s ease;
 }
+.feed-item:hover { transform: translateY(-1px); box-shadow: var(--e1); }
 .feed-item.is-overdue { border-left-color: var(--danger); }
 
 .feed-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
@@ -659,7 +782,7 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
 .feed-state-none { background: var(--parchment-deep); color: var(--ink-soft); box-shadow: var(--inset1); }
 .feed-state-submitted { background: var(--teal-tint); color: var(--teal-ink); }
 .feed-state-graded { background: var(--ok-tint); color: var(--ok); }
-.feed-state-own { background: transparent; color: var(--teal-ink); box-shadow: inset 0 0 0 1.5px var(--teal); }
+.feed-state-own { background: transparent; color: var(--teal-ink); box-shadow: inset 0 0 0 1.5px var(--accent); }
 .feed-score { font-size: 11px; font-weight: 800; }
 /* ---------- schedule: официальный таймтейбл (данные из источника) ---------- */
 /* Раньше здесь лежал блок .sched-embed-card — заглушка со ссылкой на сайт вуза,
@@ -695,10 +818,27 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
   display: flex;
   flex-direction: column;
   gap: 10px;
+  animation: rise .32s ease both;
+  animation-delay: calc(var(--i, 0) * 35ms);
+  transition: box-shadow .18s ease;
 }
-.sched-day.is-today { border-left: var(--bw-thick) solid var(--teal); }
+.sched-day:hover { box-shadow: var(--e1); }
+/* Сегодняшний день — не только подпись, но и место: страница открывается на
+   нём и прокручивает его в поле зрения (schedule.js). Тень и полоса слева
+   держат его заметным и при прокрутке списка. */
+.sched-day.is-today {
+  border-left: var(--bw-thick) solid var(--accent);
+  box-shadow: var(--e1), inset 0 0 0 1px var(--teal-tint);
+}
+.sched-today-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 9px; border-radius: var(--r-pill);
+  font-size: 9.5px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--teal-ink); background: var(--teal-tint);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
 .sched-day-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.sched-day-weekday { font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--teal); }
+.sched-day-weekday { font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent); }
 .sched-day-date { font-size: 13.5px; font-weight: 700; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 .sched-day-count { margin-left: auto; font-size: 11px; color: var(--muted); }
 
@@ -711,7 +851,12 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
   border-radius: var(--r-sm);
   box-shadow: var(--e1);
   padding: 10px 12px;
+  transition: transform .16s ease, box-shadow .16s ease;
 }
+.lesson:hover { transform: translateX(2px); box-shadow: var(--e2); }
+/* Идущая пара подсвечена полосой: состояние нужно находить взглядом, не читая
+   подпись у каждой строки. */
+.lesson.is-active { box-shadow: var(--e1), inset 3px 0 0 var(--active-line); }
 .lesson-num {
   flex: none;
   width: 26px; height: 26px;
@@ -721,7 +866,7 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
   font-size: 12px; font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
-.lesson-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.lesson-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 auto; }
 .lesson-title { font-size: 14px; font-weight: 700; }
 .lesson-meta { font-size: 11.5px; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
 .lesson-time { font-weight: 600; color: var(--ink-soft); }
@@ -733,6 +878,55 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
   box-shadow: var(--inset1);
 }
 .lesson-sub { font-size: 11.5px; color: var(--muted); }
+
+/* ---------- состояние пары ----------
+   Плашка в духе статусов со скриншота: цветной контур, мягкое свечение тем же
+   цветом и значок. Свечение — currentColor, поэтому в обеих темах оно берётся
+   от цвета текста, а не от отдельного литерала. */
+.lesson-status {
+  flex: none;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px 4px 8px;
+  border-radius: var(--r-pill);
+  border: 1px solid transparent;
+  font-size: 10px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.lesson-status svg { width: 13px; height: 13px; flex: none; }
+.lesson-status.is-pending {
+  color: var(--pending-ink); background: var(--pending-bg); border-color: var(--pending-line);
+  box-shadow: 0 0 12px -3px currentColor;
+}
+.lesson-status.is-active {
+  color: var(--active-ink); background: var(--active-bg); border-color: var(--active-line);
+  box-shadow: 0 0 16px -3px currentColor;
+}
+.lesson-status.is-done {
+  color: var(--done-ink); background: var(--done-bg); border-color: var(--done-line);
+}
+.lesson-state {
+  flex: none;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+}
+.lesson-status-timer {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .02em;
+  color: var(--muted); white-space: nowrap;
+}
+.lesson-status-timer:empty { display: none; }
+@keyframes pulse-dot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.35); opacity: .65; }
+}
+/* Значок «идёт» дышит на месте. Без transform-box: fill-box началом отсчёта
+   масштаба считается левый верхний угол viewBox (Chromium отдаёт
+   transform-origin 0 0), и кружок уезжает по диагонали на 2.3px за такт —
+   это и есть «дрожит». */
+.lesson-status.is-active .status-dot {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}
 
 .sched-updated { font-size: 11.5px; color: var(--muted); margin-top: 14px; }
 
@@ -761,7 +955,8 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
   .sched-controls { align-items: stretch; }
   .sched-month { justify-content: space-between; width: 100%; }
   .sched-source-line { flex-direction: column; align-items: flex-start; }
-  .lesson { align-items: flex-start; }
+  .lesson { align-items: flex-start; flex-wrap: wrap; }
+  .lesson-state { flex-basis: 100%; margin-left: 38px; align-items: flex-start; }
 }
 /* ---------- schedule: events + resources ---------- */
 .feed-item.is-event { border-left-color: var(--ok); }

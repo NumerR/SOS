@@ -84,9 +84,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     // на странице меняется прямо во время просмотра.
     let catalogue = [];
 
-    // Выбранные группа и месяц переживают перезагрузку страницы: студент
-    // открывает расписание утром и вечером, и каждый раз вводить группу заново
-    // — значит сделать страницу хуже, чем бумажное расписание на стенде.
+    // Группа переживает перезагрузку страницы: студент открывает расписание
+    // утром и вечером, и каждый раз вводить группу заново — значит сделать
+    // страницу хуже, чем бумажное расписание на стенде.
+    //
+    // Месяц, в отличие от группы, не запоминается: страница всегда открывается
+    // на сегодняшнем дне. Иначе вчерашний просмотр декабря показывал бы декабрь
+    // и в октябре, а «сегодня» приходилось бы искать вручную.
     const CHOICE_KEY = "sos.schedule.choice";
 
     function saveChoice() {
@@ -94,8 +98,6 @@ document.addEventListener("DOMContentLoaded", async () => {
             localStorage.setItem(CHOICE_KEY, JSON.stringify({
                 group: timetable.group,
                 name: timetable.groupName,
-                month: timetable.month,
-                year: timetable.year,
             }));
         } catch (error) {
             // Приватный режим и переполненное хранилище — не причина ронять
@@ -233,6 +235,130 @@ document.addEventListener("DOMContentLoaded", async () => {
     // не объясняет.
     const NO_SUBGROUP = new Set(["", "—", "-", "нет"]);
 
+    // ---------- состояние пары ----------
+    //
+    // День приходит как day_key (YYYYMMDD), время — отдельными start_time и
+    // end_time. Поле time («08:30 – 10:05») остаётся запасным: строки, которые
+    // импортировали до появления этих полей, всё ещё лежат в базе.
+    //
+    // Сравнение идёт с часами браузера: источник называет день в местном
+    // времени вуза, а студент смотрит расписание там же. Хранить здесь UTC
+    // значило бы сдвинуть «пару в 08:30» на часовой пояс сервера.
+    const STATUS_LABELS = { pending: "Не начата", active: "Идёт", done: "Закончена" };
+    const STATUS_ICONS = {
+        pending: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+        active: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle class="status-dot" cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/></svg>',
+        done: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg>',
+    };
+
+    function clock(value) {
+        const match = String(value || "").match(/(\d{1,2}):(\d{2})/);
+        if (!match) return null;
+        const hours = Number(match[1]);
+        const minutes = Number(match[2]);
+        if (hours > 23 || minutes > 59) return null;
+        return { hours, minutes };
+    }
+
+    function lessonBoundary(lesson, field, fallbackIndex) {
+        const key = String(lesson.day_key || "");
+        // 99999999 — служебный ключ строк без даты (см. formatDayKey): у такой
+        // пары нет дня, значит и состояния «началась/закончилась» нет.
+        if (!/^\d{8}$/.test(key) || key === "99999999") return 0;
+
+        let time = clock(lesson[field]);
+        if (!time) {
+            const parts = String(lesson.time || "").split(/[–—-]/);
+            time = clock(parts[fallbackIndex] || parts[0]);
+        }
+        if (!time) return 0;
+
+        const year = Number(key.slice(0, 4));
+        const month = Number(key.slice(4, 6));
+        const day = Number(key.slice(6, 8));
+        return new Date(year, month - 1, day, time.hours, time.minutes, 0, 0).getTime();
+    }
+
+    function stateAt(start, end, now) {
+        if (now < start) return "pending";
+        if (end && now >= end) return "done";
+        return "active";
+    }
+
+    // Отдельно дни/часы/минуты: «через 2 ч 15 мин» читается, а «через 15360 с»
+    // заставляет считать в уме. Секунды остаются только на последней минуте,
+    // где именно они и нужны.
+    function countdown(ms) {
+        const total = Math.max(0, Math.ceil(ms / 1000));
+        if (total >= 86400) {
+            const days = Math.floor(total / 86400);
+            const hours = Math.floor((total % 86400) / 3600);
+            return `${days} ${plural(days, "день", "дня", "дней")}${hours ? ` ${hours} ч` : ""}`;
+        }
+        if (total >= 3600) {
+            const hours = Math.floor(total / 3600);
+            const minutes = Math.floor((total % 3600) / 60);
+            return `${hours} ч ${minutes} мин`;
+        }
+        if (total >= 60) return `${Math.floor(total / 60)} мин`;
+        return `${total} с`;
+    }
+
+    function timerText(state, start, end, now) {
+        if (state === "pending") return `через ${countdown(start - now)}`;
+        if (state === "active" && end) return `осталось ${countdown(end - now)}`;
+        return "";
+    }
+
+    function statusHtml(state) {
+        return `${STATUS_ICONS[state]}<span>${STATUS_LABELS[state]}</span>`;
+    }
+
+    function renderLessonStatus(start, end, now) {
+        const state = stateAt(start, end, now);
+        const timer = timerText(state, start, end, now);
+        return {
+            active: state === "active",
+            html: `
+                <div class="lesson-state" data-start="${start}"${end ? ` data-end="${end}"` : ""}>
+                    <span class="lesson-status is-${state}">${statusHtml(state)}</span>
+                    <span class="lesson-status-timer">${GS.escapeHtml(timer)}</span>
+                </div>`,
+        };
+    }
+
+    // Тик раз в секунду. Плашку перерисовываем только при смене состояния:
+    // иначе значок «идёт» перезапускал бы анимацию каждый раз, когда меняется
+    // подпись таймера, и выглядел бы дёрганым.
+    function refreshLessonStates() {
+        if (!timetableContainer) return;
+        const now = Date.now();
+
+        timetableContainer.querySelectorAll(".lesson-state[data-start]").forEach((box) => {
+            const start = Number(box.dataset.start);
+            if (!start) return;
+            const end = box.dataset.end ? Number(box.dataset.end) : 0;
+            const state = stateAt(start, end, now);
+            const lesson = box.closest(".lesson");
+            if (lesson) lesson.classList.toggle("is-active", state === "active");
+
+            const badge = box.querySelector(".lesson-status");
+            if (badge && !badge.classList.contains(`is-${state}`)) {
+                badge.className = `lesson-status is-${state}`;
+                badge.innerHTML = statusHtml(state);
+            }
+
+            const timer = box.querySelector(".lesson-status-timer");
+            if (timer) timer.textContent = timerText(state, start, end, now);
+        });
+    }
+
+    let lessonTicker = null;
+    function startLessonTicker() {
+        if (lessonTicker) return;
+        lessonTicker = setInterval(refreshLessonStates, 1000);
+    }
+
     function renderLesson(lesson) {
         const parts = [];
         if (lesson.time) parts.push(`<span class="lesson-time">${GS.escapeHtml(lesson.time)}</span>`);
@@ -242,35 +368,85 @@ document.addEventListener("DOMContentLoaded", async () => {
         const subgroup = String(lesson.subgroup || "").trim();
         const sub = NO_SUBGROUP.has(subgroup) ? "" : subgroup;
 
+        const start = lessonBoundary(lesson, "start_time", 0);
+        const end = start ? lessonBoundary(lesson, "end_time", 1) : 0;
+        const status = start ? renderLessonStatus(start, end, Date.now()) : null;
+
         return `
-            <div class="lesson">
+            <div class="lesson${status && status.active ? " is-active" : ""}">
                 <span class="lesson-num">${GS.escapeHtml(lesson.lesson_number || "?")}</span>
                 <div class="lesson-body">
                     <span class="lesson-title">${GS.escapeHtml(lesson.discipline || "Дисциплина не указана")}</span>
                     <span class="lesson-meta">${parts.join('<span class="dot-sep"></span>')}</span>
                     ${sub ? `<span class="lesson-sub">подгруппа ${GS.escapeHtml(sub)}</span>` : ""}
                 </div>
+                ${status ? status.html : ""}
             </div>`;
     }
 
+    // Пар в дне — это уникальные номера, а не строки: две подгруппы одной
+    // четвёртой пары и пятая пара дают две пары, а не три. Строки без номера
+    // (старый импорт) считаем построчно, иначе день обнулился бы.
+    function pairCount(lessons) {
+        const numbers = new Set();
+        for (const lesson of lessons) {
+            const number = Number(lesson.lesson_number);
+            if (Number.isInteger(number) && number > 0) numbers.add(number);
+        }
+        return numbers.size || lessons.length;
+    }
+
+    function localDayKey(date = new Date()) {
+        return date.getFullYear() * 10000 + (date.getMonth() + 1) * 100 + date.getDate();
+    }
+
+    // Страница открывается на сегодняшнем дне: месяц уже сегодняшний, но список
+    // длинный, и без прокрутки человек оказывается на 1-м числе. Если сегодня
+    // пар нет, показываем ближайший будущий день — именно там начнётся учёба.
+    function revealToday() {
+        if (!timetableContainer) return;
+        const today = localDayKey();
+        const cards = Array.from(timetableContainer.querySelectorAll(".sched-day[data-day-key]"));
+        const card = cards.find((el) => Number(el.dataset.dayKey) === today)
+            || cards.find((el) => Number(el.dataset.dayKey) > today);
+        if (!card || typeof card.scrollIntoView !== "function") return;
+
+        const reduce = typeof window.matchMedia === "function"
+            && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        card.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
+    }
+
+    let pendingTodayScroll = true;
+
     function renderTimetable(days) {
         if (!timetableContainer) return;
+        const today = localDayKey();
 
-        timetableContainer.innerHTML = days.map((day) => {
+        timetableContainer.innerHTML = days.map((day, index) => {
             const lessons = day.lessons || [];
+            const count = pairCount(lessons);
+            const isToday = Number(day.day_key) === today;
             const head = `
                 <header class="sched-day-head">
                     <span class="sched-day-weekday">${GS.escapeHtml(day.weekday || "")}</span>
                     <span class="sched-day-date">${GS.escapeHtml(day.date || formatDayKey(day.day_key))}</span>
-                    <span class="sched-day-count">${lessons.length} ${plural(lessons.length, "пара", "пары", "пар")}</span>
+                    ${isToday ? '<span class="sched-today-chip">Сегодня</span>' : ""}
+                    <span class="sched-day-count">${count} ${plural(count, "пара", "пары", "пар")}</span>
                 </header>`;
 
             return `
-                <article class="sched-day">
+                <article class="sched-day${isToday ? " is-today" : ""}"
+                         data-day-key="${GS.escapeHtml(String(day.day_key || ""))}"
+                         style="--i: ${index}">
                     ${head}
                     <div class="lesson-list">${lessons.map(renderLesson).join("")}</div>
                 </article>`;
         }).join("");
+
+        if (pendingTodayScroll) {
+            pendingTodayScroll = false;
+            revealToday();
+        }
     }
 
     // День без даты от источника: у таких пар day_key = 99999999 (см. store),
@@ -414,8 +590,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         return loadTimetable();
     }
 
-    // Кнопки: стрелки листают месяц, «Текущий месяц» возвращает к сегодняшнему,
-    // Enter и «смена» поля группы ищут расписание выбранной группы.
+    // Кнопки: стрелки листают месяц, «Текущий месяц» возвращает к сегодняшнему
+    // дню (и прокручивает список к нему), Enter и «смена» поля группы ищут
+    // расписание выбранной группы.
     function bindMonthControls() {
         if (prevMonth) prevMonth.addEventListener("click", () => shiftMonth(-1));
         if (nextMonth) nextMonth.addEventListener("click", () => shiftMonth(1));
@@ -423,6 +600,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             const now = new Date();
             timetable.month = now.getMonth() + 1;
             timetable.year = now.getFullYear();
+            pendingTodayScroll = true;
             return loadTimetable();
         });
         if (refreshTimetable) refreshTimetable.addEventListener("click", () => loadTimetable());
@@ -690,19 +868,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         return groups.length ? String(groups[0].name) : "";
     }
 
-    function applyRememberedMonth(remembered) {
-        if (!remembered) return;
-        const month = Number(remembered.month);
-        const year = Number(remembered.year);
-        if (month >= 1 && month <= 12 && year >= 2000 && year <= 2100) {
-            timetable.month = month;
-            timetable.year = year;
-        }
-    }
-
     setMonthLabel();
     bindMonthControls();
     bindSourcePanel();
+    startLessonTicker();
 
     let profileError = null;
     try {
@@ -715,9 +884,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     if (user) showAuthedMode();
     else showGuestMode();
-
-    applyRememberedMonth(readChoice());
-    setMonthLabel();
 
     catalogue = await loadGroups();
     if (groupInput && !groupInput.value.trim()) {

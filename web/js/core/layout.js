@@ -19,9 +19,9 @@
 //   data-footer-stack — правая строка футера (на главной отличается).
 //
 // Идентификаторы в шапке (#logoutBtn, #adminLink, #loginLink, #userAvatar,
-// #userName, #userRole) те же, что были в HTML: скрипты страниц и jsdom-сьюты
-// к ним обращаются, и переименование стало бы поломкой интерфейса, а не
-// рефакторингом.
+// #userName, #userRole, #themeToggle) те же, что были в HTML: скрипты страниц и
+// jsdom-сьюты к ним обращаются, и переименование стало бы поломкой интерфейса,
+// а не рефакторингом.
 (function (global) {
     "use strict";
 
@@ -146,6 +146,18 @@
         return `<button id="logoutBtn" class="btn btn-secondary">${icon("logout")}Выйти</button>`;
     }
 
+    // Переключатель темы. Два значка в одной кнопке: какой показать, решает CSS
+    // по data-theme на <html>, поэтому при загрузке страницы кнопка сразу
+    // выглядит верно, не дожидаясь JS. aria-pressed и подпись обновляет
+    // core/theme.js — он же ловит нажатие.
+    function themeButton() {
+        return `<button id="themeToggle" class="btn btn-icon theme-toggle" type="button"
+            aria-label="Включить тёмную тему" aria-pressed="false" title="Включить тёмную тему">
+            <svg class="icon-sun" ${SVG_ATTRS} aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+            <svg class="icon-moon" ${SVG_ATTRS} aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+        </button>`;
+    }
+
     function navItems(items) {
         return items.map((item) => {
             if (item.user) return userBox();
@@ -183,7 +195,10 @@
         return `<div class="container header-row">
             ${brand}
 
-            ${nav}
+            <div class="header-tools">
+                ${nav}
+                ${themeButton()}
+            </div>
         </div>`;
     }
 

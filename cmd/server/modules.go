@@ -91,11 +91,48 @@ func newRouter(h *handlers.Handlers, db *sql.DB, modules []platform.Module) (htt
 	mux.HandleFunc("/admin", h.AdminPage)
 	mux.HandleFunc("/schedule", h.SchedulePage)
 
-	// Статика.
-	mux.Handle("/css/", http.StripPrefix("/css/", http.FileServer(http.Dir(filepath.Join("web", "css")))))
-	mux.Handle("/js/", http.StripPrefix("/js/", http.FileServer(http.Dir(filepath.Join("web", "js")))))
+	// Старые адреса с .html уводятся на рабочий маршрут: файл web/schedule.html
+	// — шаблон страницы, а не её URL, и закладка «/schedule.html» без этих строк
+	// попадала в 404 — человек решал, что на сайте ничего не изменилось
+	// (ADR-0037). Код 301 постоянный: адрес страницы не вернётся к .html.
+	for _, alias := range [][2]string{
+		{"/index.html", "/"},
+		{"/login.html", "/login"},
+		{"/register.html", "/register"},
+		{"/dashboard.html", "/dashboard"},
+		{"/profile.html", "/profile"},
+		{"/admin.html", "/admin"},
+		{"/schedule.html", "/schedule"},
+	} {
+		from, to := alias[0], alias[1]
+		mux.HandleFunc(from, func(w http.ResponseWriter, r *http.Request) {
+			target := to
+			if r.URL.RawQuery != "" {
+				target += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, target, http.StatusMovedPermanently)
+		})
+	}
+
+	// Статика. noCache — см. комментарий у функции: правка CSS/JS обязана
+	// доезжать до браузера без жёсткой перезагрузки (ADR-0037).
+	mux.Handle("/css/", noCache(http.StripPrefix("/css/", http.FileServer(http.Dir(filepath.Join("web", "css"))))))
+	mux.Handle("/js/", noCache(http.StripPrefix("/js/", http.FileServer(http.Dir(filepath.Join("web", "js"))))))
 
 	return mux, nil
+}
+
+// noCache требует от браузера перепроверить копию перед показом.
+//
+// Без Cache-Control браузер вправе кэшировать статику эвристически — по возрасту
+// Last-Modified, — и тогда правка style.css или schedule.js не видна человеку,
+// пока он не сделает жёсткую перезагрузку. no-cache не запрещает кэш: неизменённый
+// файл отвечает 304 по If-Modified-Since и по сети не едет.
+func noCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // applyModuleMigrations применяет миграции модулей поверх базовой схемы.

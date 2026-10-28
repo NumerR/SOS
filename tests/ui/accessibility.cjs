@@ -13,7 +13,7 @@
 // Здесь то, что статикой не проверяется: ориентир «Навигация» рисует
 // core/layout.js, ловушку фокуса держит modals.js в рантайме, и только в DOM
 // видно, что после отказа текст появился именно в том элементе, который поле
-// называет своим описанием (раздел 5, ADR-0018).
+// называет своим описанием (раздел 6, ADR-0018).
 //
 // Тест полностью офлайновый: fetch подменяется заглушкой, сервер на :8080 не
 // нужен, лимитер входов (20 попыток на IP за 10 минут, ADR-0006) не расходуется.
@@ -51,14 +51,16 @@ function unauthorized() {
 
 // Транспортный минимум: то, что нужно core/layout.js, чтобы отрисовать шапку.
 // common.js и скрипты страниц здесь не нужны — навигация от них не зависит.
-const LAYOUT_BUNDLE = ["config.js", "core/api-client.js", "core/format.js", "core/layout.js"];
+// theme.js стоит первым, как в <head>: он ставит data-theme до того, как
+// layout.js нарисует кнопку, и именно этот порядок проверяют тесты ниже.
+const LAYOUT_BUNDLE = ["core/theme.js", "config.js", "core/api-client.js", "core/format.js", "core/layout.js"];
 
 // Открывает страницу, исполняет бандл и возвращает документ. `extra` — код,
 // который исполняется в том же scope, что и бандл: ModalManager объявлен
 // константой на уровне файла и наружу (в window) не виден, а тесту до него надо
 // добраться. Так же, как в assignments-modal.cjs, это тестовый костыль, а не
 // часть приложения.
-function boot(page, scripts = LAYOUT_BUNDLE, extra = "") {
+function boot(page, scripts = LAYOUT_BUNDLE, extra = "", preboot = null) {
     const html = fs.readFileSync(path.join(REPO, "web", page), "utf8");
     const dom = new JSDOM(html, {
         url: BASE + "/" + page.replace(".html", ""),
@@ -66,6 +68,11 @@ function boot(page, scripts = LAYOUT_BUNDLE, extra = "") {
         pretendToBeVisual: true,
     });
     const { window } = dom;
+
+    // preboot — то, что в браузере уже лежит в localStorage к моменту разбора
+    // <head>: сюда тест кладёт сохранённый выбор темы, чтобы проверить, что
+    // атрибут ставится до первой отрисовки.
+    if (preboot) preboot(window);
 
     window.fetch = () => Promise.resolve(unauthorized());
     window.document.cookie = "csrf_token=test-csrf-token";
@@ -87,8 +94,8 @@ const PAGES = [
 
 const windows = [];
 
-function track(page, scripts, extra) {
-    const opened = boot(page, scripts, extra);
+function track(page, scripts, extra, preboot) {
+    const opened = boot(page, scripts, extra, preboot);
     windows.push(opened.window);
     return opened;
 }
@@ -155,6 +162,20 @@ for (const layout of LAYOUT_PAGES) {
     check(`${layout}: ссылки навигации внутри <nav>, а не снаружи`,
         links.length > 0 && links.every((a) => a.closest("nav") === nav), `ссылок ${links.length}`);
 
+    // Переключатель темы — отдельная кнопка рядом с <nav>, а не пункт меню:
+    // внутри landmark'а «Навигация» действие читалось бы как ещё одна ссылка.
+    const toggle = doc.getElementById("themeToggle");
+    check(`${layout}: переключатель темы в шапке, вне <nav>`,
+        Boolean(toggle) && Boolean(toggle.closest(".header-tools")) && !toggle.closest("nav"),
+        toggle ? `в header-tools=${Boolean(toggle.closest(".header-tools"))}, в nav=${Boolean(toggle.closest("nav"))}` : "кнопки нет");
+    check(`${layout}: переключатель — кнопка с доступным именем`,
+        Boolean(toggle) && toggle.tagName === "BUTTON" && toggle.getAttribute("type") === "button"
+            && (toggle.getAttribute("aria-label") || "").trim().length > 0,
+        toggle ? `${toggle.tagName.toLowerCase()} type=${toggle.getAttribute("type")} label=${JSON.stringify(toggle.getAttribute("aria-label"))}` : "");
+    check(`${layout}: aria-pressed объявляет состояние темы`,
+        Boolean(toggle) && ["true", "false"].includes(toggle.getAttribute("aria-pressed")),
+        toggle ? String(toggle.getAttribute("aria-pressed")) : "");
+
     const avatar = doc.getElementById("userAvatar");
     if (avatar) {
         check(`${layout}: аватар скрыт от чтения (инициалы дублируют имя)`,
@@ -171,9 +192,60 @@ for (const layout of LAYOUT_PAGES) {
     check("404: есть ссылки, по которым можно уйти со страницы",
         doc.querySelectorAll("main a").length >= 3,
         Array.from(doc.querySelectorAll("main a")).map((a) => a.getAttribute("href")).join(" "));
+    // 404 намеренно живёт без скриптов (ADR-0013) — значит, и theme.js на ней
+    // не исполняется. Мёртвая кнопка хуже её отсутствия: страница остаётся
+    // светлой, зато работает тогда, когда приложение не работает.
+    check("404: переключателя темы нет (страница без скриптов)",
+        doc.getElementById("themeToggle") === null, "themeToggle найден");
 }
 
-// ---------- 3. модальное окно: ловушка фокуса и возврат ----------
+// ---------- 3. тема: начальное состояние, переключение, сохранение ----------
+
+async function themeChecks() {
+    const { window, doc } = track("schedule.html");
+    // DOMContentLoaded: theme.js на нём досинхронизирует подпись кнопки.
+    await wait(20);
+
+    check("тема: без сохранённого выбора страница открывается светлой",
+        doc.documentElement.dataset.theme === "light", String(doc.documentElement.dataset.theme));
+    check("тема: без выбора в localStorage ничего не записано",
+        window.localStorage.getItem("sos.theme") === null,
+        String(window.localStorage.getItem("sos.theme")));
+
+    const toggle = doc.getElementById("themeToggle");
+    toggle.click();
+    check("тема: клик включает тёмную", doc.documentElement.dataset.theme === "dark",
+        String(doc.documentElement.dataset.theme));
+    check("тема: выбор сохранён в localStorage", window.localStorage.getItem("sos.theme") === "dark",
+        String(window.localStorage.getItem("sos.theme")));
+    check("тема: подпись кнопки называет обратное действие",
+        toggle.getAttribute("aria-label") === "Включить светлую тему", toggle.getAttribute("aria-label"));
+    check("тема: aria-pressed отражает включённую тёмную",
+        toggle.getAttribute("aria-pressed") === "true", String(toggle.getAttribute("aria-pressed")));
+
+    toggle.click();
+    check("тема: повторный клик возвращает светлую",
+        doc.documentElement.dataset.theme === "light", String(doc.documentElement.dataset.theme));
+    check("тема: светлый выбор тоже сохранён", window.localStorage.getItem("sos.theme") === "light",
+        String(window.localStorage.getItem("sos.theme")));
+    check("тема: aria-pressed вернулся в false",
+        toggle.getAttribute("aria-pressed") === "false", String(toggle.getAttribute("aria-pressed")));
+
+    // Сохранённый выбор применяется до отрисовки: theme.js стоит в <head>, и
+    // data-theme уже стоит к моменту, когда layout.js рисует шапку.
+    const saved = track("schedule.html", LAYOUT_BUNDLE, "", (w) => w.localStorage.setItem("sos.theme", "dark"));
+    check("тема: сохранённая тёмная применяется при загрузке",
+        saved.doc.documentElement.dataset.theme === "dark", String(saved.doc.documentElement.dataset.theme));
+    await wait(20);
+    check("тема: подпись кнопки догнала сохранённое состояние",
+        saved.doc.getElementById("themeToggle").getAttribute("aria-label") === "Включить светлую тему",
+        saved.doc.getElementById("themeToggle").getAttribute("aria-label"));
+    check("тема: GS.theme.current() читает применённую тему",
+        Boolean(saved.window.GS && saved.window.GS.theme) && saved.window.GS.theme.current() === "dark",
+        saved.window.GS && saved.window.GS.theme ? saved.window.GS.theme.current() : "GS.theme нет");
+}
+
+// ---------- 4. модальное окно: ловушка фокуса и возврат ----------
 
 async function modalChecks() {
     const { window, doc } = track(
@@ -245,7 +317,7 @@ function active(doc) {
     return `activeElement=${doc.activeElement.id || doc.activeElement.tagName}`;
 }
 
-// ---------- 4. шапка не дублирует разметку при повторном render ----------
+// ---------- 5. шапка не дублирует разметку при повторном render ----------
 
 {
     const { window, doc } = track("dashboard.html");
@@ -255,7 +327,7 @@ function active(doc) {
     check("layout: повторный render не удваивает навигацию", before === 1 && after === 1, `${before} → ${after}`);
 }
 
-// ---------- 5. aria-describedby: поле знает про свою подсказку и строку сообщения ----------
+// ---------- 6. aria-describedby: поле знает про свою подсказку и строку сообщения ----------
 //
 // Остаток T0.5, закрытый ADR-0018: сообщения подписаны role="status", но поле
 // ничего о своём сообщении не знало. check-frontend.mjs видит сам атрибут и его
@@ -353,10 +425,54 @@ function describedByRuntimeChecks() {
         JSON.stringify(doc.getElementById("resourceMsg").textContent));
 }
 
+// ---------- 7. анимации кнопок: ripple есть, но не при reduced-motion ----------
+//
+// Анимация нажатия — функциональная обратная связь, а не украшение; WCAG 2.3.3
+// требует её выключать, когда человек попросил систему об этом. jsdom не считает
+// вёрстку, поэтому кнопке подставляется прямоугольник: нулевой размер common.js
+// пропускает намеренно (скрытая кнопка не должна «стрелять» волной).
+function rippleChecks() {
+    function press(win, doc) {
+        const btn = doc.getElementById("currentMonth");
+        btn.getBoundingClientRect = () => ({
+            width: 120, height: 40, left: 0, top: 0, right: 120, bottom: 40, x: 0, y: 0,
+        });
+        btn.dispatchEvent(new win.MouseEvent("pointerdown", { bubbles: true, clientX: 20, clientY: 20 }));
+        return { btn, ripple: btn.querySelector(".ripple") };
+    }
+
+    const normal = track("schedule.html", [...LAYOUT_BUNDLE, "common.js"]);
+    const first = press(normal.window, normal.doc);
+    check("анимации: нажатие создаёт ripple внутри кнопки", Boolean(first.ripple),
+        first.ripple ? first.ripple.className : "ripple нет");
+    check("анимации: ripple посажен на точку нажатия",
+        Boolean(first.ripple) && /left:\s*-?\d/.test(first.ripple.getAttribute("style") || ""),
+        first.ripple ? first.ripple.getAttribute("style") : "");
+
+    if (first.ripple) {
+        first.ripple.dispatchEvent(new normal.window.Event("animationend"));
+    }
+    check("анимации: ripple снимается после анимации",
+        first.btn.querySelectorAll(".ripple").length === 0,
+        String(first.btn.querySelectorAll(".ripple").length));
+
+    const reduce = track("schedule.html", [...LAYOUT_BUNDLE, "common.js"], "", (w) => {
+        w.matchMedia = () => ({
+            matches: true,
+            addEventListener() {}, removeEventListener() {},
+            addListener() {}, removeListener() {},
+        });
+    });
+    const reduced = press(reduce.window, reduce.doc);
+    check("анимации: при prefers-reduced-motion ripple не создаётся", !reduced.ripple,
+        reduced.ripple ? reduced.ripple.outerHTML : "ripple нет");
+}
+
 describedByChecks();
 describedByRuntimeChecks();
+rippleChecks();
 
-modalChecks().then(() => {
+themeChecks().then(modalChecks).then(() => {
     check("ни одна проверка не оставила необработанного отклонения", rejections.length === 0, JSON.stringify(rejections));
 
     const failed = results.filter((r) => !r.ok);

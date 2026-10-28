@@ -116,6 +116,11 @@ func (h *Handlers) AdminPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveWebFile(w http.ResponseWriter, r *http.Request, name string) {
+	// no-cache — «перепроверь перед показом», а не «не кэшируй»: неизменённая
+	// страница отвечает 304, изменённая приходит целиком. Без заголовка браузер
+	// кэширует эвристически, и правка не доезжает до человека (ADR-0037).
+	w.Header().Set("Cache-Control", "no-cache")
+
 	path := filepath.Join("web", name)
 	http.ServeFile(w, r, path)
 }
@@ -138,6 +143,7 @@ func serveWebFileWithStatus(w http.ResponseWriter, r *http.Request, name string,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
 }
