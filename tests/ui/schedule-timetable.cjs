@@ -4,8 +4,8 @@
 // на сайт вуза — встроить его нельзя (X-Frame-Options), и страница честно
 // говорила «открывайте снаружи». Теперь внутри платформы лежат разобранные
 // пары из АПЭКС-ВУЗа, и проверять надо не «ссылка есть», а поведение витрины:
-// что гость видит расписание (маршруты чтения публичные), что месяц листается,
-// что пустые состояния различимы («не импортирован» ≠ «пар нет»), что панель
+// что гость видит расписание (маршруты чтения публичные), что неделя листается,
+// что пустые состояния различимы («не импортировано» ≠ «пар нет»), что панель
 // импорта показана только админу и что запрос источника с браузера не делается
 // вообще — токена здесь нет и быть не может.
 //
@@ -105,6 +105,9 @@ function lessons(payload) {
                 lessons: [lesson(1, "<img src=x onerror=alert(1)>Физика", { day_key: 20261007, date: "07.10.2026", weekday: "Ср" })],
             },
         ],
+        // range_imported — ответ сервера о том, лежит ли показанный период в
+        // базе. По умолчанию «лежит»: пустота тогда означает «пар нет».
+        range_imported: true,
         imported_months: [{ month: 10, year: 2026, lessons: 4, imported_at: 1761300000 }],
         source_page_url: SOURCE_PAGE,
     }, payload || {});
@@ -118,9 +121,10 @@ const STATUS = {
     stats: { groups: 2, lessons: 3, groups_synced_at: 1761200000, last_import_at: 1761300000, groups_with_lessons: 1 },
 };
 
-// boot сеет localStorage до исполнения скриптов страницы: выбор группы и
-// месяца переживает перезагрузку, и без этого нельзя получить детерминированный
-// «декабрь 2026» для проверки перехода в январь.
+// boot сеет localStorage до исполнения скриптов страницы: выбор группы
+// переживает перезагрузку, и без посева страница стартовала бы с первой группы
+// каталога — проверки навигации зависели бы от порядка в фикстуре.
+// Неделя, в отличие от группы, не запоминается: она всегда сегодняшняя.
 function boot({ role = "teacher", routes = {}, seed = null, now = null } = {}) {
     const html = fs.readFileSync(path.join(REPO, "web", "schedule.html"), "utf8");
     const dom = new JSDOM(html, { url: BASE + "/schedule", runScripts: "outside-only", pretendToBeVisual: true });
@@ -170,6 +174,10 @@ function defaultBody(key, role, hit) {
     if (key === "GET /api/schedule/source/status") return json(STATUS);
     if (key === "POST /api/schedule/source/groups") return json({ source: "apeks", fetched: 2, added: 2 });
     if (key === "POST /api/schedule/source/lessons") return json({ source: "apeks", group_id: "494", group_name: "Б-ИСиТ-22", months: [{ month: 10, year: 2026, lessons: 3, imported_at: 1761300000 }], lessons: 3 });
+    // Массовая задача: по умолчанию её нет — иначе каждый boot с админом
+    // запускал бы двухсекундный опрос и тянул сьют.
+    if (key === "GET /api/schedule/source/import-all") return json({ source: "apeks", job: { running: false, months: [] } });
+    if (key === "POST /api/schedule/source/import-all") return json({ source: "apeks", job: { running: true, groups: 2, steps: 2, done: 0, lessons: 0, failed: 0, months: [{ month: 10, year: 2026 }] } }, 202);
     if (key === "GET /api/schedule") return json([]);
     if (key === "GET /api/resources") return json([]);
     return json({});
@@ -334,33 +342,49 @@ async function until(page, predicate, tries = 60) {
         doneBadge !== null && doneBadge.closest(".lesson-state").querySelector(".lesson-status-timer").textContent === "");
 
     // ---------- 4. пустые состояния ----------
+    //
+    // «Не импортировано» и «импортировано, но пар нет» различает сервер
+    // (range_imported): неделя задевает два месяца, и по списку месяцев на
+    // странице вывод был бы неверен в обе стороны.
     const notImported = boot({
         role: "guest",
         seed: { group: "494", name: "Б-ИСиТ-22" },
-        routes: { "GET /api/schedule/lessons": () => json(lessons({ days: [], updated_at: 0 })) },
+        routes: { "GET /api/schedule/lessons": () => json(lessons({
+            days: [], updated_at: 0, range_imported: false, imported_months: [],
+        })) },
     });
-    // Страница всегда открывается на текущем месяце, поэтому «декабрь» — это
-    // два нажатия вперёд, а не сохранённый выбор.
-    await until(notImported, () => find(notImported.calls, "GET /api/schedule/lessons").length >= 1);
-    notImported.doc.getElementById("nextMonth").click();
-    await until(notImported, () => find(notImported.calls, "GET /api/schedule/lessons").length >= 2);
-    notImported.doc.getElementById("nextMonth").click();
-    await until(notImported, () => find(notImported.calls, "GET /api/schedule/lessons").length >= 3
-        && /не импортирован/i.test(text(notImported.doc, "timetable")));
-    check("месяц без импорта назван неимпортированным", /ещё не импортирован/i.test(text(notImported.doc, "timetable")),
+    await until(notImported, () => /не импортировано/i.test(text(notImported.doc, "timetable")));
+    check("неделя без импорта названа неимпортированной", /ещё не импортировано/i.test(text(notImported.doc, "timetable")),
         text(notImported.doc, "timetable"));
-    check("в пустом месяце нет карточек дней", notImported.doc.querySelectorAll("#timetable .sched-day").length === 0);
-    check("неимпортированный месяц не подписывается датой импорта", !/Обновлено/.test(text(notImported.doc, "updatedNote")),
+    check("гостю назван тот, кто делает импорт", /администратор платформы/.test(text(notImported.doc, "timetable")),
+        text(notImported.doc, "timetable"));
+    check("в пустой неделе нет карточек дней", notImported.doc.querySelectorAll("#timetable .sched-day").length === 0);
+    check("неимпортированная неделя не подписывается датой импорта", !/Обновлено/.test(text(notImported.doc, "updatedNote")),
         text(notImported.doc, "updatedNote"));
 
     const importedEmpty = boot({
         role: "admin",
-        seed: { group: "494", name: "Б-ИСиТ-22", month: 10, year: 2026 },
-        routes: { "GET /api/schedule/lessons": json(lessons({ days: [] })) },
+        seed: { group: "494", name: "Б-ИСиТ-22" },
+        routes: { "GET /api/schedule/lessons": () => json(lessons({ days: [] })) },
     });
     await until(importedEmpty, () => /пар нет/.test(text(importedEmpty.doc, "timetable")));
-    check("импортированный пустой месяц отличается от неимпортированного",
-        /пар нет/.test(text(importedEmpty.doc, "timetable")), text(importedEmpty.doc, "timetable"));
+    check("импортированная пустая неделя отличается от неимпортированной",
+        /На этой неделе пар нет/.test(text(importedEmpty.doc, "timetable")), text(importedEmpty.doc, "timetable"));
+    check("подсказка называет месяцы, уже лежащие в базе",
+        /в базе уже октябрь 2026/.test(text(importedEmpty.doc, "timetable")), text(importedEmpty.doc, "timetable"));
+
+    // Та же пустая неделя, но у администратора: подсказка обязана указать на
+    // его собственную панель, а не советовать «попросите администратора».
+    const adminNotImported = boot({
+        role: "admin",
+        seed: { group: "494", name: "Б-ИСиТ-22" },
+        routes: { "GET /api/schedule/lessons": () => json(lessons({
+            days: [], updated_at: 0, range_imported: false, imported_months: [],
+        })) },
+    });
+    await until(adminNotImported, () => /Источник расписания/.test(text(adminNotImported.doc, "timetable")));
+    check("админу подсказана его панель, а не «попросите администратора»",
+        /Импортируйте её кнопками панели/.test(text(adminNotImported.doc, "timetable")), text(adminNotImported.doc, "timetable"));
 
     const emptyCatalog = boot({ role: "guest", routes: { "GET /api/schedule/groups": json({ groups: [], count: 0, synced_at: 0 }) } });
     await until(emptyCatalog, () => /Каталог групп пуст/.test(text(emptyCatalog.doc, "groupHelper")));
@@ -369,45 +393,64 @@ async function until(page, predicate, tries = 60) {
         emptyCatalog.calls.map((c) => c.key).join(", "));
     check("пустой каталог показывает выбор группы, а не спиннер", /Выберите группу/.test(text(emptyCatalog.doc, "timetable")));
 
-    // ---------- 5. навигация по месяцам ----------
+    // ---------- 5. навигация по неделям ----------
     //
-    // Декабрь 2026 -> январь 2027: границы месяца считает сервер (month/year),
-    // поэтому от клиента нужен только корректный переход через год. Открытие
-    // всегда на текущем месяце, так что до декабря доходим стрелкой.
-    const dec = boot({ role: "guest", seed: { group: "494", name: "Б-ИСиТ-22" } });
-    await until(dec, () => find(dec.calls, "GET /api/schedule/lessons").length >= 1);
-    dec.doc.getElementById("nextMonth").click();
-    await until(dec, () => find(dec.calls, "GET /api/schedule/lessons").length >= 2);
-    dec.doc.getElementById("nextMonth").click();
-    await until(dec, () => find(dec.calls, "GET /api/schedule/lessons").length >= 3
-        && /декабрь 2026/i.test(text(dec.doc, "monthLabel")));
-    dec.doc.getElementById("nextMonth").click();
-    await until(dec, () => find(dec.calls, "GET /api/schedule/lessons").length >= 4);
-    const january = find(dec.calls, "GET /api/schedule/lessons").pop();
-    check("стрелка вперёд перелистывает через год", january.params.get("month") === "1" && january.params.get("year") === "2027",
-        january.search);
-    check("подпись месяца обновилась", /январь 2027/i.test(text(dec.doc, "monthLabel")), text(dec.doc, "monthLabel"));
+    // Границы периода считает страница, и проверять их надо без привязки к дате
+    // прогона: неделя начинается с понедельника, длится ровно семь дней и
+    // содержит сегодняшний день — это и есть требование «открывается на
+    // сегодняшней дате». Месяц для этого не годился: стрелку надо было крутить
+    // столько раз, какой на календаре месяц.
+    const nav = boot({ role: "guest", seed: { group: "494", name: "Б-ИСиТ-22" } });
+    await until(nav, () => find(nav.calls, "GET /api/schedule/lessons").length >= 1);
 
-    dec.doc.getElementById("currentMonth").click();
-    await until(dec, () => find(dec.calls, "GET /api/schedule/lessons").length >= 5);
-    const backToNow = find(dec.calls, "GET /api/schedule/lessons").pop();
-    const realMonth = String(new Date().getMonth() + 1);
-    check("кнопка текущего месяца возвращает к сегодняшнему", backToNow.params.get("month") === realMonth
-        && backToNow.params.get("year") === String(new Date().getFullYear()), backToNow.search);
+    const period = (call) => ({ from: Number(call.params.get("from")), to: Number(call.params.get("to")) });
+    const first = period(find(nav.calls, "GET /api/schedule/lessons")[0]);
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    const todayUnix = Math.floor(midnight.getTime() / 1000);
+    const labelStart = text(nav.doc, "weekLabel");
+
+    check("запрошен ровно недельный период", first.to - first.from + 1 === 7 * 86400, JSON.stringify(first));
+    check("неделя начинается с понедельника", new Date(first.from * 1000).getDay() === 1,
+        new Date(first.from * 1000).toString());
+    check("сегодняшний день входит в показанный период", first.from <= todayUnix && todayUnix <= first.to,
+        JSON.stringify(first));
+    check("подпись недели содержит число", /\d/.test(labelStart), labelStart);
+
+    nav.doc.getElementById("nextWeek").click();
+    await until(nav, () => find(nav.calls, "GET /api/schedule/lessons").length >= 2);
+    const forward = period(find(nav.calls, "GET /api/schedule/lessons").pop());
+    check("стрелка вперёд сдвигает период ровно на семь дней", forward.from - first.from === 7 * 86400,
+        JSON.stringify({ first, forward }));
+    check("подпись недели изменилась вместе с периодом", text(nav.doc, "weekLabel") !== labelStart,
+        `${labelStart} → ${text(nav.doc, "weekLabel")}`);
+
+    nav.doc.getElementById("prevWeek").click();
+    nav.doc.getElementById("prevWeek").click();
+    await until(nav, () => find(nav.calls, "GET /api/schedule/lessons").length >= 4);
+    const backward = period(find(nav.calls, "GET /api/schedule/lessons").pop());
+    check("стрелка назад отмеряет семь дней обратно", backward.from === first.from - 7 * 86400,
+        JSON.stringify(backward));
+
+    nav.doc.getElementById("currentWeek").click();
+    await until(nav, () => find(nav.calls, "GET /api/schedule/lessons").length >= 5);
+    const backToNow = period(find(nav.calls, "GET /api/schedule/lessons").pop());
+    check("«Текущая неделя» возвращает к сегодняшней", backToNow.from === first.from, JSON.stringify(backToNow));
+    check("подпись вернулась к исходной", text(nav.doc, "weekLabel") === labelStart, text(nav.doc, "weekLabel"));
 
     // смена группы: имя из каталога превращается в id (однозначный), а живой
     // ввод вне каталога уходит как есть — сервер умеет искать и по имени.
-    dec.doc.getElementById("groupInput").value = "ИСП-21";
-    dec.doc.getElementById("groupInput").dispatchEvent(new dec.window.Event("change", { bubbles: true }));
-    await until(dec, () => find(dec.calls, "GET /api/schedule/lessons").some((c) => c.params.get("group") === "495"));
-    const chosen = find(dec.calls, "GET /api/schedule/lessons").pop();
+    nav.doc.getElementById("groupInput").value = "ИСП-21";
+    nav.doc.getElementById("groupInput").dispatchEvent(new nav.window.Event("change", { bubbles: true }));
+    await until(nav, () => find(nav.calls, "GET /api/schedule/lessons").some((c) => c.params.get("group") === "495"));
+    const chosen = find(nav.calls, "GET /api/schedule/lessons").pop();
     check("имя из каталога отправлено как id", chosen.params.get("group") === "495", chosen.search);
 
-    dec.doc.getElementById("groupInput").value = "  б-исит-22  ";
-    dec.doc.getElementById("groupInput").dispatchEvent(new dec.window.Event("change", { bubbles: true }));
-    await until(dec, () => find(dec.calls, "GET /api/schedule/lessons").some((c) => c.params.get("group") === "494"));
+    nav.doc.getElementById("groupInput").value = "  б-исит-22  ";
+    nav.doc.getElementById("groupInput").dispatchEvent(new nav.window.Event("change", { bubbles: true }));
+    await until(nav, () => find(nav.calls, "GET /api/schedule/lessons").some((c) => c.params.get("group") === "494"));
     check("тот же ввод в чужом регистре с пробелами найден в каталоге",
-        find(dec.calls, "GET /api/schedule/lessons").pop().params.get("group") === "494");
+        find(nav.calls, "GET /api/schedule/lessons").pop().params.get("group") === "494");
 
     // ---------- 5. состояния ошибок ----------
     const broken = boot({
@@ -449,22 +492,119 @@ async function until(page, predicate, tries = 60) {
     check("после синхронизации каталог перечитан", find(admin.calls, "GET /api/schedule/groups").length === 2,
         String(find(admin.calls, "GET /api/schedule/groups").length));
 
-    // импорт: только выбранный месяц и группа; поле count = 1 не отправляется
-    // (сервер отвергает неизвестные поля, а 1 — его собственный default).
-    admin.doc.getElementById("importMonthBtn").click();
+    // импорт одной группы: месяц берётся из показанной недели (понедельника),
+    // а не из памяти о прошлом просмотре; count = 1 не отправляется (сервер
+    // отвергает неизвестные поля, а 1 — его собственный default).
+    const shownFrom = Number(find(admin.calls, "GET /api/schedule/lessons")[0].params.get("from"));
+    const shown = new Date(shownFrom * 1000);
+
+    admin.doc.getElementById("importGroupBtn").click();
     await until(admin, () => find(admin.calls, "POST /api/schedule/source/lessons").length > 0);
     const imp = JSON.parse(find(admin.calls, "POST /api/schedule/source/lessons")[0].body);
-    check("импорт просит ровно показанные месяц и группу", imp.group === "494" && imp.month === 10 && imp.year === 2026,
-        JSON.stringify(imp));
+    check("импорт просит показанную неделю и группу",
+        imp.group === "494" && imp.month === shown.getMonth() + 1 && imp.year === shown.getFullYear(),
+        `${JSON.stringify(imp)} | показана неделя с ${shown.toLocaleDateString("ru-RU")}`);
     check("count=1 не улетает на сервер", !("count" in imp), JSON.stringify(imp));
     await until(admin, () => /Импортировано/.test(text(admin.doc, "sourceMsg")));
     check("импорт подтверждён числом пар", /Импортировано пар: 3/.test(text(admin.doc, "sourceMsg")), text(admin.doc, "sourceMsg"));
 
     admin.doc.getElementById("importCount").value = "3";
-    admin.doc.getElementById("importMonthBtn").click();
+    admin.doc.getElementById("importGroupBtn").click();
     await until(admin, () => find(admin.calls, "POST /api/schedule/source/lessons").length > 1);
     const imp3 = JSON.parse(find(admin.calls, "POST /api/schedule/source/lessons").pop().body);
     check("выбор «3 месяца» доехал до сервера", imp3.count === 3, JSON.stringify(imp3));
+
+    // ---------- 6b. массовый импорт: запуск, прогресс, завершение ----------
+    //
+    // Запрос владельца — «парситься должны все группы и все даты». Задача
+    // фоновая, поэтому страница обязана: отправить тело без группы, показать
+    // живой прогресс, перестать опрашивать после завершения и перечитать то,
+    // что импорт изменил.
+    const running = {
+        running: true, actor: "root", started_at: 1761300000, finished_at: 0,
+        months: [{ month: 10, year: 2026 }], groups: 588, steps: 588, done: 12,
+        lessons: 340, failed: 1, current: "Б-ИСиТ-22 · 10.2026", failed_last_group: "",
+    };
+    const finished = {
+        running: false, actor: "root", started_at: 1761300000, finished_at: 1761303600,
+        months: [{ month: 10, year: 2026 }], groups: 588, steps: 588, done: 588,
+        lessons: 14800, failed: 3, current: "", failed_last_group: "ИСП-21 · 10.2026",
+    };
+
+    const mass = boot({
+        role: "admin",
+        seed: { group: "494", name: "Б-ИСиТ-22" },
+        routes: {
+            // Ответы отдаются функцией: Response читается один раз, а эту
+            // фикстуру страница опрашивает несколько раз подряд.
+            "POST /api/schedule/source/import-all": () => json({ source: "apeks", job: running }, 202),
+            "GET /api/schedule/source/import-all": ({ hits }) =>
+                json({ source: "apeks", job: hits["GET /api/schedule/source/import-all"] === 1 ? running : finished }),
+        },
+    });
+
+    // Первый опрос — инициализация панели: задача идёт, и панель это видит ещё
+    // до всякой кнопки.
+    await until(mass, () => /Массовый импорт идёт/.test(text(mass.doc, "sourceJobNote")));
+    check("прогресс задачи показан числами шагов", /12 из 588/.test(text(mass.doc, "sourceJobNote")), text(mass.doc, "sourceJobNote"));
+    check("прогресс называет группу, которую читает", /Б-ИСиТ-22/.test(text(mass.doc, "sourceJobNote")),
+        text(mass.doc, "sourceJobNote"));
+
+    mass.doc.getElementById("importAllBtn").click();
+    await until(mass, () => find(mass.calls, "POST /api/schedule/source/import-all").length > 0);
+    const allCall = find(mass.calls, "POST /api/schedule/source/import-all")[0];
+    check("массовый импорт отправлен POST'ом с CSRF", allCall.method === "POST"
+        && allCall.headers["X-CSRF-Token"] === "test-csrf-token", JSON.stringify(allCall.headers));
+    const all = JSON.parse(allCall.body);
+    const massMonday = new Date(Number(find(mass.calls, "GET /api/schedule/lessons")[0].params.get("from")) * 1000);
+    check("массовый импорт просит период и не просит группу",
+        !("group" in all) && typeof all.month === "number" && typeof all.year === "number", JSON.stringify(all));
+    check("месяц массовой задачи — показанная неделя",
+        all.month === massMonday.getMonth() + 1 && all.year === massMonday.getFullYear(),
+        `${JSON.stringify(all)} | понедельник ${massMonday.toLocaleDateString("ru-RU")}`);
+    await until(mass, () => /запущен/.test(text(mass.doc, "sourceMsg")));
+    check("запуск подтверждён числом групп", /588 групп/.test(text(mass.doc, "sourceMsg")), text(mass.doc, "sourceMsg"));
+
+    // Второй опрос по таймеру отдаёт завершённую задачу.
+    await until(mass, () => /завершён/.test(text(mass.doc, "sourceJobNote")), 200);
+    check("итог задачи подписан счётчиками", /завершён/.test(text(mass.doc, "sourceJobNote"))
+        && /пар 14800/.test(text(mass.doc, "sourceJobNote")) && /сбоев 3/.test(text(mass.doc, "sourceJobNote")),
+        text(mass.doc, "sourceJobNote"));
+    check("сбойная группа названа по имени, без путей и стека",
+        /ИСП-21/.test(text(mass.doc, "sourceJobNote")) && !/\//.test(text(mass.doc, "sourceJobNote")),
+        text(mass.doc, "sourceJobNote"));
+    check("после завершения статистика источника перечитана",
+        find(mass.calls, "GET /api/schedule/source/status").length >= 2,
+        String(find(mass.calls, "GET /api/schedule/source/status").length));
+
+    const pollsBefore = find(mass.calls, "GET /api/schedule/source/import-all").length;
+    await wait(2600);
+    check("завершённая задача больше не опрашивается",
+        find(mass.calls, "GET /api/schedule/source/import-all").length === pollsBefore,
+        `${pollsBefore} → ${find(mass.calls, "GET /api/schedule/source/import-all").length}`);
+
+    // 409 — не тупик: импорт уже идёт (с другой вкладки), и панель обязана
+    // показать его прогресс вместо того чтобы оставить админа на тексте конфликта.
+    const conflict = boot({
+        role: "admin",
+        seed: { group: "494", name: "Б-ИСиТ-22" },
+        routes: {
+            "POST /api/schedule/source/import-all": () => json({ error: "массовый импорт уже выполняется", job: running }, 409),
+            "GET /api/schedule/source/import-all": () => json({ source: "apeks", job: running }),
+        },
+    });
+    await until(conflict, () => find(conflict.calls, "GET /api/schedule/source/status").length > 0);
+    conflict.doc.getElementById("importAllBtn").click();
+    await until(conflict, () => /уже выполняется/.test(text(conflict.doc, "sourceMsg")));
+    check("повторный запуск назван конфликтом, а не поломкой", /уже выполняется/.test(text(conflict.doc, "sourceMsg")),
+        text(conflict.doc, "sourceMsg"));
+    await until(conflict, () => find(conflict.calls, "GET /api/schedule/source/import-all").length >= 2, 200);
+    check("на 409 опрос прогресса всё равно идёт",
+        find(conflict.calls, "GET /api/schedule/source/import-all").length >= 2,
+        String(find(conflict.calls, "GET /api/schedule/source/import-all").length));
+    check("конфликт не оставил кнопку в is-loading",
+        !conflict.doc.getElementById("importAllBtn").classList.contains("is-loading")
+        && conflict.doc.getElementById("importAllBtn").disabled === false);
 
     // не настроен: состояние рабочее, и страница обязана назвать причину —
     // именно переменную окружения, а не «что-то пошло не так».
@@ -514,13 +654,13 @@ async function until(page, predicate, tries = 60) {
     // раньше этого момента уткнулся бы в кнопку без обработчика (страница
     // навешивает его на DOMContentLoaded).
     await until(failed, () => find(failed.calls, "GET /api/schedule/source/status").length > 0);
-    failed.doc.getElementById("importMonthBtn").click();
+    failed.doc.getElementById("importGroupBtn").click();
     await until(failed, () => hidden(failed.doc, "sourceMsg") === false);
     check("сбой импорта показан в панели", /не ответил/.test(text(failed.doc, "sourceMsg")),
         failed.doc.getElementById("sourceMsg").className + "|" + text(failed.doc, "sourceMsg"));
-    check("кнопка импорта разблокирована после сбоя", failed.doc.getElementById("importMonthBtn").disabled === false);
+    check("кнопка импорта разблокирована после сбоя", failed.doc.getElementById("importGroupBtn").disabled === false);
     check("после сбоя импорта страница не осталась в is-loading",
-        !failed.doc.getElementById("importMonthBtn").classList.contains("is-loading"));
+        !failed.doc.getElementById("importGroupBtn").classList.contains("is-loading"));
 
     // преподаватель — не админ: панели нет, и запросов к ней тоже нет.
     const teacher = boot({ role: "teacher", seed: { group: "494", name: "Б-ИСиТ-22", month: 10, year: 2026 } });

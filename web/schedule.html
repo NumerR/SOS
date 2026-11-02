@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Расписание и ресурсы · SOS</title>
-    <link rel="stylesheet" href="css/style.css?v=20261028">
-    <script src="js/core/theme.js?v=20261028"></script>
+    <link rel="stylesheet" href="css/style.css?v=20261101">
+    <script src="js/core/theme.js?v=20261101"></script>
 </head>
 <body data-layout="schedule" data-brand-sub="Расписание · Ресурсы" data-footer-note="Schedule · events · resources — one place">
     <a class="skip-link" href="#main">К основному содержимому</a>
@@ -33,19 +33,19 @@
                             <span class="helper" id="groupHelper">Каталог групп загружается…</span>
                         </label>
 
-                        <div class="sched-month">
-                            <button id="prevMonth" class="btn btn-icon" type="button" title="Предыдущий месяц" aria-label="Предыдущий месяц">
+                        <div class="sched-week">
+                            <button id="prevWeek" class="btn btn-icon" type="button" title="Предыдущая неделя" aria-label="Предыдущая неделя">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
                             </button>
-                            <span class="sched-month-label" id="monthLabel">—</span>
-                            <button id="nextMonth" class="btn btn-icon" type="button" title="Следующий месяц" aria-label="Следующий месяц">
+                            <span class="sched-week-label" id="weekLabel">—</span>
+                            <button id="nextWeek" class="btn btn-icon" type="button" title="Следующая неделя" aria-label="Следующая неделя">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
                             </button>
                         </div>
 
                         <span class="spacer"></span>
 
-                        <button id="currentMonth" class="btn btn-secondary" type="button">Текущий месяц</button>
+                        <button id="currentWeek" class="btn btn-secondary" type="button">Текущая неделя</button>
                         <button id="refreshTimetable" class="btn btn-icon" type="button" title="Обновить" aria-label="Обновить расписание">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
                         </button>
@@ -99,18 +99,30 @@
 
                     <label class="field source-count">
                         <span class="field-label">Месяцев подряд</span>
-                        <select class="control control-small" id="importCount" aria-describedby="sourceMsg">
-                            <option value="1">1 — только текущий</option>
+                        <select class="control control-small" id="importCount" aria-describedby="countHelper sourceMsg">
+                            <option value="1">1 — месяц этой недели</option>
                             <option value="2">2</option>
                             <option value="3">3</option>
                         </select>
+                        <span class="helper" id="countHelper">Отсчёт — от месяца, который сейчас показан в расписании.</span>
                     </label>
 
-                    <button id="importMonthBtn" class="btn" type="button">
-                        Импортировать месяц
+                    <button id="importGroupBtn" class="btn btn-secondary" type="button">
+                        Импортировать эту группу
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+                    </button>
+
+                    <button id="importAllBtn" class="btn" type="button">
+                        Импортировать все группы
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
                     </button>
                 </div>
+
+                <!-- Прогресс массовой задачи. Не aria-live: панель опрашивает
+                     сервер каждые две секунды, и живая область объявляла бы
+                     «12 из 588» бесконечной считалкой. О результатах говорит
+                     sourceMsg ниже — он меняется редко и по делу. -->
+                <p class="card-text" id="sourceJobNote">Массовый импорт ещё не запускался.</p>
 
                 <p id="sourceMsg" class="message hidden" role="status"></p>
             </section>
@@ -256,11 +268,11 @@
 
     <footer class="site-footer"></footer>
 
-    <script src="js/config.js?v=20261028"></script>
-    <script src="js/core/api-client.js?v=20261028"></script>
-    <script src="js/core/format.js?v=20261028"></script>
-    <script src="js/core/layout.js?v=20261028"></script>
-    <script src="js/common.js?v=20261028"></script>
-    <script src="js/schedule.js?v=20261028"></script>
+    <script src="js/config.js?v=20261101"></script>
+    <script src="js/core/api-client.js?v=20261101"></script>
+    <script src="js/core/format.js?v=20261101"></script>
+    <script src="js/core/layout.js?v=20261101"></script>
+    <script src="js/common.js?v=20261101"></script>
+    <script src="js/schedule.js?v=20261101"></script>
 </body>
 </html>

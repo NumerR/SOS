@@ -160,11 +160,35 @@ func (h *Handlers) ScheduleLessonsAPI(w http.ResponseWriter, r *http.Request) {
 		"group_name":      group.Name,
 		"department":      group.Department,
 		"range":           map[string]int{"from": fromKey, "to": toKey},
+		"range_imported":  rangeImported(months, fromKey, toKey),
 		"updated_at":      importedAt,
 		"days":            groupLessonsByDay(lessons),
 		"imported_months": months,
 		"source_page_url": apeks.SourcePageURL,
 	})
+}
+
+// rangeImported — лежит ли в базе хотя бы один месяц, пересекающийся с
+// запрошенным периодом.
+//
+// Полю нужен именно период, а не месяц: страница показывает неделю
+// (ADR-0040), а неделя 27 октября — 2 ноября задевает два месяца сразу.
+// «Октябрь импортирован» ещё не значит, что про эту неделю что-то известно, а
+// «ноябрь не импортирован» не значит, что она пуста — без этого поля честный
+// текст «ещё не импортировано» на границе месяца пришлось бы выбирать наугад.
+//
+// День без даты (day_key 99999999) в покрытие не попадает по построению: он
+// больше любого реального конца периода, и строка «пары без точной даты» не
+// делает месяц импортированным.
+func rangeImported(months []store.MonthKey, fromKey, toKey int) bool {
+	for _, month := range months {
+		first := month.Year*10000 + month.Month*100 + 1
+		last := month.Year*10000 + month.Month*100 + daysInMonth(month.Year, time.Month(month.Month))
+		if first <= toKey && last >= fromKey {
+			return true
+		}
+	}
+	return false
 }
 
 // groupLessonsByDay собирает плоский список пар по дням.
@@ -415,54 +439,32 @@ func (h *Handlers) ScheduleImportAPI(w http.ResponseWriter, r *http.Request) {
 	imported := make([]store.MonthKey, 0, len(months))
 
 	for _, slot := range months {
-		month, err := h.Apeks.GetMonth(r.Context(), group.ExternalID, slot.month, slot.year)
+		stored, err := h.importGroupMonth(r.Context(), *group, slot.Month, slot.Year)
 		if err != nil {
-			h.scheduleSourceFailure(w, r, user, fmt.Sprintf("пары %s %02d.%d", group.Name, slot.month, slot.year), err)
-			return
-		}
+			label := fmt.Sprintf("пары %s %02d.%d", group.Name, slot.Month, slot.Year)
+			if errors.Is(err, errScheduleImportStore) {
+				// Разобранное не записано: это наша ошибка, а не отказ вуза.
+				h.recordAudit(r, auditWrite{
+					action:     store.AuditScheduleImport,
+					actor:      user,
+					targetType: "schedule_group",
+					targetID:   group.ExternalID,
+					detail:     fmt.Sprintf("month=%02d.%d", slot.Month, slot.Year),
+					ok:         false,
+				})
+				internalError(w, r, "failed to store imported schedule", err,
+					slog.String("group", group.ExternalID),
+					slog.String("month", fmt.Sprintf("%02d.%d", slot.Month, slot.Year)))
+				return
+			}
 
-		rows := make([]store.SourceLesson, 0, len(month.Lessons))
-		for _, lesson := range month.Lessons {
-			rows = append(rows, store.SourceLesson{
-				ExternalID:   lesson.ExternalID,
-				GroupExtID:   group.ExternalID,
-				Month:        slot.month,
-				Year:         slot.year,
-				DayKey:       lesson.DayKey,
-				Date:         lesson.Date,
-				Weekday:      lesson.Weekday,
-				LessonNumber: lesson.LessonNumber,
-				Time:         lesson.Time,
-				Start:        lesson.Start,
-				End:          lesson.End,
-				Group:        lesson.Group,
-				Subgroup:     lesson.Subgroup,
-				Discipline:   lesson.Discipline,
-				Type:         lesson.Type,
-				Room:         lesson.Room,
-				Teacher:      lesson.Teacher,
-			})
-		}
-
-		stored, err := h.ScheduleSource.ReplaceMonth(r.Context(), apeks.Source, group.ExternalID, slot.month, slot.year, rows)
-		if err != nil {
-			h.recordAudit(r, auditWrite{
-				action:     store.AuditScheduleImport,
-				actor:      user,
-				targetType: "schedule_group",
-				targetID:   group.ExternalID,
-				detail:     fmt.Sprintf("month=%02d.%d parsed=%d", slot.year, slot.month, len(rows)),
-				ok:         false,
-			})
-			internalError(w, r, "failed to store imported schedule", err,
-				slog.String("group", group.ExternalID),
-				slog.String("month", fmt.Sprintf("%02d.%d", slot.month, slot.year)))
+			h.scheduleSourceFailure(w, r, user, label, err)
 			return
 		}
 
 		imported = append(imported, store.MonthKey{
-			Month:      slot.month,
-			Year:       slot.year,
+			Month:      slot.Month,
+			Year:       slot.Year,
 			Lessons:    stored,
 			ImportedAt: time.Now().Unix(),
 		})
@@ -472,7 +474,7 @@ func (h *Handlers) ScheduleImportAPI(w http.ResponseWriter, r *http.Request) {
 			actor:      user,
 			targetType: "schedule_group",
 			targetID:   group.ExternalID,
-			detail:     fmt.Sprintf("%s: %02d.%d parsed=%d stored=%d", group.Name, slot.month, slot.year, len(rows), stored),
+			detail:     fmt.Sprintf("%s: %02d.%d stored=%d", group.Name, slot.Month, slot.Year, stored),
 			ok:         true,
 		})
 	}
@@ -523,16 +525,21 @@ func scheduleImportMonths(month, year, count int) ([]scheduleMonth, error) {
 	cursor := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
 
 	for range count {
-		slots = append(slots, scheduleMonth{month: int(cursor.Month()), year: cursor.Year()})
+		slots = append(slots, scheduleMonth{Month: int(cursor.Month()), Year: cursor.Year()})
 		cursor = cursor.AddDate(0, 1, 0)
 	}
 
 	return slots, nil
 }
 
+// scheduleMonth — один месяц периода импорта.
+//
+// Поля записаны с большой буквы не для стиля: список месяцев отдаётся наружу в
+// снимке фоновой задачи (scheduleImportView), а encoding/json видит только
+// экспортированные поля. С тех же полей одиночный импорт считает свой ответ.
 type scheduleMonth struct {
-	month int
-	year  int
+	Month int `json:"month"`
+	Year  int `json:"year"`
 }
 
 // scheduleDayRange читает диапазон дней из запроса.

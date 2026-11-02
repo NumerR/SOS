@@ -433,7 +433,7 @@ function describedByRuntimeChecks() {
 // пропускает намеренно (скрытая кнопка не должна «стрелять» волной).
 function rippleChecks() {
     function press(win, doc) {
-        const btn = doc.getElementById("currentMonth");
+        const btn = doc.getElementById("currentWeek");
         btn.getBoundingClientRect = () => ({
             width: 120, height: 40, left: 0, top: 0, right: 120, bottom: 40, x: 0, y: 0,
         });

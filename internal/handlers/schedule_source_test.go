@@ -403,6 +403,79 @@ func TestScheduleLessonsAPIByMonthAndYear(t *testing.T) {
 	}
 }
 
+// TestScheduleLessonsAPIAnswersImportedForAWeek — «есть ли эти даты в базе»
+// считает сервер, а не страница.
+//
+// Поле range_imported нужно недельному виду: пустая неделя обязана различать
+// «группа ещё не скачана» и «скачана, но в эти семь дней пар правда нет», — на
+// глаз это одно и то же, а подсказки диаметрально разные. Ответ отдать нельзя:
+// неделя идёт с понедельника по воскресенье и пересекает границы месяцев
+// (26.10–01.11), так что один и тот же запрос смотрит в два импортированных
+// пакета, а месяц для запроса человек не выбирал вовсе.
+func TestScheduleLessonsAPIAnswersImportedForAWeek(t *testing.T) {
+	e := newScheduleSourceEnv(t)
+	e.seedCatalog(t, store.SourceGroup{ExternalID: "494", Name: "Б-ИСиТ-22"})
+	e.seedMonth(t, "494", 10, 2026,
+		store.SourceLesson{ExternalID: "1", DayKey: 20261006, Date: "06.10.2026", Weekday: "Вт", LessonNumber: 1, Discipline: "Базы данных"},
+	)
+
+	// Понедельники недель, которые разбираются по-разному при одном и том же
+	// содержимом базы.
+	mondays := []struct {
+		name string
+		day  time.Time
+		want bool
+		why  string
+	}{
+		{"неделя внутри импортированного месяца", time.Date(2026, 10, 5, 0, 0, 0, 0, time.Local), true, "октябрь в базе"},
+		{"неделя целиком в неимпортированном месяце", time.Date(2026, 11, 2, 0, 0, 0, 0, time.Local), false, "ноябрь не качали"},
+		{"неделя через границу месяцев", time.Date(2026, 10, 26, 0, 0, 0, 0, time.Local), true, "хватит части периода"},
+		{"далёкая неделя", time.Date(2026, 11, 30, 0, 0, 0, 0, time.Local), false, "декабрь не качали"},
+	}
+
+	for _, week := range mondays {
+		from := week.day.Unix()
+		to := week.day.AddDate(0, 0, 6).Unix()
+
+		rec := lessonsQuery(e.h, fmt.Sprintf("/api/schedule/lessons?group=494&from=%d&to=%d", from, to))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: код %d: %s", week.name, rec.Code, rec.Body.String())
+		}
+
+		got, ok := decode(t, rec)["range_imported"].(bool)
+		if !ok {
+			t.Fatalf("%s: range_imported отсутствует или не булево — страница решала бы по undefined", week.name)
+		}
+		if got != week.want {
+			t.Errorf("%s: range_imported=%v, ожидалось %v (%s)", week.name, got, week.want, week.why)
+		}
+	}
+
+	// Месячный способ задать период отвечает так же: одна правда на оба, иначе
+	// переключение вида меняла бы подпись «импортировано» под ногами.
+	byMonth := lessonsQuery(e.h, "/api/schedule/lessons?group=494&month=10&year=2026")
+	if decode(t, byMonth)["range_imported"] != true {
+		t.Errorf("октябрь по month/year: %v", decode(t, byMonth)["range_imported"])
+	}
+	byNovember := lessonsQuery(e.h, "/api/schedule/lessons?group=494&month=11&year=2026")
+	if decode(t, byNovember)["range_imported"] != false {
+		t.Errorf("ноябрь по month/year: %v", decode(t, byNovember)["range_imported"])
+	}
+
+	// Группа, у которой нет ни одного импортированного месяца: false, а не
+	// отсутствие поля — «не скачано» должно быть различимо от «скачано, но пусто».
+	e.seedCatalog(t, store.SourceGroup{ExternalID: "495", Name: "Б-ИСиТ-23"})
+	empty := lessonsQuery(e.h, fmt.Sprintf("/api/schedule/lessons?group=495&from=%d&to=%d",
+		time.Date(2026, 10, 5, 0, 0, 0, 0, time.Local).Unix(),
+		time.Date(2026, 10, 11, 0, 0, 0, 0, time.Local).Unix()))
+	if decode(t, empty)["range_imported"] != false {
+		t.Errorf("нескачанная группа: %v", decode(t, empty)["range_imported"])
+	}
+	if days, _ := decode(t, empty)["days"].([]any); len(days) != 0 {
+		t.Errorf("у нескачанной группы в days %d записей", len(days))
+	}
+}
+
 func TestScheduleLessonsAPIRejectsBadRequests(t *testing.T) {
 	e := newScheduleSourceEnv(t)
 	e.seedCatalog(t, store.SourceGroup{ExternalID: "494", Name: "Б-ИСиТ-22"})

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/NumerR/SOS/internal/apeks"
 	"github.com/NumerR/SOS/internal/authz"
@@ -111,6 +112,13 @@ type Deps struct {
 // Handlers — HTTP-обработчики. Поля Deps доступны напрямую: h.Users, h.Sessions…
 type Handlers struct {
 	Deps
+
+	// scheduleImport — фоновая задача массового импорта расписания (см.
+	// schedule_import_all.go) и блокировка, которой её прогресс читается из
+	// HTTP. Живёт в памяти процесса: данные при этом в базе, и перезапуск
+	// сервера теряет только строку прогресса, а не импорт.
+	scheduleImportMu sync.Mutex
+	scheduleImport   *scheduleImportJob
 }
 
 // New создаёт набор обработчиков.

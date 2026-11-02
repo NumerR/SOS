@@ -108,4 +108,23 @@ func (m *Module) Register(reg *platform.Registry) {
 		CSRF:        true,
 		Handler:     http.HandlerFunc(h.ScheduleImportAPI),
 	})
+	// Массовый импорт всего каталога: POST запускает фоновую задачу и отвечает
+	// сразу, GET читает её прогресс. Разные методы одного пути — не экономия на
+	// строках, а один и тот же объект (задача) в двух операциях: «создать» и
+	// «посмотреть».
+	reg.Add(platform.Route{
+		Path:        "/api/schedule/source/import-all",
+		Method:      http.MethodPost,
+		Perm:        authz.ScheduleSourceManage,
+		DenyMessage: "only administrators can import the whole catalogue",
+		CSRF:        true,
+		Handler:     http.HandlerFunc(h.ScheduleImportAllAPI),
+	})
+	reg.Add(platform.Route{
+		Path:        "/api/schedule/source/import-all",
+		Method:      http.MethodGet,
+		Perm:        authz.ScheduleSourceManage,
+		DenyMessage: "only administrators can read the import progress",
+		Handler:     http.HandlerFunc(h.ScheduleImportAllStatusAPI),
+	})
 }

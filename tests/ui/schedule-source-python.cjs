@@ -106,15 +106,35 @@ function text(doc, id) {
     return el ? el.textContent.replace(/\s+/g, " ").trim() : "";
 }
 
-// Страница открывается на текущем месяце, поэтому нужный месяц — это
-// последовательность нажатий, а не seed из localStorage (месяц больше не
-// запоминается). Стрелки вызываются только после первого ответа расписания:
-// до DOMContentLoaded кнопки ещё без обработчиков.
-async function showMonth(page, month, year) {
-    const now = new Date();
-    const diff = (year - now.getFullYear()) * 12 + (month - (now.getMonth() + 1));
-    const arrow = diff >= 0 ? "nextMonth" : "prevMonth";
-    for (let i = 0; i < Math.abs(diff); i++) {
+// День источника (YYYYMMDD) -> локальная дата.
+function dayKeyDate(key) {
+    const raw = String(key);
+    return new Date(Number(raw.slice(0, 4)), Number(raw.slice(4, 6)) - 1, Number(raw.slice(6, 8)));
+}
+
+// Понедельник недели, в которую попадает дата (то же правило, что на странице).
+function mondayOf(date) {
+    return new Date(date.getFullYear(), date.getMonth(),
+        date.getDate() - ((date.getDay() + 6) % 7));
+}
+
+// Ключи дней показанной недели: YYYYMMDD, как их хранит источник.
+function weekKeys(monday) {
+    return Array.from({ length: 7 }, (_, i) => {
+        const day = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
+        return day.getFullYear() * 10000 + (day.getMonth() + 1) * 100 + day.getDate();
+    });
+}
+
+// Страница открывается на текущей неделе, поэтому нужный отрезок — это
+// последовательность нажатий стрелок (неделя к неделе), а не seed из
+// localStorage: показанный период больше не запоминается. Стрелки вызываются
+// только после первого ответа расписания — до DOMContentLoaded кнопки ещё без
+// обработчиков.
+async function showWeek(page, date) {
+    const steps = Math.round((mondayOf(date) - mondayOf(new Date())) / (7 * 86400 * 1000));
+    const arrow = steps >= 0 ? "nextWeek" : "prevWeek";
+    for (let i = 0; i < Math.abs(steps); i++) {
         const before = page.calls.filter((p) => p === "/api/schedule/lessons").length;
         page.doc.getElementById(arrow).click();
         await until(page, () => page.calls.filter((p) => p === "/api/schedule/lessons").length > before);
@@ -179,19 +199,44 @@ async function showMonth(page, month, year) {
         again.status === 200 && rowsAfter === rows, `строк ${rows} -> ${rowsAfter}`);
 
     // ---------- 5. страница гостя на импортированных данных ----------
+    //
+    // Показывается неделя, а не месяц, поэтому неделю берут из того, что
+    // реально лежит в базе: первый импортированный день. Задавать её числом
+    // «середина месяца» было бы верно только для этой фикстуры — живой источник
+    // ставит пары куда угодно.
+    const days = after.data.days || [];
+    const shownDate = days.length ? dayKeyDate(days[0].day_key) : new Date(YEAR, MONTH - 1, 5);
+    const shownMonday = mondayOf(shownDate);
+    const week = weekKeys(shownMonday);
+    const inside = days.filter((day) => week.includes(day.day_key)).flatMap((day) => day.lessons);
+    const outside = days.filter((day) => !week.includes(day.day_key)).flatMap((day) => day.lessons);
+    const weekRows = inside.length;
+
     const page = await bootPage({ seed: { group: GROUP, name: GROUP } });
     await until(page, () => page.calls.includes("/api/schedule/lessons"));
-    await showMonth(page, MONTH, YEAR);
+    await showWeek(page, shownDate);
     const drawn = await until(page, () => page.doc.querySelectorAll("#timetable .lesson").length > 0);
     const timetableText = text(page.doc, "timetable");
     check("гость видит таймтейбл без входа", drawn,
         `дней ${page.doc.querySelectorAll("#timetable .sched-day").length}, пар ${page.doc.querySelectorAll("#timetable .lesson").length}`);
-    check("пар отрисовано ровно столько, сколько в базе",
-        page.doc.querySelectorAll("#timetable .lesson").length === rowsAfter,
-        `${page.doc.querySelectorAll("#timetable .lesson").length} против ${rowsAfter}`);
-    check("подписи источника дошли до страницы",
-        /Базы данных/.test(timetableText) && /без ауд\./.test(timetableText),
-        `фрагмент: ${JSON.stringify(timetableText.slice(0, 60))}`);
+    check("пар отрисовано ровно столько, сколько в базе за неделю",
+        page.doc.querySelectorAll("#timetable .lesson").length === weekRows,
+        `${page.doc.querySelectorAll("#timetable .lesson").length} против ${weekRows}, неделя с ${shownMonday.toLocaleDateString("ru-RU")}`);
+    // Подписи сверяются с теми строками, что лежат в показанной неделе, а не с
+    // названным предметом из фикстуры: у неё три пары, и одна стоит в понедельник
+    // следующей недели. Жёсткая проверка на «Базы данных» была верна ровно
+    // столько, сколько страница рисовала месяц целиком.
+    const missing = inside.filter((lesson) => !timetableText.includes(lesson.discipline)
+        || !timetableText.includes(lesson.room));
+    check("каждая пара показанной недели подписана предметом и аудиторией",
+        inside.length > 0 && missing.length === 0,
+        `в неделе ${inside.length} пар, не найдено: ${JSON.stringify(missing.map((l) => [l.discipline, l.room]))}`);
+    // Границы недели настоящие, а не только подпись над таблицей: то, что
+    // осталось за понедельником/воскресеньем, не обязано доезжать до страницы,
+    // иначе «эта неделя» и «этот месяц» — одно и то же под разными именами.
+    check("пар за границей показанной недели на странице нет",
+        outside.every((lesson) => !timetableText.includes(lesson.discipline)),
+        `за неделей ${outside.length} пар: ${JSON.stringify(outside.map((l) => l.date))}`);
     check("разметка источника не стала элементом DOM",
         page.doc.querySelectorAll("#timetable img, #timetable script").length === 0);
     check("подгруппа показана там, где она есть",
@@ -206,12 +251,12 @@ async function showMonth(page, month, year) {
     check("панель источника спрятана от гостя",
         page.doc.getElementById("sourceManageSection").classList.contains("hidden"));
 
-    // ---------- 6. месяц без пар ----------
+    // ---------- 6. неделя без данных ----------
     const empty = await bootPage({ seed: { group: GROUP, name: GROUP } });
     await until(empty, () => empty.calls.includes("/api/schedule/lessons"));
-    await showMonth(empty, 12, YEAR);
-    const told = await until(empty, () => /пар нет|не импортирован/.test(text(empty.doc, "timetable")));
-    check("пустой месяц различим", told, text(empty.doc, "timetable").slice(0, 120));
+    await showWeek(empty, new Date(YEAR, 11, 15));
+    const told = await until(empty, () => /пар нет|не импортировано/.test(text(empty.doc, "timetable")));
+    check("пустая неделя различима", told, text(empty.doc, "timetable").slice(0, 120));
 
     const failed = results.filter((r) => !r.ok);
     console.log(`\n${results.length - failed.length}/${results.length} проверок пройдено`);

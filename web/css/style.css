@@ -158,7 +158,20 @@ html.theme-switching *::after {
 }
 
 *, *::before, *::after { box-sizing: border-box; }
-html, body { height: 100%; }
+/* У <body> нет height: 100% и не будет: sticky-шапка прилипает в пределах
+   собственного контейнера, а блок высотой в экран заканчивается на первом
+   экране — дальше шапка уезжала вверх вместе с ним (замер headless-браузером
+   на /schedule: top=-32px в конце страницы). Роль «заполнить экран, чтобы
+   футер лежал внизу» выполняет min-height: 100vh ниже. */
+html { height: 100%; }
+/* Якорный переход (skip-link ведёт в #main) обязан приземляться под прилиплившую
+   полосу, а не за неё: без этой отдачи первая строка содержимого — заголовок
+   страницы — оказалась бы накрыта шапкой ровно в тот момент, когда клавиатура
+   привела человека к содержимому. Числа = высота разложенной шапки в этом
+   макете (замер headless-браузером, ADR-0039); в сложенном состоянии остаётся
+   запас, накрывания нет ни в одном из двух. --header-h пишет core/layout.js,
+   fallback держит страницу ошибки, где скриптов нет вовсе. */
+html { scroll-padding-block-start: calc(var(--header-h, 96px) + 12px); }
 
 body {
   margin: 0;
@@ -180,11 +193,48 @@ button { font: inherit; }
 
 .container { width: min(var(--maxw), 100% - 36px); margin-inline: auto; }
 
-.site-header { padding-block: 18px; position: relative; z-index: 2; }
+/* Шапка прилипает к верху и по прокрутке складывается в компактную полосу: до
+   навигации, переключателя тема/свет и выхода надо дотягиваться из любой точки
+   длинного списка, а не мотаться наверх (ADR-0039). Класс is-stuck на <header>
+   ставит core/layout.js — здесь только геометрия и переходы.
+
+   Фон обязателен: без него прилипающая полоса прозрачна, и строки расписания
+   доезжают до самого верха экрана прямо сквозь неё. --parchment — тот же цвет,
+   что у <body>, поэтому до прокрутки шапка не выглядит изменившейся.
+
+   Тень задана и в расправленном состоянии (нулевая прозрачность, тот же список
+   из двух теней): интерполируются только списки одинаковой длины, иначе на
+   границе порога тень появлялась бы щелчком, а не выездом.
+
+   overflow-anchor: none — шапка не участвует в якорении прокрутки. Браузер при
+   изменении высоты содержимого выше точки прокрутки доплачивает разницу к
+   scrollY, а складывание шапки и есть такое изменение: наверху scrollTo(4)
+   превращалось в y=27, порог 24px оказывался пройден, и шапка складывалась
+   сама от собственного складывания. Safari якорения не делает вовсе, поэтому
+   отключение только приводит поведение браузеров к одному. */
+.site-header {
+  position: sticky;
+  top: 0;
+  overflow-anchor: none;
+  padding-block: 18px;
+  background: var(--parchment);
+  box-shadow: 0 10px 18px -14px rgba(0, 0, 0, 0), 0 1px 0 rgba(0, 0, 0, 0);
+  transition: padding-block .3s cubic-bezier(.2,.7,.3,1), box-shadow .3s ease;
+  z-index: 2;
+}
+/* Состояние «сложена»: ряд уходит от 50px к 36px, вертикальные отступы — с 18px
+   до 6px, всего шапка теряет около 32px. Волосатая граница снизу появляется
+   только здесь: в начале страницы шапка стоит на своём месте, и граница рисовала
+   бы разрыв там, где его нет. */
+.site-header.is-stuck {
+  padding-block: 6px;
+  box-shadow: 0 10px 18px -14px var(--sh-dark), 0 1px 0 var(--line);
+}
 .header-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
 /* Навигация и переключатель темы — одна группа: у шапки два края (марка и
    действия), а не три, иначе на узком экране кнопка отрывается от ссылок. */
-.header-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.header-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; transition: gap .3s ease; }
+.site-header.is-stuck .header-tools { gap: 8px; }
 
 .brand {
   display: inline-flex; align-items: center; gap: 12px;
@@ -193,6 +243,7 @@ button { font: inherit; }
   background: var(--surface);
   box-shadow: var(--e1);
   text-decoration: none;
+  transition: padding .3s cubic-bezier(.2,.7,.3,1), gap .3s cubic-bezier(.2,.7,.3,1);
 }
 /* #f4efe4 на --teal = 6.57:1 (тот же приём, что у подписи кнопок: литерал, а не
    белый, и он тоже в списке измеренных пар). */
@@ -200,11 +251,34 @@ button { font: inherit; }
   width: 30px; height: 30px; display: grid; place-items: center;
   border-radius: var(--r-sm); background: var(--teal); color: #f4efe4;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.25), 2px 2px 5px var(--sh-dark);
+  transition: width .3s cubic-bezier(.2,.7,.3,1), height .3s cubic-bezier(.2,.7,.3,1);
 }
 .brand-mark svg { width: 18px; height: 18px; }
-.brand-text { display: flex; flex-direction: column; line-height: 1.1; }
+.brand-text { display: flex; flex-direction: column; line-height: 1.1; max-height: 40px; overflow: hidden; transition: max-height .3s ease, opacity .2s ease; }
 .brand-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
-.brand-sub { font-size: 9.5px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); margin-top: 2px; }
+/* Подпись страницы — первая жертва складывания: она единственная в шапке не
+   является контролом, и её высота (13px + отступ) даёт главный выигрыш по
+   вертикали. Уводится через max-height, а не display:none: элемент остаётся в
+   DOM и в доступном имени ссылки, а строка ряда не перестраивается скачком. */
+.brand-sub { font-size: 9.5px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); margin-top: 2px; max-height: 13px; overflow: hidden; transition: max-height .3s ease, margin-top .3s ease, opacity .2s ease; }
+
+/* Геометрия сложенного состояния. Всё, что здесь меняется, перечислено в
+   transition базового правила — «плавно» держится ровно на этом совпадении, и
+   проверка ADR-0039 следит, чтобы ни одно свойство не выпало. */
+.site-header.is-stuck .brand { padding: 5px 12px 5px 8px; gap: 9px; }
+.site-header.is-stuck .brand-mark { width: 26px; height: 26px; }
+.site-header.is-stuck .brand-sub { max-height: 0; margin-top: 0; opacity: 0; }
+/* Кнопки шапки складываются вместе с ней. Их переход повторяет список .btn и
+   дополняет его геометрией: переопределить одним `transition: padding` значило
+   бы оставить кнопки в шапке без волны и без подъёма на hover. */
+.header-tools .btn {
+  transition: transform .16s cubic-bezier(.2,.7,.3,1), box-shadow .2s ease,
+              background .18s ease, color .18s ease, padding .3s ease,
+              gap .3s ease, width .3s ease, height .3s ease, font-size .3s ease;
+}
+.site-header.is-stuck .header-tools .btn { padding: 8px 14px; gap: 6px; font-size: 12.5px; }
+.site-header.is-stuck .header-tools .btn-icon { width: 34px; height: 34px; }
+.site-header.is-stuck .avatar { width: 34px; height: 34px; font-size: 13px; }
 
 .nav { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .main { flex: 1; padding-block: 26px 40px; position: relative; z-index: 1; }
@@ -443,6 +517,9 @@ select.control { appearance: none; cursor: pointer; padding-right: 34px; }
 
 .user-box { display: flex; align-items: center; gap: 12px; }
 .avatar { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; font-size: 14px; font-weight: 700; letter-spacing: 0.02em; color: var(--teal-ink); background: var(--teal-tint); box-shadow: var(--e1), inset 0 0 0 2px rgba(255,255,255,.5); flex: none; }
+/* Аватар складывается только в шапке: в строках таблицы админки он 34px уже по
+   разметке, и общий селектор трогать нельзя. */
+.header-tools .avatar { transition: width .3s cubic-bezier(.2,.7,.3,1), height .3s cubic-bezier(.2,.7,.3,1), font-size .3s ease; }
 .user-meta { display: flex; flex-direction: column; line-height: 1.2; gap: 3px; }
 .user-name { font-size: 14px; font-weight: 700; }
 .top-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -797,9 +874,12 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
   margin-bottom: 16px;
 }
 .sched-group-field { flex: 1 1 260px; min-width: 0; }
-.sched-month { display: flex; align-items: center; gap: 10px; }
-.sched-month-label {
-  min-width: 12ch;
+.sched-week { display: flex; align-items: center; gap: 10px; }
+.sched-week-label {
+  /* 15ch, а не 12 как у прежней подписи месяца: «27 окт – 2 ноя» длиннее, чем
+     «октябрь 2026», и узкая подпись дёргала бы стрелки по горизонтали при
+     каждом листании недели. */
+  min-width: 15ch;
   text-align: center;
   font-size: 13px;
   font-weight: 700;
@@ -953,7 +1033,7 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
 
 @media (max-width: 640px) {
   .sched-controls { align-items: stretch; }
-  .sched-month { justify-content: space-between; width: 100%; }
+  .sched-week { justify-content: space-between; width: 100%; }
   .sched-source-line { flex-direction: column; align-items: flex-start; }
   .lesson { align-items: flex-start; flex-wrap: wrap; }
   .lesson-state { flex-basis: 100%; margin-left: 38px; align-items: flex-start; }

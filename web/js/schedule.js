@@ -21,10 +21,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     const groupInput = document.getElementById("groupInput");
     const groupOptions = document.getElementById("groupOptions");
     const groupHelper = document.getElementById("groupHelper");
-    const monthLabel = document.getElementById("monthLabel");
-    const prevMonth = document.getElementById("prevMonth");
-    const nextMonth = document.getElementById("nextMonth");
-    const currentMonthBtn = document.getElementById("currentMonth");
+    const weekLabel = document.getElementById("weekLabel");
+    const prevWeek = document.getElementById("prevWeek");
+    const nextWeek = document.getElementById("nextWeek");
+    const currentWeekBtn = document.getElementById("currentWeek");
     const refreshTimetable = document.getElementById("refreshTimetable");
     const timetableContainer = document.getElementById("timetable");
     const updatedNote = document.getElementById("updatedNote");
@@ -34,11 +34,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     const sourceSection = document.getElementById("sourceManageSection");
     const sourceMsg = document.getElementById("sourceMsg");
     const sourceHint = document.getElementById("sourceHint");
+    const sourceJobNote = document.getElementById("sourceJobNote");
     const statGroups = document.getElementById("statGroups");
     const statLessons = document.getElementById("statLessons");
     const statImportedGroups = document.getElementById("statImportedGroups");
     const syncGroupsBtn = document.getElementById("syncGroupsBtn");
-    const importMonthBtn = document.getElementById("importMonthBtn");
+    const importGroupBtn = document.getElementById("importGroupBtn");
+    const importAllBtn = document.getElementById("importAllBtn");
     const importCount = document.getElementById("importCount");
 
     const canManage = GS.can.manageBoard;
@@ -62,7 +64,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const formatDue = GS.formatDateTime;
 
     const today = new Date();
-    const weekLater = new Date(today.getTime() + 7 * 24 * 3600 * 1000);
+    const weekLater = addDays(today, 7);
     if (fromDate) fromDate.value = toISODate(today);
     if (toDate) toDate.value = toISODate(weekLater);
 
@@ -71,11 +73,18 @@ document.addEventListener("DOMContentLoaded", async () => {
     // group — ровно то, что уйдёт в параметр group: id выбранной группы, если
     // ввод совпал с каталогом, и иначе сам ввод (сервер умеет разрешать имя,
     // и живая строка «Б-ИСиТ-22» из поиска — штатный случай).
+    //
+    // Неделя, а не месяц (запрос владельца): человек смотрит расписание на
+    // «эту неделю», а месячный список — 30+ карточек прокрутки, чтобы найти
+    // вторник. weekStart — локальный понедельник, от него считаются границы
+    // периода в запросе: сервер фильтрует по дням источника (YYYYMMDD) и
+    // одинаково понимает и неделю, и месяц, поэтому граница посреди месяца для
+    // него не особая.
     const timetable = {
         group: "",
         groupName: "",
-        month: today.getMonth() + 1,
-        year: today.getFullYear(),
+        weekStart: startOfWeek(today),
+        rangeImported: false,
         importedMonths: [],
     };
 
@@ -88,7 +97,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     // утром и вечером, и каждый раз вводить группу заново — значит сделать
     // страницу хуже, чем бумажное расписание на стенде.
     //
-    // Месяц, в отличие от группы, не запоминается: страница всегда открывается
+    // Неделя, в отличие от группы, не запоминается: страница всегда открывается
     // на сегодняшнем дне. Иначе вчерашний просмотр декабря показывал бы декабрь
     // и в октябре, а «сегодня» приходилось бы искать вручную.
     const CHOICE_KEY = "sos.schedule.choice";
@@ -198,25 +207,96 @@ document.addEventListener("DOMContentLoaded", async () => {
         return many;
     }
 
+    // Понедельник недели, в которую попадает дата. Локальное время, не UTC:
+    // «эта неделя» считается по календарю человека, который смотрит страницу, и
+    // в 00:30 воскресенья по Гринвичу этот календарь ещё суббота.
+    function startOfWeek(date) {
+        const shift = (date.getDay() + 6) % 7;
+        return new Date(date.getFullYear(), date.getMonth(), date.getDate() - shift);
+    }
+
     function monthTitle(month, year) {
         const date = new Date(year, month - 1, 1);
-        return date.toLocaleDateString("ru-RU", { month: "long", year: "numeric" });
+        // «г.» в конце убран: в перечислении («в базе уже октябрь 2026, ноябрь
+        // 2026») он шум, а точка фразы после него превращалась бы в «г..».
+        return date.toLocaleDateString("ru-RU", { month: "long", year: "numeric" }).replace(/\s*г\.$/, "");
     }
 
-    // toLocaleDateString даёт «октябрь 2026» со строчной, а в начале фразы нужна
-    // заглавная. Отдельная функция, а не replace в двух местах: второе
-    // предложение было бы первым кандидатом на «забыли поправить».
-    function capitalize(text) {
-        const value = String(text || "");
-        return value.charAt(0).toUpperCase() + value.slice(1);
+    // Родительный падеж месяца: «8 ноября» -> «ноября».
+    //
+    // Считается датой, а не словарём названий: {month: "long"} сам по себе
+    // даёт именительный («ноябрь»), и подписать «2–8 ноябрь» было бы грубой
+    // ошибкой в языке, которую видно на каждой второй неделе.
+    function monthGenitive(date) {
+        return date.toLocaleDateString("ru-RU", { day: "numeric", month: "long" }).replace(/^\d+\s+/, "");
     }
 
-    function setMonthLabel() {
-        if (monthLabel) monthLabel.textContent = monthTitle(timetable.month, timetable.year);
+    // Прибавка дней через календарь, а не через миллисекунды: сутки бывают 23
+    // и 25 часа, и «+6*24 ч» через переход в летнее время дал бы воскресенье
+    // вместо субботы — конец недели уехал бы на день.
+    function addDays(date, days) {
+        return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
     }
 
-    function isImported(month, year) {
-        return (timetable.importedMonths || []).some((m) => m.month === month && m.year === year);
+    // Подпись недели: «2–8 ноября», «26 октября – 1 ноября»,
+    // «29 декабря 2026 – 4 января 2027».
+    //
+    // Три формы, а не одна: достаточно месяца, когда неделя внутри него, два
+    // — когда пересекает границу, и год — когда пересекает новогоднюю. «29
+    // декабря – 4 января» без года читается наугад («это же прошлая неделя?»),
+    // и именно на такой неделе человек планирует поездку.
+    function weekTitle(start) {
+        const end = addDays(start, 6);
+
+        if (start.getMonth() === end.getMonth()) {
+            return `${start.getDate()}–${end.getDate()} ${monthGenitive(end)}`;
+        }
+
+        const day = (date) => `${date.getDate()} ${monthGenitive(date)}`;
+        if (start.getFullYear() === end.getFullYear()) {
+            return `${day(start)} – ${day(end)}`;
+        }
+        return `${day(start)} ${start.getFullYear()} – ${day(end)} ${end.getFullYear()}`;
+    }
+
+    function setWeekLabel() {
+        if (weekLabel) weekLabel.textContent = weekTitle(timetable.weekStart);
+    }
+
+    // Период показа в unix-секундах: от полуночи понедельника до конца
+    // воскресенья. Границы считает общий с лентой модуль core/format.js —
+    // dayStartUnix/dayEndUnix, чтобы «эта неделя» в расписании и «эта неделя» в
+    // ленте дедлайнов были одним и тем же отрезком.
+    function weekRange(start) {
+        return {
+            from: dayStartUnix(toISODate(start)),
+            to: dayEndUnix(toISODate(addDays(start, 6))),
+        };
+    }
+
+    // Дата из toLocaleDateString кончается «г.», и своя точка поверх неё —
+    // «г..». Одна проверка на оба случая.
+    function sentenceEnd(value) {
+        return /[.!?]$/.test(value) ? value : `${value}.`;
+    }
+
+    // Что уже лежит в базе по этой группе — подсказка к пустой неделе.
+    //
+    // Три месяца максимум: список «в базе уже 14 месяцев» человек не читает, а
+    // направление («вот сюда импорт уже приходил») из него видно и по трём.
+    function monthList(months) {
+        if (!Array.isArray(months) || !months.length) return "";
+        const titles = months.slice(0, 3).map((m) => monthTitle(m.month, m.year));
+        return ` — в базе уже ${titles.join(", ")}`;
+    }
+
+    // Пустая неделя без импорта обязана называть путь наружу, и путь зависит от
+    // роли: админу — кнопка своей панели, студенту — что он бессилен и к кому
+    // идти. Одна фраза на обеих ролях всегда врёт бы хотя бы одной из них.
+    function importHint(role) {
+        return canManageSource(role)
+            ? "Импортируйте её кнопками панели «Источник расписания» ниже: «все группы» закрывает каталог за один прогон."
+            : "Расписание этой группы ещё не скачано с сайта вуза — это делает администратор платформы.";
     }
 
     function renderTimetableEmpty(text, hint) {
@@ -400,9 +480,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         return date.getFullYear() * 10000 + (date.getMonth() + 1) * 100 + date.getDate();
     }
 
-    // Страница открывается на сегодняшнем дне: месяц уже сегодняшний, но список
-    // длинный, и без прокрутки человек оказывается на 1-м числе. Если сегодня
-    // пар нет, показываем ближайший будущий день — именно там начнётся учёба.
+    // Страница открывается на сегодняшнем дне: неделя уже сегодняшняя, но
+    // начинается она с понедельника, и без прокрутки четверг стоит третьим
+    // карточкой под заголовком. Если сегодня пар нет, показываем ближайший
+    // будущий день — именно там начнётся учёба.
     function revealToday() {
         if (!timetableContainer) return;
         const today = localDayKey();
@@ -519,7 +600,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     async function loadTimetable(groups) {
         if (!timetableContainer) return;
 
-        setMonthLabel();
+        setWeekLabel();
         if (Array.isArray(groups)) catalogue = groups;
         const ref = resolveGroupRef(groupInput ? groupInput.value : timetable.group, catalogue);
         if (!ref) {
@@ -535,31 +616,33 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         timetableContainer.innerHTML = `<div class="empty-state plain"><span class="spinner"></span><span class="empty-hint">Загрузка расписания…</span></div>`;
 
+        const period = weekRange(timetable.weekStart);
         const query = `/api/schedule/lessons?group=${encodeURIComponent(timetable.group)}`
-            + `&month=${timetable.month}&year=${timetable.year}`;
+            + `&from=${period.from}&to=${period.to}`;
 
         try {
             const data = await GS.fetchJSON(query, { on401: "throw" });
             timetable.importedMonths = Array.isArray(data.imported_months) ? data.imported_months : [];
+            timetable.rangeImported = data.range_imported === true;
             if (data.group_name) timetable.groupName = data.group_name;
 
             const days = Array.isArray(data.days) ? data.days : [];
-            const imported = isImported(timetable.month, timetable.year);
 
             if (!days.length) {
-                // Два разных «пусто»: месяц ещё не импортирован (данных нет в
+                // Два разных «пусто»: период ещё не импортирован (данных нет в
                 // базе) и импортирован, но пар в нём нет. Сваливать их в одну
                 // фразу нельзя: в первом случае нужен импорт, во втором — искать
                 // дальше по календарю.
+                //
+                // Поле «импортирован ли период» читается из ответа сервера
+                // (range_imported), а не выводится из списка месяцев на
+                // странице: неделя легко задевает два месяца, и по одному из
+                // них вывод был бы неверен в обе стороны.
                 renderTimetableEmpty(
-                    imported
-                        ? `В ${monthTitle(timetable.month, timetable.year)} пар нет`
-                        : `${capitalize(monthTitle(timetable.month, timetable.year))} ещё не импортирован`,
-                    imported
-                        ? "Посмотрите другой месяц или обновите импорт."
-                        : (canManageSource(user && user.role)
-                            ? "Импортируйте его кнопкой в панели «Источник расписания» ниже."
-                            : "Попросите администратора импортировать этот месяц."),
+                    timetable.rangeImported ? "На этой неделе пар нет" : "Расписание на эту неделю ещё не импортировано",
+                    timetable.rangeImported
+                        ? `Посмотрите другую неделю${monthList(timetable.importedMonths)}.`
+                        : importHint(user && user.role),
                 );
             } else {
                 renderTimetable(days);
@@ -569,6 +652,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             saveChoice();
         } catch (error) {
             timetable.importedMonths = [];
+            timetable.rangeImported = false;
             renderTimetableEmpty(
                 error.status === 404
                     ? "Такой группы нет в импортированном каталоге"
@@ -583,23 +667,23 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
     }
 
-    function shiftMonth(delta) {
-        const date = new Date(timetable.year, timetable.month - 1 + delta, 1);
-        timetable.month = date.getMonth() + 1;
-        timetable.year = date.getFullYear();
+    // Неделя шагается по датам, а не по миллисекундам: +7*24 часа через переход
+    // в летнее время сдвинули бы понедельник на день, и «эта неделя» съехала бы
+    // без всякой вины человека.
+    function shiftWeek(delta) {
+        const start = timetable.weekStart;
+        timetable.weekStart = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7 * delta);
         return loadTimetable();
     }
 
-    // Кнопки: стрелки листают месяц, «Текущий месяц» возвращает к сегодняшнему
+    // Кнопки: стрелки листают неделю, «Текущая неделя» возвращает к сегодняшнему
     // дню (и прокручивает список к нему), Enter и «смена» поля группы ищут
     // расписание выбранной группы.
-    function bindMonthControls() {
-        if (prevMonth) prevMonth.addEventListener("click", () => shiftMonth(-1));
-        if (nextMonth) nextMonth.addEventListener("click", () => shiftMonth(1));
-        if (currentMonthBtn) currentMonthBtn.addEventListener("click", () => {
-            const now = new Date();
-            timetable.month = now.getMonth() + 1;
-            timetable.year = now.getFullYear();
+    function bindWeekControls() {
+        if (prevWeek) prevWeek.addEventListener("click", () => shiftWeek(-1));
+        if (nextWeek) nextWeek.addEventListener("click", () => shiftWeek(1));
+        if (currentWeekBtn) currentWeekBtn.addEventListener("click", () => {
+            timetable.weekStart = startOfWeek(new Date());
             pendingTodayScroll = true;
             return loadTimetable();
         });
@@ -740,7 +824,8 @@ document.addEventListener("DOMContentLoaded", async () => {
             sourceHint.textContent = `Источник не настроен: ${reason} Чтение уже импортированных данных при этом работает.`;
         } else {
             const at = stats.last_import_at ? GS.formatDate(stats.last_import_at) : "ни разу";
-            sourceHint.textContent = `Токен источника задан на сервере. Последний импорт: ${at}. Кнопка ниже импортирует показанный месяц выбранной группы.`;
+            sourceHint.textContent = sentenceEnd(`Токен источника задан на сервере. Последний импорт: ${at}`)
+                + " «Импортировать эту группу» качает показанный месяц одной группы, «все группы» — весь каталог фоновой задачей.";
         }
     }
 
@@ -756,11 +841,20 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
     }
 
+    // Месяц, который человек сейчас видит. Стартуем от понедельника: неделя
+    // может задевать два месяца, и «импортировать этот» должен означать «тот,
+    // что начался на экране», а не «тот, что посередине».
+    function visibleMonth() {
+        const start = timetable.weekStart;
+        return { month: start.getMonth() + 1, year: start.getFullYear() };
+    }
+
     function importPayload() {
+        const period = visibleMonth();
         const body = {
             group: timetable.group || (groupInput ? groupInput.value.trim() : ""),
-            month: timetable.month,
-            year: timetable.year,
+            month: period.month,
+            year: period.year,
         };
         // count = 1 отправлять не надо: сервер по умолчанию берёт ровно один
         // месяц, а лишнее поле в теле — ещё один способ разойтись с сервером
@@ -768,6 +862,108 @@ document.addEventListener("DOMContentLoaded", async () => {
         const count = importCount ? Number(importCount.value) : 1;
         if (count > 1) body.count = count;
         return body;
+    }
+
+    // Тело массовой задачи: группы в нём нет намеренно — она вся про каталог,
+    // и неизвестное поле сервер отвергает вместе с запросом.
+    function importAllPayload() {
+        const period = visibleMonth();
+        const body = { month: period.month, year: period.year };
+        const count = importCount ? Number(importCount.value) : 1;
+        if (count > 1) body.count = count;
+        return body;
+    }
+
+    // ---------- прогресс массового импорта ----------
+    //
+    // Проход по каталогу идёт на сервере десятки минут, панель опрашивает его
+    // раз в две секунды. Частота выбрана по смыслу: цифра «12 из 588»,
+    // обновляющаяся раз в двадцать секунд, выглядит зависшей, а чаще — значит
+    // долбить свой же сервер ради строчки текста.
+    const JOB_POLL_MS = 2000;
+
+    let jobTimer = null;
+    let jobWatching = false;
+    let jobSawRunning = false;
+
+    function jobMonths(job) {
+        const months = Array.isArray(job.months) ? job.months : [];
+        return months.map((m) => monthTitle(m.month, m.year)).join(", ");
+    }
+
+    function renderImportJob(job) {
+        if (!sourceJobNote) return;
+        if (!job || (!job.running && !job.started_at)) {
+            sourceJobNote.textContent = "Массовый импорт ещё не запускался.";
+            return;
+        }
+
+        if (job.running) {
+            const percent = job.steps ? Math.round((job.done / job.steps) * 100) : 0;
+            sourceJobNote.textContent =
+                `Массовый импорт идёт (${jobMonths(job)}): ${job.done} из ${job.steps} шагов, ${percent}%`
+                + ` · пар записано ${job.lessons}`
+                + `${job.failed ? ` · сбоев ${job.failed}` : ""}`
+                + `${job.current ? ` · читаю «${job.current}»` : ""}.`;
+            return;
+        }
+
+        sourceJobNote.textContent =
+            `Последний массовый импорт (${jobMonths(job)}) завершён ${GS.formatDate(job.finished_at)}`
+            + ` · групп ${job.groups}, шагов ${job.steps}, пар ${job.lessons}`
+            + `${job.failed ? ` · сбоев ${job.failed}${job.failed_last_group ? `, последний — «${job.failed_last_group}»` : ""}` : ""}.`;
+    }
+
+    async function pollImportJob() {
+        jobTimer = null;
+
+        let job = null;
+        try {
+            const data = await GS.fetchJSON("/api/schedule/source/import-all", { on401: "throw" });
+            job = data && data.job ? data.job : null;
+        } catch (error) {
+            // Сессия истекла или прав не стало: опрос больше нечем закрыть, и
+            // крутить его каждые две секунды — значит долбить сервер ответами,
+            // которые заранее отвергнуты.
+            if (error.status === 401 || error.status === 403) {
+                jobWatching = false;
+                if (sourceJobNote) sourceJobNote.textContent = "Прогресс импорта виден только администратору после входа.";
+                return;
+            }
+
+            // Сбой опроса — не конец задачи: импорт на сервере идёт и без
+            // нашей вкладки. Пробуем снова, только реже, чтобы не долбить
+            // сервер, который и так не отвечает.
+            if (sourceJobNote) {
+                sourceJobNote.textContent = `Прогресс импорта не читается: ${error.message || "сервер не отвечает"}. Пробую снова.`;
+            }
+            jobTimer = setTimeout(pollImportJob, JOB_POLL_MS * 5);
+            return;
+        }
+
+        renderImportJob(job);
+
+        if (job && job.running) {
+            jobSawRunning = true;
+            jobTimer = setTimeout(pollImportJob, JOB_POLL_MS);
+            return;
+        }
+
+        // Задача закончилась (или её никогда не было): опрос гасем, иначе
+        // вкладка будет слать запросы вечно. Обновляем то, что импорт изменил,
+        // — статистику источника и показанное расписание.
+        const finished = jobSawRunning;
+        jobWatching = false;
+        jobSawRunning = false;
+        if (finished) {
+            await Promise.all([loadSourceStatus(), loadTimetable()]);
+        }
+    }
+
+    function watchImportJob() {
+        if (jobWatching) return Promise.resolve();
+        jobWatching = true;
+        return pollImportJob();
     }
 
     function bindSourcePanel() {
@@ -780,9 +976,9 @@ document.addEventListener("DOMContentLoaded", async () => {
             ).then(() => reloadCatalogue()));
         }
 
-        if (importMonthBtn) {
-            importMonthBtn.addEventListener("click", () => withBusyButton(
-                importMonthBtn,
+        if (importGroupBtn) {
+            importGroupBtn.addEventListener("click", () => withBusyButton(
+                importGroupBtn,
                 sourceMsg,
                 () => GS.fetchJSON("/api/schedule/source/lessons", {
                     method: "POST",
@@ -790,6 +986,25 @@ document.addEventListener("DOMContentLoaded", async () => {
                 }),
                 (data) => `Импортировано пар: ${data.lessons} (${data.group_name})`,
             ).then(() => loadTimetable()));
+        }
+
+        if (importAllBtn) {
+            importAllBtn.addEventListener("click", () => withBusyButton(
+                importAllBtn,
+                sourceMsg,
+                () => GS.fetchJSON("/api/schedule/source/import-all", {
+                    method: "POST",
+                    body: JSON.stringify(importAllPayload()),
+                }),
+                (data) => `Массовый импорт запущен: ${data.job.groups} групп × ${data.job.months.length} мес.`,
+            ).then(() => {
+                // withBusyButton не бросает: он уже показал ошибку. Значит
+                // сюда приходит и 409 «импорт уже выполняется» — и это ровно
+                // тот случай, когда опрос обязан включиться: задача идёт, и
+                // панель должна показывать её прогресс, а не текст конфликта.
+                watchImportJob();
+                return loadSourceStatus();
+            }));
         }
     }
 
@@ -868,8 +1083,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         return groups.length ? String(groups[0].name) : "";
     }
 
-    setMonthLabel();
-    bindMonthControls();
+    setWeekLabel();
+    bindWeekControls();
     bindSourcePanel();
     startLessonTicker();
 
@@ -897,7 +1112,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     await Promise.all([loadFeed(), loadResources()]);
-    if (canManageSource(user.role)) await loadSourceStatus();
+    if (canManageSource(user.role)) {
+        await loadSourceStatus();
+        // Один опрос при открытии: он же и показывает последнюю завершённую
+        // задачу, и запускает непрерывный, если импорт идёт прямо сейчас —
+        // например запущенный с другой вкладки.
+        await watchImportJob();
+    }
 
     if (refreshButton) refreshButton.addEventListener("click", loadFeed);
     if (refreshResources) refreshResources.addEventListener("click", loadResources);
