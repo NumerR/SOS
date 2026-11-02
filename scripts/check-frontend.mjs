@@ -44,6 +44,11 @@
 //  12. правило, которое анимирует масштабом деталь внутри <svg>, обязано задать
 //      transform-box и transform-origin (ADR-0038): без них Chromium отсчитывает
 //      scale от угла viewBox, и значок «идёт» уезжает по диагонали за такт.
+//  13. прилипающая шапка (ADR-0039): .site-header — sticky с фоном, точкой
+//      прилипания, z-index выше содержимого и отключённым якорением прокрутки;
+//      класс сложенного состояния в CSS и в core/layout.js один и тот же; каждое
+//      меняемое в нём свойство перечислено в переходе; --header-h пишется скриптом
+//      и читается CSS со значением по умолчанию; слушатель прокрутки навешен.
 //
 // Запуск локально: node scripts/check-frontend.mjs
 // Код выхода 0 — всё в порядке, 1 — есть находки (они печатаются списком).
@@ -942,12 +947,176 @@ if (scalingKeyframes.size) {
     `правил, анимирующих деталь в <svg> — ${scaledInsideSvg} (приём ADR-0038)`);
 }
 
+// ---------- 13. прилипающая шапка: связь style.css и core/layout.js ----------
+//
+// Фича ADR-0039 живёт в двух файлах сразу, и расходится она именно на границе
+// между ними. Каждый из четырёх разрывов уже был или легко представим:
+//   • класс в CSS называется не так, как его ставит JS, — шапка прилипает, но
+//     никогда не складывается, и выглядит это как «сделали и не включили»;
+//   • у `.site-header` нет фона или position: sticky — строки расписания доезжают
+//     до самого верха экрана сквозь прозрачную полосу;
+//   • в состояние добавлено свойство, которого нет ни в одном transition — на
+//     границе порога оно перескакивает, а не едет, и «плавно» превращается в
+//     «дёргается»;
+//   • `--header-h` пишет JS, а CSS её не читает (или читает без значения по
+//     умолчанию) — якорный переход приземляет содержимое за прилиплившей полосой,
+//     а на странице ошибки, где скриптов нет, scroll-padding вообще отваливается.
+// Живые слои этих разрывов не видны: jsdom не считает раскладку, а Chromium в
+// check-focus замораживает переходы. Значит сверять надо текст обоих файлов.
+
+const LAYOUT_FILE = join(JS_DIR, "core", "layout.js");
+const layoutJs = readFileSync(LAYOUT_FILE, "utf8");
+
+// Правила вне @media: в медиа-блоках лежат адаптные переопределения, и смешивать
+// их с базовым правилом нельзя — `.header-tools` в узком экране не обязан
+// повторять переходы своего базового варианта. Закрывающая скобка медиа-блока в
+// style.css всегда на нулевой колонке (тот же приём, что у @keyframes выше).
+const plainCss = bareCss.replace(/@[^{]*\{[\s\S]*?\n\}/g, "");
+const cssRules = [...plainCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+  selector: m[1].trim().replace(/\s+/g, " "),
+  body: m[2],
+}));
+
+// Селекторы через запятую — это несколько владельцев одного тела, поэтому
+// правило ищется по каждому имени списка.
+function bodiesFor(selector) {
+  return cssRules
+    .filter((r) => r.selector.split(",").some((n) => n.trim() === selector))
+    .map((r) => r.body);
+}
+
+// Разбить список переходов по запятым, не разрезав cubic-bezier(.2,.7,.3,1).
+function transitionParts(body) {
+  const out = [];
+  for (const m of body.matchAll(/(?:^|[;\s])transition(?:-property)?\s*:\s*([^;]+)/g)) {
+    let depth = 0;
+    let cur = "";
+    for (const ch of m[1]) {
+      if (ch === "(") depth += 1;
+      else if (ch === ")" && depth > 0) depth -= 1;
+      if (ch === "," && depth === 0) { out.push(cur.trim()); cur = ""; continue; }
+      cur += ch;
+    }
+    out.push(cur.trim());
+  }
+  return out.filter(Boolean);
+}
+
+// Имена свойств из списка переходов: первый токен части, если это не время и не
+// функция движения («.3s ease» без имени — переход всех свойств, «all»).
+function transitionedProps(body) {
+  const props = new Set();
+  for (const part of transitionParts(body)) {
+    const tok = part.split(/\s+/)[0];
+    if (/^\d|^(ease|linear|steps|cubic)/.test(tok)) continue;
+    props.add(tok);
+  }
+  return props;
+}
+
+// Свойства, которые правило действительно задаёт: объявления без CSS-переменных.
+function declaredProps(body) {
+  const props = new Set();
+  for (const m of body.matchAll(/(?:^|[;\s])([a-z][a-z-]*)\s*:/g)) props.add(m[1]);
+  return props;
+}
+
+const allTransitions = new Set();
+for (const rule of cssRules) {
+  for (const p of transitionedProps(rule.body)) allTransitions.add(p);
+}
+
+const headerBody = bodiesFor(".site-header")[0];
+if (headerBody === undefined) {
+  fail("css/style.css", "правила .site-header нет — шапка не прилипает, проверке ADR-0039 нечего сверять");
+} else {
+  const REQUIRED = [
+    [/position\s*:\s*sticky/, "position: sticky — без него шапка уезжает вверх вместе с первым экраном"],
+    [/top\s*:\s*0/, "top: 0 — точки прилипания нет, sticky прилипает к произвольному смещению"],
+    [/background\s*:\s*(?!transparent|none)/, "background — прозрачная прилипающая полоса, и строки расписания читаются сквозь неё"],
+    [/overflow-anchor\s*:\s*none/, "overflow-anchor: none — браузер доплачивает изменённую высоту шапки к scrollY, и складывание запускает само себя (замер: scrollTo(4) дал y=27)"],
+    [/z-index\s*:/, "z-index — без него содержимое страницы рисуется поверх прилиплившей шапки"],
+  ];
+  for (const [re, why] of REQUIRED) {
+    if (!re.test(headerBody)) fail("css/style.css", `правило .site-header без «${why}» (ADR-0039)`);
+  }
+
+  const zIndex = (selector) => {
+    const m = /(?:^|[;\s])z-index\s*:\s*(\d+)/.exec(bodiesFor(selector)[0] || "");
+    return m ? Number(m[1]) : null;
+  };
+  const zHeader = zIndex(".site-header");
+  for (const below of [".main", ".site-footer"]) {
+    const z = zIndex(below);
+    if (zHeader !== null && z !== null && zHeader <= z) {
+      fail("css/style.css", `z-index шапки ${zHeader} не выше z-index «${below}» ${z} — прилипающая полоса окажется под содержимым (ADR-0039)`);
+    }
+  }
+
+  // Класс сложенного состояния: одна строка в JS, столько же правил в CSS.
+  const stuck = /const STUCK_CLASS\s*=\s*"([^"]+)"/.exec(layoutJs);
+  if (!stuck) {
+    fail("web/js/core/layout.js", "не найден STUCK_CLASS — непонятно, какой класс CSS считает шапку сложенной (ADR-0039)");
+  } else {
+    const cls = stuck[1];
+    const stateRules = cssRules.filter((r) => /\.site-header\.[\w-]+/.test(r.selector));
+    if (!stateRules.length) {
+      fail("css/style.css", "нет ни одного правила вида .site-header.<класс> — складывания в CSS нет, JS ставит класс в пустоту (ADR-0039)");
+    }
+    for (const rule of stateRules) {
+      for (const used of rule.selector.matchAll(/\.site-header\.([\w-]+)/g)) {
+        if (used[1] !== cls) {
+          fail("css/style.css", `правило «${rule.selector}» ждёт класс .${used[1]}, а core/layout.js ставит .${cls} — шапка прилипнет, но не сложится (ADR-0039)`);
+        }
+      }
+      // Что меняется в сложенном состоянии и где это в списке переходов. Правило
+      // самой шапки сверяется с её собственным переходом, правила потомков — со
+      // всеми переходами файла: элемент в шапке одет сразу в несколько классов
+      // (.btn и .btn-icon), и сопоставить одно с другим по имени селектора
+      // статически честнее, чем угадывать.
+      const own = rule.selector.replace(/^.*\.site-header\.[\w-]+/, "").trim();
+      const covered = own ? allTransitions : transitionedProps(headerBody);
+      for (const prop of declaredProps(rule.body)) {
+        if (covered.has(prop)) continue;
+        fail("css/style.css", `правило «${rule.selector}» меняет ${prop}, а в переходе его нет — на границе порога значение перескочит вместо плавного хода (ADR-0039)`);
+      }
+    }
+    if (!stateRules.some((r) => r.selector.includes(`.site-header.${cls}`))) {
+      fail("css/style.css", `класс .${cls}, который ставит core/layout.js, не описан ни в одном правиле — складывания нет (ADR-0039)`);
+    }
+  }
+}
+
+// Высота шапки: JS пишет переменную, CSS читает её с запасом.
+const HEIGHT_VAR = "--header-h";
+if (!new RegExp(`setProperty\\(\\s*"${HEIGHT_VAR}"`).test(layoutJs)) {
+  fail("web/js/core/layout.js", `не пишет ${HEIGHT_VAR} — CSS не узнает фактическую высоту шапки (ADR-0039)`);
+}
+const padVar = new RegExp(`scroll-padding-block-start\\s*:[^;]*var\\(${HEIGHT_VAR},\\s*(\\d+)px\\)`).exec(css);
+if (!padVar) {
+  fail("css/style.css", `scroll-padding-block-start не читает ${HEIGHT_VAR} со значением по умолчанию — на странице без скриптов якорный переход уйдёт под полосу, а без отступа — накроет содержимое (ADR-0039)`);
+}
+
+// Слушатель обязан навешиваться: определение функции без вызова — это мёртвый
+// код, а шапка выглядит нормально ровно до первой прокрутки.
+const attachCalls = (layoutJs.match(/attachScrollCollapse\(/g) || []).length;
+if (attachCalls < 2) {
+  fail("web/js/core/layout.js", `attachScrollCollapse определён, но не вызывается (вхождений — ${attachCalls}) — складывание никто не включает (ADR-0039)`);
+}
+if (!/addEventListener\(\s*"scroll"/.test(layoutJs)) {
+  fail("web/js/core/layout.js", "нет слушателя scroll — решение о складывании некому принимать (ADR-0039)");
+}
+
+notes.push(`шапка: прилипание .site-header (sticky + фон + z-index), правил сложенного состояния ` +
+  `${cssRules.filter((r) => /\.site-header\.[\w-]+/.test(r.selector)).length}, переходов в CSS ${allTransitions.size}, ` +
+  `${HEIGHT_VAR} читается с запасом ${padVar ? padVar[1] + "px" : "—"} (приём ADR-0039)`);
+
 if (problems.length > 0) {
   console.error(`check-frontend: найдено проблем — ${problems.length}`);
   for (const p of problems) console.error("  FAIL " + p);
   process.exit(1);
 }
 
-console.log(`check-frontend: ок — страниц ${htmlFiles(WEB).length}, проверены подключения скриптов, стилей, id, инлайновые обработчики, структура заголовков, skip-link, scope у таблиц, контраст токенов и его покрытие, общность submit-механизма, ссылки aria-describedby, различимость колец фокуса и отсутствие ручных догрузок страниц в сьютах`);
+console.log(`check-frontend: ок — страниц ${htmlFiles(WEB).length}, проверены подключения скриптов, стилей, id, инлайновые обработчики, структура заголовков, skip-link, scope у таблиц, контраст токенов и его покрытие, общность submit-механизма, ссылки aria-describedby, различимость колец фокуса, отсутствие ручных догрузок страниц в сьютах и связь прилипающей шапки`);
 for (const n of notes) console.log("  ok  " + n);
 for (const n of contrastNotes) console.log("  ok  " + n);

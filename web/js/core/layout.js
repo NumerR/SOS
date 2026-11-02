@@ -18,6 +18,11 @@
 //   data-footer-note  — левая строка футера (если футер на странице есть),
 //   data-footer-stack — правая строка футера (на главной отличается).
 //
+// Шапка умеет ещё одно: прилипает к верху и по прокрутке складывается в
+// компактную полосу (ADR-0039). Геометрия сложенного состояния лежит в style.css
+// под классом is-stuck, а сам класс ставит этот файл: решение зависит от
+// фактической высоты шапки в строке прокрутки, а её CSS не знает.
+//
 // Идентификаторы в шапке (#logoutBtn, #adminLink, #loginLink, #userAvatar,
 // #userName, #userRole, #themeToggle) те же, что были в HTML: скрипты страниц и
 // jsdom-сьюты к ним обращаются, и переименование стало бы поломкой интерфейса,
@@ -212,6 +217,97 @@
         </div>`;
     }
 
+    // ---------- складывание шапки при прокрутке (ADR-0039) ----------
+    //
+    // Порогов два, а не один: с одним (y > 24) на границе шапку раскладывало и
+    // складывало обратно — само сложение освобождает около 32px документа,
+    // содержимое поднимается, прокрутка оказывается ниже порога, и цикл
+    // замыкается под колесом, которое человек просто крутит. Разрыв между 24 и
+    // 12 больше шага любого тэкпада, поэтому расшатать его нечем.
+    const STUCK_ON = 24;
+    const STUCK_OFF = 12;
+    const STUCK_CLASS = "is-stuck";
+    // Фактическая высота расправленной шапки пишется в --header-h, из неё CSS
+    // считает scroll-padding-block-start — иначе якорный переход (skip-link ведёт
+    // в #main) приземляет первую строку содержимого за прилиплившей полосой.
+    // Числом в CSS эта высота не задаётся: на узком экране ряд действий
+    // переносится, и она зависит от числа пунктов и от длины имени в шапке.
+    //
+    // Снимается она только с расправленной шапки и только когда переход
+    // закончился (.3s в style.css + запас). Замер посреди анимации давал застывшие
+    // промежуточные значения: разложенная шапка 198px, в --header-h записывалось
+    // 162px, и первая строка содержимого после якоря оказывалась накрыта на 24px.
+    const MEASURE_AFTER = 360;
+
+    function attachScrollCollapse(header) {
+        const view = header.ownerDocument.defaultView;
+        // Повторный render() (тесты, hot reload) не обязан вешать второй
+        // слушатель на одну и ту же шапку.
+        if (!view || header.dataset.collapsed) return;
+        header.dataset.collapsed = "1";
+
+        const root = header.ownerDocument.documentElement;
+        let queued = false;
+        let timer = 0;
+        let lastHeight = -1;
+
+        // В сложенном состоянии высота не пишется вовсе: в переменной остаётся
+        // расправленная, а завышенная отдача якоря безопасна (остаётся запас),
+        // заниженная — накрывает содержимое.
+        const publishHeight = () => {
+            if (header.classList.contains(STUCK_CLASS)) return;
+            const height = header.offsetHeight;
+            // Нулевой высоты в настоящем браузере не бывает; в jsdom раскладки
+            // нет, и эта проверка оставляет в CSS запасное значение.
+            if (height > 0 && height !== lastHeight) {
+                lastHeight = height;
+                root.style.setProperty("--header-h", `${height}px`);
+            }
+        };
+
+        const schedulePublish = () => {
+            view.clearTimeout(timer);
+            timer = view.setTimeout(publishHeight, MEASURE_AFTER);
+        };
+
+        const sync = () => {
+            queued = false;
+            const y = view.scrollY || 0;
+            const wasStuck = header.classList.contains(STUCK_CLASS);
+            const stuck = wasStuck ? y > STUCK_OFF : y > STUCK_ON;
+            // Обычный кадр прокрутки порога не пересёк — раскладку трогаем ровно
+            // на границе, а не на каждом кадре.
+            if (stuck === wasStuck) return;
+            header.classList.toggle(STUCK_CLASS, stuck);
+            if (!stuck) schedulePublish();
+        };
+
+        // passive + rAF: слушатель не мешает прокрутке и не вызывает раскладку на
+        // каждое событие колеса.
+        const onScroll = () => {
+            if (queued) return;
+            queued = true;
+            view.requestAnimationFrame(sync);
+        };
+
+        view.addEventListener("scroll", onScroll, { passive: true });
+        view.addEventListener("resize", schedulePublish);
+        publishHeight();
+
+        // ResizeObserver — потому что шапка доезжает до своей высоты позже, чем
+        // мы её замеряем. Живой промер на 390px дал --header-h=252 при фактических
+        // 306: в момент attach пункты навигации ещё не перенеслись в три ряда,
+        // а window.resize при этом не стреляет вовсе (окно не менялось).
+        // Отсюда и отставание якоря на 54px. Наблюдатель за самой шапкой ловит
+        // любой её рост — и перенос строк, и подгрузившийся шрифт.
+        //
+        // В jsdom наблюдателя нет, и ветка просто не ставится: раскладки там всё
+        // равно нет, а проверки слушателей прокрутки это не касается.
+        if (typeof view.ResizeObserver === "function") {
+            new view.ResizeObserver(schedulePublish).observe(header);
+        }
+    }
+
     function render() {
         const body = document.body;
         if (!body) return { layout: "", header: false, footer: false };
@@ -234,6 +330,10 @@
             );
             header.dataset.filled = "1";
         }
+
+        // Слушатель ставится и когда шапка уже нарисована: повторный вызов
+        // render() обязан складывать её ровно так же, как первый.
+        if (header) attachScrollCollapse(header);
 
         if (footer && !footer.dataset.filled) {
             footer.innerHTML = footerInner(
