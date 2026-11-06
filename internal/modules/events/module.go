@@ -7,6 +7,7 @@ import (
 	"github.com/NumerR/SOS/internal/authz"
 	"github.com/NumerR/SOS/internal/handlers"
 	"github.com/NumerR/SOS/internal/platform"
+	"github.com/NumerR/SOS/internal/store"
 )
 
 // Module — декларация маршрутов событий.
@@ -19,8 +20,20 @@ func New(h *handlers.Handlers) *Module { return &Module{h: h} }
 
 func (m *Module) Name() string { return "events" }
 
-// Migrations — таблица events пока в базовой схеме (см. T2.1).
-func (m *Module) Migrations() []platform.Migration { return nil }
+// Migrations — правка схемы под второй слой карты.
+//
+// Версия названа датой, как в places и audit: runner сравнивает строки
+// (module, version), и следующая правка событий не должна выглядеть «старше»
+// этой.
+//
+// Модуль стоит в списке после places (cmd/server/modules.go) именно поэтому:
+// ALTER добавляет ссылку на таблицу мест, и к моменту применения она обязана
+// существовать.
+func (m *Module) Migrations() []platform.Migration {
+	return []platform.Migration{
+		{Version: "2026-11-02_events_map", SQL: store.EventsMapMigration},
+	}
+}
 
 // Register заявляет маршруты модуля.
 //
@@ -42,5 +55,13 @@ func (m *Module) Register(reg *platform.Registry) {
 		DenyMessage: "only teachers can add events",
 		CSRF:        true,
 		Handler:     http.HandlerFunc(h.EventsAPI),
+	})
+	// Слой карты. Отдельный путь, а не поле в /api/events: у ленты один
+	// объект — список инфоповодов, у карты другой — что из них встанет
+	// маркером, а что нет и почему.
+	reg.Add(platform.Route{
+		Path:    "/api/events/map",
+		Method:  http.MethodGet,
+		Handler: http.HandlerFunc(h.EventsMapAPI),
 	})
 }

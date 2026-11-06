@@ -122,6 +122,69 @@
         return Math.floor(new Date(parts[0], parts[1] - 1, parts[2], 23, 59, 59, 0).getTime() / 1000);
     }
 
+    // ---------- неделя ----------
+    //
+    // Словарь недели переехал из schedule.js сюда, а не скопирован во вторую
+    // страницу: у расписания и у карты «текущая неделя» обязана быть одним и
+    // тем же отрезком, иначе человек перешёл бы с «2–8 ноября» на «3–9 ноября»
+    // и решал бы, что на одной из страниц данные старше. Границы считаются
+    // через те же dayStartUnix/dayEndUnix, что и вся остальная переписка с
+    // сервером в unix-секундах.
+
+    // Понедельник недели, в которую попадает дата. Локальное время, не UTC:
+    // «эта неделя» считается по календарю человека, который смотрит страницу, и
+    // в 00:30 воскресенья по Гринвичу этот календарь ещё суббота.
+    function startOfWeek(date) {
+        const shift = (date.getDay() + 6) % 7;
+        return new Date(date.getFullYear(), date.getMonth(), date.getDate() - shift);
+    }
+
+    // Прибавка дней через календарь, а не через миллисекунды: сутки бывают 23
+    // и 25 часа, и «+6*24 ч» через переход в летнее время дал бы воскресенье
+    // вместо субботы — конец недели уехал бы на день.
+    function addDays(date, days) {
+        return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+    }
+
+    // Родительный падеж месяца: «8 ноября» -> «ноября».
+    //
+    // Считается датой, а не словарём названий: {month: "long"} сам по себе
+    // даёт именительный («ноябрь»), и подписать «2–8 ноябрь» было бы грубой
+    // ошибкой в языке, которую видно на каждой второй неделе.
+    function monthGenitive(date) {
+        return date.toLocaleDateString("ru-RU", { day: "numeric", month: "long" }).replace(/^\d+\s+/, "");
+    }
+
+    // Подпись недели: «2–8 ноября», «26 октября – 1 ноября»,
+    // «29 декабря 2026 – 4 января 2027».
+    //
+    // Три формы, а не одна: достаточно месяца, когда неделя внутри него, два
+    // — когда пересекает границу, и год — когда пересекает новогоднюю. «29
+    // декабря – 4 января» без года читается наугад («это же прошлая неделя?»),
+    // и именно на такой неделе человек планирует поездку.
+    function weekTitle(start) {
+        const end = addDays(start, 6);
+
+        if (start.getMonth() === end.getMonth()) {
+            return `${start.getDate()}–${end.getDate()} ${monthGenitive(end)}`;
+        }
+
+        const day = (date) => `${date.getDate()} ${monthGenitive(date)}`;
+        if (start.getFullYear() === end.getFullYear()) {
+            return `${day(start)} – ${day(end)}`;
+        }
+        return `${day(start)} ${start.getFullYear()} – ${day(end)} ${end.getFullYear()}`;
+    }
+
+    // Период показа в unix-секундах: от полуночи понедельника до конца
+    // воскресенья.
+    function weekRange(start) {
+        return {
+            from: dayStartUnix(toISODate(start)),
+            to: dayEndUnix(toISODate(addDays(start, 6))),
+        };
+    }
+
     // 0 и пустота = «сроки нет». Фразу возвращаем отсюда, а не из страниц:
     // раньше «Без дедлайна» и «без срока» были в двух местах по-разному.
     function formatDate(timestamp) {
@@ -150,6 +213,20 @@
         return source.slice(0, 2).toUpperCase();
     }
 
+    // Три формы русской счётной формы: «1 пара», «2 пары», «5 пар». Живёт здесь
+    // потому, что подписей с числом на фронтенде два места — расписание и карта,
+    // — и «4 пар» на одной из страниц читалось бы как баг страницы, а не как
+    // расхождение двух копий одного правила.
+    function plural(count, one, few, many) {
+        const mod10 = count % 10;
+        const mod100 = count % 100;
+        if (mod10 === 1 && mod100 !== 11) return one;
+        if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
+        return many;
+    }
+
+    // startOfWeek, addDays, monthGenitive, weekTitle, weekRange — см. блок
+    // «неделя» выше; plural — счётная форма для подписей с числом.
     global.GS = global.GS || {};
     global.GS.format = {
         roleLabel,
@@ -162,6 +239,12 @@
         toISODate,
         dayStartUnix,
         dayEndUnix,
+        startOfWeek,
+        addDays,
+        monthGenitive,
+        weekTitle,
+        weekRange,
+        plural,
         formatDate,
         formatDateTime,
         initialsFrom,

@@ -347,3 +347,39 @@ func TestValidAuditAction(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryAuditActionIsFilterable — каждое объявленное действие обязано быть
+// и в списке фильтрации.
+//
+// Константы и auditActions никто не сверяет автоматически, а пропущенная строка
+// ломает молча и похлеще опечатки: обработчик пишет событие в базу, а
+// ?action=<своё_же_действие> отвечает 422, потому что «такого действия нет».
+// Список ниже написан по константам руками — тот же приём, что у матрицы
+// «роль × право» в authz_test.go, и цена пропуска здесь одинаковая: красный
+// прогон вместо журнала, который никто не может прочитать.
+func TestEveryAuditActionIsFilterable(t *testing.T) {
+	declared := []store.AuditAction{
+		store.AuditLogin,
+		store.AuditLogout,
+		store.AuditLogoutAll,
+		store.AuditPasswordChange,
+		store.AuditRegister,
+		store.AuditRoleChange,
+		store.AuditGrade,
+		store.AuditScheduleGroupsSync,
+		store.AuditScheduleImport,
+		store.AuditPlaceCreate,
+		store.AuditPlaceUpdate,
+	}
+
+	for _, action := range declared {
+		if !store.ValidAuditAction(string(action)) {
+			t.Errorf("действие %q объявлено константой, но не попало в список фильтрации", action)
+		}
+	}
+
+	if len(declared) != len(store.AuditActions()) {
+		t.Errorf("известных действий %d, а констант %d — список auditActions разошёлся с объявлением",
+			len(store.AuditActions()), len(declared))
+	}
+}

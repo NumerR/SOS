@@ -42,6 +42,14 @@ func (m *Module) Name() string { return "schedule" }
 func (m *Module) Migrations() []platform.Migration {
 	return []platform.Migration{
 		{Version: "2026-10-24_schedule_source", SQL: store.ScheduleSourceMigration},
+		// Слой карты (ADR-0041): индекс для запроса «дни по всем группам».
+		// Отдельной версией, потому что первая на живых базах уже применена и
+		// runner её не повторяет.
+		{Version: "2026-11-02_schedule_map_index", SQL: store.ScheduleMapIndexMigration},
+		// Покрытие месяцев (ADR-0042): третья таблица источника. Миграция
+		// заполняет её из уже лежащих пар, иначе база, куда импорт приходил
+		// вчера, сегодня выглядела бы незаполненной.
+		{Version: "2026-11-03_schedule_coverage", SQL: store.ScheduleCoverageMigration},
 	}
 }
 
@@ -63,11 +71,14 @@ func (m *Module) Register(reg *platform.Registry) {
 
 	// Чтение официального расписания — публичное, как и страница /schedule:
 	// в ответе нет ничего персонального (предмет, время, аудитория,
-	// преподаватель), а витрина существуют для гостей.
+	// преподаватель), а витрина существует для гостей.
 	//
-	// Что здесь важно не забыть при переезде на другой источник: публичным
-	// остаётся именно чтение уже импортированных строк. Токен источника
-	// держит сервер, и ни один из этих маршрутов к АПЭКС не ходит.
+	// С ADR-0042 публичным остаётся показ импортированных строк, и именно он
+	// теперь добирает недостающие месяцы из АПЭКС — но делает это сервер:
+	// токен источника не уходит ни в один ответ, обращения дедуплицируются по
+	// (группа, месяц), ограничены четырьмя одновременными и двенадцатисекундным
+	// бюджетом, а при отказе вуза страницу кормит собственная база. Границы
+	// описаны в internal/handlers/schedule_readthrough.go.
 	reg.Add(platform.Route{
 		Path:    "/api/schedule/groups",
 		Method:  http.MethodGet,
@@ -79,6 +90,18 @@ func (m *Module) Register(reg *platform.Registry) {
 		Method:  http.MethodGet,
 		Public:  true,
 		Handler: http.HandlerFunc(h.ScheduleLessonsAPI),
+	})
+
+	// Слой карты «пары по корпусам». В отличие от двух путей выше — публичным
+	// он не является: карта адресована вошедшему (страница /map под RequireAuth),
+	// и право здесь то же, что у ленты, — роль без schedule.view не должна
+	// получать и сводку по кампусу.
+	reg.Add(platform.Route{
+		Path:        "/api/schedule/map",
+		Method:      http.MethodGet,
+		Perm:        authz.ScheduleView,
+		DenyMessage: "the schedule map is available to signed-in users",
+		Handler:     http.HandlerFunc(h.ScheduleMapAPI),
 	})
 
 	// Управление источником — только администратор (authz.ScheduleSourceManage).

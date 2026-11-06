@@ -1,30 +1,54 @@
 /* =========================================================
    SOS — STUDENT OS · DESIGN SYSTEM
-   warm parchment + neumorphism + petrol-teal accent
+   cool paper + neumorphism + petrol-teal accent
    ========================================================= */
 
 :root {
   color-scheme: light;
 
-  --parchment:      #e9e2d3;
-  --parchment-deep: #ded5c2;
-  --surface:        #efe9dc;
-  --ink:            #2c2a26;
-  --ink-soft:       #57534a;
+  /* Бумага холодная (оттенки подобраны по hue 222°), но светлота каждого тона
+     совпадает с прежним тёплым рядом: parchment 0.766, deep 0.671, surface 0.815,
+     line 0.589. Светлота — единственное, что считает WCAG, поэтому все пары из
+     CONTRAST_PAIRS держатся с теми же цифрами, что измерены для тёплого ряда
+     (расхождение ≤0,02:1). Тени под этим же сдвигом: тёплый коричневый ушёл в
+     серо-синий, блик — в чистый белый, иначе неуморфизм на холодном фоне выглядит
+     грязью. Имена токенов прежние («parchment») — переименование разнесло бы
+     правку по всем стражам и документации, а цвет меняет значение, а не имя. */
+  --parchment:      #dfe3ea;
+  --parchment-deep: #d1d6e1;
+  --surface:        #e7e9ef;
+  --ink:            #232a3b;
+  --ink-soft:       #465372;
   /* --muted был #8d8676: 2.81:1 на parchment и 2.48:1 на parchment-deep — ниже
      порога 4.5:1, а этот цвет несёт не декор, а текст (подсказки форм, меты
-     карточек, «Обновлено …», подписи столбцов). Значение #625b4c подобрано по
-     расчёту WCAG: 5.22:1 на parchment, 5.56:1 на surface, 4.62:1 на
-     parchment-deep, 6.73:1 на белом — то есть AA на всех подложках, где цвет
-     встречается. Тон тот же (тёплый серый), палитра не меняется. */
-  --muted:          #625b4c;
-  --line:           #d3c9b4;
+     карточек, «Обновлено …», подписи столбцов). Светлое значение #625b4c
+     посчитано по WCAG и дало 5.22:1 на parchment, 5.56:1 на surface, 4.62:1 на
+     parchment-deep, 6.73:1 на белом. Под холодную бумагу взят тот же тон по
+     светлоте, но холодный: #4e5b7a — 5.21 / 5.55 / 4.61 / 6.72. */
+  --muted:          #4e5b7a;
+  /* --building-ink — имя корпуса рядом с аудиторией в расписании (ADR-0045).
+     Роль у него второстепенная: человека в первой строке интересуют время,
+     предмет и аудитория, а «Главный корпус» — уточнение. Поэтому цвет тише
+     меты, но всё ещё AA: 4.61:1 на parchment и 4.89:1 на surface (у --muted
+     5.21 / 5.58). Пара измерена в scripts/check-frontend.mjs. */
+  --building-ink:   #576480;
+  /* --map-focus / --map-focus-case — обводка выбранной точки карты (ADR-0045).
+     На самой карте контраст не посчитать: под точкой лежат тайлы оператора, и
+     их цвет нам неизвестен. Измеряется то, что зависит от нас: обводка обязана
+     отличаться от заливки той точки, которую она обводит, — 5,58:1 у слоя пар и
+     4,51:1 у слоя событий при пороге 3:1 (1.4.11), и от своей тёмной окантовки
+     (8,58:1), которая отделяет янтарь от светлой подложки карт. Значения
+     прописаны числом, а не через var(): map.js читает токен как цвет и var()
+     не разберёт. */
+  --map-focus:       #fbbf24;
+  --map-focus-case:  #232a3b;
+  --line:           #c4cad8;
   /* --line несёт разделители (линия под шапкой, линейка секции) — там он
      декоративный. Граница поля ввода другим цветом: у контура контрола по WCAG
      1.4.11 должна быть хотя бы 3:1 с тем, что вокруг, иначе «куда нажимать»
-     видно только по neumorphic-тени. #877f6f: 3.08:1 на parchment, 3.28:1 на
-     surface. Тон тот же, что у прежнего --muted. */
-  --line-strong:    #877f6f;
+     видно только по neumorphic-тени. Было #877f6f (3.08 / 3.28); холодный
+     аналог той же светлоты — #6f80a7: 3.06:1 на parchment, 3.26:1 на surface. */
+  --line-strong:    #6f80a7;
 
   /* Состояния кнопки: подпись #f5f0e6 на этих подложках посчитана и держит AA с
      запасом — 8.57:1 на hover и 10.30:1 на press (база --teal — 6.63:1). Держится
@@ -59,22 +83,37 @@
   --danger-btn:       #a13f35;
   --danger-btn-hover: #8f342c;
 
-  /* Состояния пары в расписании. Пары «текст на плашке» посчитаны и стоят в
-     CONTRAST_PAIRS: 5.93 / 5.98 / 5.82 в светлой теме и 8.70 / 8.44 / 8.67 в
-     тёмной (WCAG AA для обычного текста). */
-  --pending-ink: #7a4d0c;
-  --pending-bg:  #f6e7c6;
-  --pending-line: #d9a63f;
-  --active-ink:  #145a8c;
-  --active-bg:   #dceaf7;
-  --active-line: #5b9bd5;
-  --done-ink:    #57534a;
-  --done-bg:     #e6e0d3;
-  --done-line:   #b9b1a2;
+  /* Состояния — залитые плашки, а не пастель. Прежний ряд («не начата» #f6e7c6 с
+     текстом #7a4d0c, «идёт» #dceaf7 с #145a8c) держал AA (5.93 / 5.98 / 5.82), но
+     на светлой странице отличить «идёт» от «закончена» можно было только прочитав
+     подпись: и то, и другое было бледным пятном того же тона. Теперь заливка
+     насыщенная, а текст на ней светлый (кроме янтаря — на ярком янтаре белый текст
+     даёт 3.5:1 и AA не проходит, поэтому там тёмная подпись; 5.79:1). Посчитанные
+     пары: 5.79 / 6.23 / 6.74 / 5.25 / 5.91 — все ≥4,5 (WCAG AA для обычного
+     текста) и стоят в CONTRAST_PAIRS. В тёмной теме ряд остаётся пастельным: там
+     залитая плашка теряет 8.70 / 8.44 / 8.67, на которых держится читаемость.
+     --fresh-* и --none-* — плашки состояния источника расписания; прежний вид они
+     брали от --teal-tint и --danger-tint, а те несут и другие роли (кольцо фокуса,
+     подложка аватара, `.message`), и заливать их под один компонент нельзя. */
+  --pending-ink: #1c1205;
+  --pending-bg:  #d97706;
+  --pending-line: #a85c04;
+  --active-ink:  #f2f7ff;
+  --active-bg:   #1d4ed8;
+  --active-line: #173ea3;
+  --done-ink:    #eef2f7;
+  --done-bg:     #475569;
+  --done-line:   #2b3444;
+  --fresh-ink:   #f0fdfa;
+  --fresh-bg:    #0f766e;
+  --fresh-line:  #0b5b54;
+  --none-ink:    #fef2f2;
+  --none-bg:     #b91c1c;
+  --none-line:   #8f1616;
 
-  --sh-dark:   rgba(122, 104, 74, 0.42);
-  --sh-darker: rgba(96, 80, 54, 0.50);
-  --sh-light:  rgba(255, 251, 242, 0.92);
+  --sh-dark:   rgba(96, 112, 140, 0.40);
+  --sh-darker: rgba(72, 86, 112, 0.50);
+  --sh-light:  rgba(255, 255, 255, 0.92);
 
   --e1: 4px 4px 9px var(--sh-dark),    -4px -4px 9px var(--sh-light);
   --e2: 6px 6px 14px var(--sh-dark),   -6px -6px 14px var(--sh-light);
@@ -113,6 +152,14 @@
   --ink:            #f1ece2;
   --ink-soft:       #c9c2b4;
   --muted:          #a49c8e;
+  /* Та же роль, что в светлой теме, и тот же приём: тише меты, но AA с
+     запасом — 5.49:1 на parchment и 5.06:1 на surface (у --muted 6.66 / 6.14). */
+  --building-ink:   #948d7e;
+  /* Тот же янтарь, что в светлой теме: заливки точек тёмные в обеих, и
+     обводка отличается от них одинаково — 3,28:1 у слоя пар и 3,56:1 у слоя
+     событий (порог 3:1). Окантовка — самый тёмный тон страницы, 11,41:1. */
+  --map-focus:       #fbbf24;
+  --map-focus-case:  #0e1013;
   --line:           #2e323a;
   --line-strong:    #7a818c;
 
@@ -141,6 +188,14 @@
   --done-ink:     #cec7ba;
   --done-bg:      #262930;
   --done-line:    #4a4e57;
+  /* Те же две роли, что в светлой теме, но привычным для тёмной способом: светлый
+     текст на тёмной плашке (8.37 и 7.51 — пороги посчитаны в CONTRAST_PAIRS). */
+  --fresh-ink:    #93d8cf;
+  --fresh-bg:     #16332f;
+  --fresh-line:   #1e6f69;
+  --none-ink:     #ff9e90;
+  --none-bg:      #3c1f1c;
+  --none-line:    #b5493c;
 
   --sh-dark:   rgba(0, 0, 0, 0.55);
   --sh-darker: rgba(0, 0, 0, 0.72);
@@ -379,12 +434,13 @@ button { font: inherit; }
 :root[data-theme="dark"] .theme-toggle .icon-moon { display: block; }
 :root[data-theme="dark"] .theme-toggle .icon-sun { display: none; }
 
-/* Подпись отключённой кнопки #b3aa97 на --parchment-deep даёт 1.58:1 — ниже AA, но
+/* Подпись отключённой кнопки #99a3b6 на --parchment-deep даёт 1.74:1 — ниже AA, но
    WCAG 1.4.3 освобождает неактивные компоненты, и в этом проекте disabled — это почти
    всегда отправка: .btn.is-loading ниже прячет текст совсем (color: transparent) и
    показывает спиннер. Исключение занесено в CONTRAST_EXEMPT проверкой — если цвет
-   поедет, CI об этом спросит. */
-.btn[disabled] { cursor: not-allowed; --btn-bg: var(--parchment-deep); --btn-fg: #b3aa97; box-shadow: var(--e1); opacity: .85; }
+   поедет, CI об этом спросит. Литерал холодный, как и остальная бумага: тёплый
+   #b3aa97 на серо-голубой подложке читался как грязное пятно. */
+.btn[disabled] { cursor: not-allowed; --btn-bg: var(--parchment-deep); --btn-fg: #99a3b6; box-shadow: var(--e1); opacity: .85; }
 .btn[disabled]:hover { background: var(--parchment-deep); }
 
 .btn.is-loading { color: transparent; pointer-events: none; position: relative; }
@@ -638,7 +694,7 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
   position: fixed;
   inset: 0;
   z-index: 1000;
-  background: rgba(44, 42, 38, 0.6);
+  background: rgba(35, 42, 59, 0.62);
   backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
@@ -887,6 +943,44 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
   color: var(--ink-soft);
 }
 
+/* Навигация по каталогу — институт → курс → группа, те же вкладки, что у
+   виджета rasp-stud.html. Чипы, а не <select>: выбранный институт обязан
+   оставаться на экране, пока человек выбирает курс и группу, — свёрнутый
+   список прятал бы уже сделанный выбор и не показывал, сколько групп в каждом
+   институте до нажатия. Подложка выбранного чипа — тот же --teal с подписью
+   #f3eee3, что у .chip выше: пара проверена на контраст (ADR-0019), и
+  states не должны спорить друг с другом цветом. */
+.sched-nav { display: grid; gap: 8px; margin: -6px 0 16px; }
+.sched-nav-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.sched-nav-title {
+  min-width: 7ch;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.sched-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.sched-chip {
+  font: inherit; border: 0; cursor: pointer; user-select: none;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 13px; font-size: 12px; font-weight: 600;
+  color: var(--ink-soft); background: var(--surface); border-radius: var(--r-pill);
+  box-shadow: var(--inset1);
+  transition: transform .16s cubic-bezier(.2,.7,.3,1), box-shadow .2s ease,
+              background .18s ease, color .18s ease;
+}
+.sched-chip:hover { color: var(--ink); background: var(--parchment); box-shadow: var(--e1); transform: translateY(-1px); }
+.sched-chip:active { transform: translateY(1px) scale(.985); box-shadow: var(--inset2); }
+.sched-chip:focus-visible { outline: none; box-shadow: var(--e1), 0 0 0 3px var(--teal-tint), 0 0 0 5px var(--ring); }
+.sched-chip.is-selected {
+  background: var(--teal); color: #f3eee3;
+  box-shadow: var(--e1), inset 0 1px 0 rgba(255,255,255,.22);
+}
+.sched-chip.is-selected:hover { background: var(--teal-hover); color: #f3eee3; }
+.sched-chip-count { font-size: 10.5px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sched-chip.is-selected .sched-chip-count { color: rgba(243,238,227,.78); }
+
 .sched-days { display: grid; gap: 12px; }
 .empty-state.plain { border: 0; box-shadow: none; background: transparent; }
 
@@ -958,11 +1052,21 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
   box-shadow: var(--inset1);
 }
 .lesson-sub { font-size: 11.5px; color: var(--muted); }
+/* Имя корпуса стоит вплотную к аудитории и потому не получает разделитель:
+   вместе они читаются как одно — «где проходит». Подчёркивание у ссылки
+   обязательное: в приглушённом цвете имя корпуса неотличимо от обычного слова
+   глазами, и без признака ссылки человек бы не догадался, что оно куда-то
+   ведёт. */
+.lesson-building { color: var(--building-ink); font-variant-numeric: tabular-nums; }
+a.lesson-building { text-decoration: underline; text-underline-offset: 2px; }
+a.lesson-building:hover { color: var(--accent); }
 
 /* ---------- состояние пары ----------
-   Плашка в духе статусов со скриншота: цветной контур, мягкое свечение тем же
-   цветом и значок. Свечение — currentColor, поэтому в обеих темах оно берётся
-   от цвета текста, а не от отдельного литерала. */
+   Плашка в духе статусов со скриншота: цветной контур, мягкое свечение и значок.
+   Свечение берётся от цвета контура, а не от currentColor: на залитой плашке
+   подпись светлая, и «мягкое свечение тем же цветом» на светлой странице
+   пропадало. --{state}-line — тот же оттенок, что и граница, поэтому в обеих
+   темах свечение как минимум видно. */
 .lesson-status {
   flex: none;
   display: inline-flex; align-items: center; gap: 6px;
@@ -976,11 +1080,11 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
 .lesson-status svg { width: 13px; height: 13px; flex: none; }
 .lesson-status.is-pending {
   color: var(--pending-ink); background: var(--pending-bg); border-color: var(--pending-line);
-  box-shadow: 0 0 12px -3px currentColor;
+  box-shadow: 0 0 12px -3px var(--pending-line);
 }
 .lesson-status.is-active {
   color: var(--active-ink); background: var(--active-bg); border-color: var(--active-line);
-  box-shadow: 0 0 16px -3px currentColor;
+  box-shadow: 0 0 16px -3px var(--active-line);
 }
 .lesson-status.is-done {
   color: var(--done-ink); background: var(--done-bg); border-color: var(--done-line);
@@ -1009,6 +1113,19 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
 }
 
 .sched-updated { font-size: 11.5px; color: var(--muted); margin-top: 14px; }
+/* Три состояния строки под таблицей: показанное свежее, показанное из архива и
+   показывать нечего. Разница между ними — единственный способ не соврать:
+   «обновлено 3 ноября в 14:20» над вчерашней копией при мёртвом сайте вуза
+   звучит правдой. */
+.sched-source-state {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-right: 8px; padding: 2px 9px; border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+}
+.sched-source-state.is-fresh { color: var(--fresh-ink); background: var(--fresh-bg); border-color: var(--fresh-line); }
+.sched-source-state.is-archive { color: var(--pending-ink); background: var(--pending-bg); border-color: var(--pending-line); }
+.sched-source-state.is-none { color: var(--none-ink); background: var(--none-bg); border-color: var(--none-line); }
 
 .sched-source-line {
   display: flex;
@@ -1042,3 +1159,175 @@ code { font-family: var(--font-mono); font-size: 0.86em; color: var(--teal-ink);
 .feed-item.is-event { border-left-color: var(--ok); }
 .feed-state-event { background: var(--ok-tint); color: var(--ok); }
 .res-link { margin-top: 2px; }
+/* ---------- карта кампуса (ADR-0041) ---------- */
+
+/* Единственная цель этих правил — встроить чужую разметку (Leaflet) в нашу
+   систему токенов. Ни одного нового цвета здесь не появляется: пары «текст +
+   подложка» берутся из уже измеренных (проверка покрытия в
+   scripts/check-frontend.mjs краснит новый оттенок без расчёта), а состояния
+   точки — из существующих токенов состояний расписания. */
+
+.map-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.map-layers { display: flex; gap: 14px; flex-wrap: wrap; }
+.map-layer {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--surface);
+  border-radius: var(--r-pill);
+  padding: 8px 14px;
+  box-shadow: var(--e1);
+  cursor: pointer;
+}
+.map-layer input { width: 16px; height: 16px; accent-color: var(--accent); }
+
+/* Кружок состояния: 12px — тот же размер, что у точки в легенде карты, и он
+   несёт состояние, поэтому дублируется и в списке, и в блоке «не показано». */
+.map-key {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--line);
+  box-shadow: 0 0 0 1.5px var(--parchment);
+}
+.map-key.is-resolved,
+.map-key.is-events { background: var(--teal); }
+.map-key.is-lessons { background: var(--active-line); }
+.map-key.is-unresolved { background: var(--pending-line); }
+.map-key.is-missing { background: var(--danger); }
+.map-key.is-no_building,
+.map-key.is-several,
+.map-key.is-no_place,
+.map-key.is-no_date { background: var(--line-strong); }
+
+.map-frame { position: relative; }
+.map-canvas {
+  height: 440px;
+  border-radius: var(--r-md);
+  box-shadow: var(--inset2);
+  background: var(--parchment-deep);
+}
+.leaflet-container { font-family: var(--font); font-size: 13px; }
+
+/* Подложка — чужие тайлы, и перекрасить их в токены нельзя. В тёмной теме
+   светлая карта осталась бы единственным ярким блоком страницы и слепила бы;
+   затемнение — единственное, что можно сделать с содержимым, которого у нас
+   нет. Точки и подписи фильтра не касаются: они рисуются нашим SVG. */
+[data-theme="dark"] .leaflet-tile { filter: brightness(.82) saturate(.7); }
+
+.map-notice {
+  position: absolute;
+  inset: auto 16px 16px 16px;
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: var(--e2);
+  max-width: 62ch;
+}
+.map-status { margin-top: 12px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+
+.map-subtitle {
+  margin: 18px 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.map-list { display: flex; flex-direction: column; gap: 6px; }
+.map-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  box-shadow: var(--inset1);
+}
+.map-row-title { font-size: 14px; font-weight: 700; color: var(--ink); }
+.map-row-count { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.map-row .btn { padding: 6px 12px; font-size: 12px; margin-left: auto; }
+
+.map-unplaced { display: flex; flex-direction: column; gap: 8px; }
+.map-unplaced-row {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  align-items: center;
+}
+.map-unplaced-what { font-size: 13.5px; color: var(--ink); }
+.map-unplaced-count { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.map-unplaced-examples {
+  grid-column: 2 / -1;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.map-hint { margin-top: 12px; font-size: 12.5px; color: var(--muted); line-height: 1.5; max-width: 62ch; }
+.map-hint code { font-family: var(--font-mono); font-size: 11.5px; }
+
+/* Всплывающее окно Leaflet: его обёртка и хвостик красятся своими свойствами,
+   поэтому перекрашиваются оба — иначе окно остаётся белым осколком на тёмной
+   странице. Пара «текст + подложка» здесь та же, что у панелей. */
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip { background: var(--surface); color: var(--ink); box-shadow: var(--e2); }
+.leaflet-popup-content { margin: 12px 14px; line-height: 1.45; }
+.map-popup { display: flex; flex-direction: column; gap: 4px; }
+.map-popup strong { font-size: 14px; }
+.map-popup-sub,
+.map-popup-meta { font-size: 12px; color: var(--muted); }
+.map-popup-day,
+.map-popup-lesson { font-size: 12.5px; color: var(--ink); }
+.map-popup-lessons { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; }
+
+/* Потолок именно у списка, а не у всего окна. Leaflet считает maxHeight во
+   время открытия, когда строк ещё нет: они приезжают вторым запросом, и без
+   этого потолка окно разрастается выше карты (живой браузер: 1095px на карте
+   440px), а автопан уже ничем не поможет. Заголовок остаётся на месте —
+   прокручивается только список. */
+.map-popup-lessons { max-height: 160px; overflow-y: auto; overscroll-behavior: contain; }
+
+/* Строка пары в окне — кнопка: нажатие на пару перебрасывает карту на её
+   корпус (запрос владельца). Внешность остаётся текстовой строкой — рамка и
+   заливка убраны, у окна и так свой контур, — а нажимность показывают
+   подчёркивание при наведении и кольцо фокуса, как у остальных контролов. */
+button.map-popup-lesson {
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 2px 4px;
+  margin: 0 -4px;
+  border-radius: var(--r-xs);
+  cursor: pointer;
+}
+button.map-popup-lesson:hover { text-decoration: underline; }
+button.map-popup-lesson:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+
+/* Выбранная точка. Цвет и толщину границы рисует map.js через setStyle по
+   токенам темы; здесь остаётся тёмный ореол. Он нужен потому, что подложку
+   рисует оператор и её цвет нам неизвестен: яркий янтарь на светлой схеме
+   карты без него сливается с фоном. */
+.map-marker-focus {
+  filter: drop-shadow(0 0 1px var(--map-focus-case)) drop-shadow(0 0 4px var(--map-focus-case));
+}
+
+@media (max-width: 640px) {
+  .map-canvas { height: 320px; }
+  .map-layer { flex: 1 1 auto; }
+  .map-unplaced-row { grid-template-columns: 12px minmax(0, 1fr); }
+  .map-unplaced-count { grid-column: 2; }
+}

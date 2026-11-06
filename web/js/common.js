@@ -259,5 +259,11 @@
         toISODate: format.toISODate,
         dayStartUnix: format.dayStartUnix,
         dayEndUnix: format.dayEndUnix,
+        startOfWeek: format.startOfWeek,
+        addDays: format.addDays,
+        monthGenitive: format.monthGenitive,
+        weekTitle: format.weekTitle,
+        weekRange: format.weekRange,
+        plural: format.plural,
     });
 })(window);

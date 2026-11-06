@@ -37,6 +37,12 @@ func newScheduleSourceDB(t *testing.T) *sql.DB {
 	if _, err := db.Exec(store.ScheduleSourceMigration); err != nil {
 		t.Fatalf("таблицы источника расписания: %v", err)
 	}
+	if _, err := db.Exec(store.ScheduleMapIndexMigration); err != nil {
+		t.Fatalf("индекс слоя карты: %v", err)
+	}
+	if _, err := db.Exec(store.ScheduleCoverageMigration); err != nil {
+		t.Fatalf("таблица покрытия месяцев: %v", err)
+	}
 
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -533,34 +539,137 @@ func TestListLessonsRangeAndOrder(t *testing.T) {
 	}
 }
 
-func TestImportedMonthsAndLastImport(t *testing.T) {
+// TestMapLessonsAcrossGroups — вопрос слоя карты: дни по всему каталогу.
+//
+// Отдельный метод ради одного различения, которое ListLessons дать не может:
+// «группа не указана» и «такой группы нет» — разные ситуации, и подменить первую
+// второй молча нельзя.
+func TestMapLessonsAcrossGroups(t *testing.T) {
 	s, _ := newSourceStore(t)
 	ctx := context.Background()
 
-	at, err := s.LastImportAt(ctx, testSource, "494")
+	mustGroups(t, s,
+		store.SourceGroup{ExternalID: "494", Name: "Б-ИСиТ-22"},
+		store.SourceGroup{ExternalID: "501", Name: "Б-ПИ-31"},
+	)
+
+	first := lesson("a1", "20261006")
+	second := lesson("b1", "20261007")
+	second.Group = "Б-ПИ-31"
+
+	mustImport(t, s, "494", 10, 2026, first, lesson("a9", "20261013"))
+	mustImport(t, s, "501", 10, 2026, second)
+
+	all, err := s.MapLessons(ctx, testSource, "", 20261005, 20261011)
 	if err != nil {
-		t.Fatalf("LastImportAt на пустой группе: %v", err)
+		t.Fatalf("MapLessons по всем группам: %v", err)
 	}
-	if at != 0 {
-		t.Fatalf("до импорта время = %d", at)
+	if len(all) != 2 {
+		ids := make([]string, 0, len(all))
+		for _, l := range all {
+			ids = append(ids, l.ExternalID)
+		}
+		t.Fatalf("пар в диапазоне %d (%v), ожидалось 2: по одной из каждой группы, 13.10 вне недели",
+			len(all), ids)
 	}
-	months, err := s.ImportedMonths(ctx, testSource, "494")
+	if all[0].ExternalID != "a1" || all[1].ExternalID != "b1" {
+		t.Errorf("порядок (день, номер пары) нарушен: %s затем %s", all[0].ExternalID, all[1].ExternalID)
+	}
+	if all[0].GroupExtID != "494" || all[1].GroupExtID != "501" {
+		t.Errorf("группы перепутаны: %s и %s", all[0].GroupExtID, all[1].GroupExtID)
+	}
+
+	// Пробел вместо группы — то же «все группы»: фильтром управления быть не
+	// может, «группы нет» обязан ответить тот, кто разбирает запрос.
+	spaced, err := s.MapLessons(ctx, testSource, "   ", 20261005, 20261011)
+	if err != nil || len(spaced) != len(all) {
+		t.Errorf("MapLessons с пустой строкой вернул %d пар, %v", len(spaced), err)
+	}
+
+	// Одна группа — тот же ответ, что у ListLessons: два метода не имеют права
+	// разойтись ни списком, ни порядком.
+	one, err := s.MapLessons(ctx, testSource, "494", 20261005, 20261011)
 	if err != nil {
-		t.Fatalf("ImportedMonths на пустой группе: %v", err)
+		t.Fatalf("MapLessons по одной группе: %v", err)
 	}
-	if len(months) != 0 {
-		t.Fatalf("до импорта найдено %d месяцев", len(months))
+	viaList, err := s.ListLessons(ctx, testSource, "494", 20261005, 20261011)
+	if err != nil {
+		t.Fatalf("ListLessons: %v", err)
+	}
+	if len(one) != len(viaList) {
+		t.Errorf("одна группа через разные методы: %d и %d пар", len(one), len(viaList))
+	}
+
+	if _, err := s.MapLessons(ctx, testSource, "", 20261011, 20261005); err == nil {
+		t.Error("перевёрнутый диапазон принят без ошибки")
+	}
+
+	// Пустой период — пустой список, а не nil: карта рисует «пар нет», и JSON
+	// обязан остаться массивом.
+	empty, err := s.MapLessons(ctx, testSource, "", 20261201, 20261207)
+	if err != nil || empty == nil || len(empty) != 0 {
+		t.Errorf("пустой период вернулся как %+v (%v), ожидался пустой срез", empty, err)
+	}
+}
+
+// TestScheduleMapIndexMigration — индекс слоя карты применяется повторно.
+//
+// Миграции runner применяет один раз по (module, version), но сам DDL обязан
+// быть терпеливым к повтору: тестовая база пересоздаётся на каждом прогоне, а
+// живая база переживает и откат, и переустановку бинарника.
+func TestScheduleMapIndexMigration(t *testing.T) {
+	db := newScheduleSourceDB(t)
+
+	for i := 0; i < 2; i++ {
+		if _, err := db.Exec(store.ScheduleMapIndexMigration); err != nil {
+			t.Fatalf("повтор %d: %v", i, err)
+		}
+	}
+
+	var names []string
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'schedule_source_lessons'`)
+	if err != nil {
+		t.Fatalf("список индексов: %v", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("имя индекса: %v", err)
+		}
+		names = append(names, name)
+	}
+
+	if !strings.Contains(strings.Join(names, ","), "idx_schedule_lessons_source_day") {
+		t.Errorf("индекса дней по всем группам нет; есть %v", names)
+	}
+}
+
+func TestMonthCoverageStates(t *testing.T) {
+	s, _ := newSourceStore(t)
+	ctx := context.Background()
+
+	empty, err := s.MonthCoverage(ctx, testSource, "494")
+	if err != nil {
+		t.Fatalf("MonthCoverage на пустой группе: %v", err)
+	}
+	if empty == nil {
+		t.Fatal("покрытие вернулось nil — JSON ответа стал бы null вместо массива")
+	}
+	if len(empty) != 0 {
+		t.Fatalf("до импорта найдено %d месяцев: %+v", len(empty), empty)
 	}
 
 	mustImport(t, s, "494", 11, 2026, lesson("b1", "20261102"), lesson("b2", "20261103"))
 	mustImport(t, s, "494", 10, 2026, lesson("a1", "20261006"))
 
-	months, err = s.ImportedMonths(ctx, testSource, "494")
+	months, err := s.MonthCoverage(ctx, testSource, "494")
 	if err != nil {
-		t.Fatalf("ImportedMonths: %v", err)
+		t.Fatalf("MonthCoverage: %v", err)
 	}
 	if len(months) != 2 {
-		t.Fatalf("импортировано %d месяцев, ожидалось 2", len(months))
+		t.Fatalf("покрытие %d месяцев, ожидалось 2: %+v", len(months), months)
 	}
 	// Отсортировано по возрастанию: страница по этому списку решает, куда
 	// двигать стрелку «предыдущий месяц».
@@ -570,16 +679,202 @@ func TestImportedMonthsAndLastImport(t *testing.T) {
 	if months[0].Lessons != 1 || months[1].Lessons != 2 {
 		t.Fatalf("число пар по месяцам: %+v", months)
 	}
+	for _, m := range months {
+		if !m.OK {
+			t.Errorf("%02d.%d: ok=0 после успешного импорта", m.Month, m.Year)
+		}
+		if m.RefreshedAt == 0 || m.AttemptedAt == 0 {
+			t.Errorf("%02d.%d: времени покрытия 0 — страница сочла бы месяц непроверенным", m.Month, m.Year)
+		}
+	}
+}
 
-	at, err = s.LastImportAt(ctx, testSource, "494")
+// TestMonthCoverageEmptyMonth — «занятий нет» и «месяц не качали» — разные факты.
+//
+// До таблицы покрытия это различие выводилось из строк пар и потому было
+// неотличимо: пустой месяц давал ровно столько же строк, сколько нескачанный.
+func TestMonthCoverageEmptyMonth(t *testing.T) {
+	s, _ := newSourceStore(t)
+	ctx := context.Background()
+
+	stored, err := s.ReplaceMonth(ctx, testSource, "494", 11, 2026, nil)
 	if err != nil {
-		t.Fatalf("LastImportAt: %v", err)
+		t.Fatalf("пустой месяц: %v", err)
 	}
-	if at == 0 {
-		t.Fatal("после импорта время осталось 0")
+	if stored != 0 {
+		t.Fatalf("пустой месяц вернул %d пар", stored)
 	}
-	if months[0].ImportedAt == 0 {
-		t.Fatal("у импортированного месяца не заполнен imported_at")
+
+	months, err := s.MonthCoverage(ctx, testSource, "494")
+	if err != nil {
+		t.Fatalf("MonthCoverage: %v", err)
+	}
+	if len(months) != 1 {
+		t.Fatalf("строк покрытия: %d, ожидалась одна: %+v", len(months), months)
+	}
+	if !months[0].OK || months[0].Lessons != 0 {
+		t.Fatalf("пустой месяц записан как %+v", months[0])
+	}
+}
+
+// TestMonthCoverageFailureKeepsArchive — неудачная проверка не стирает архив.
+//
+// Это и есть вторая половина требования «если расписание на сайте вуза
+// перестанет работать, оно должно сохраняться в собственной базе»: строка
+// покрытия обязана рассказать о сбое, не соврав о том, что данных нет.
+func TestMonthCoverageFailureKeepsArchive(t *testing.T) {
+	s, _ := newSourceStore(t)
+	ctx := context.Background()
+
+	mustImport(t, s, "494", 11, 2026, lesson("b1", "20261102"))
+	before, err := s.MonthCoverage(ctx, testSource, "494")
+	if err != nil || len(before) != 1 {
+		t.Fatalf("покрытие до сбоя: %+v (%v)", before, err)
+	}
+
+	if err := s.MarkMonthAttempt(ctx, testSource, "494", 11, 2026); err != nil {
+		t.Fatalf("MarkMonthAttempt по лежалому месяцу: %v", err)
+	}
+
+	after, err := s.MonthCoverage(ctx, testSource, "494")
+	if err != nil {
+		t.Fatalf("MonthCoverage: %v", err)
+	}
+	if len(after) != 1 {
+		t.Fatalf("после сбоя строк покрытия: %d", len(after))
+	}
+	if after[0].OK {
+		t.Error("сбойная попытка не пометила месяц")
+	}
+	if after[0].Lessons != before[0].Lessons || after[0].RefreshedAt != before[0].RefreshedAt {
+		t.Errorf("сбой стёр архив: было %+v, стало %+v", before[0], after[0])
+	}
+	if after[0].AttemptedAt < before[0].AttemptedAt {
+		t.Errorf("attempted_at не продвинулся: %d → %d", before[0].AttemptedAt, after[0].AttemptedAt)
+	}
+
+	if err := s.MarkMonthAttempt(ctx, testSource, "495", 3, 2027); err != nil {
+		t.Fatalf("MarkMonthAttempt по нескачанному месяцу: %v", err)
+	}
+	never, err := s.MonthCoverage(ctx, testSource, "495")
+	if err != nil {
+		t.Fatalf("MonthCoverage: %v", err)
+	}
+	if len(never) != 1 || never[0].OK || never[0].Lessons != 0 || never[0].RefreshedAt != 0 {
+		t.Errorf("нескачанный месяц после сбоя записан как %+v", never)
+	}
+
+	// Пустой external_id — не строка покрытия: иначе журнал попыток набился бы
+	// строками, которые ни к какой группе не относятся.
+	if err := s.MarkMonthAttempt(ctx, testSource, "", 11, 2026); err == nil {
+		t.Error("отметка попытки без группы принята")
+	}
+	if err := s.MarkMonthAttempt(ctx, testSource, "494", 13, 2026); err == nil {
+		t.Error("отметка попытки за 13-й месяц принята")
+	}
+}
+
+// TestMonthCoverageCountsDedup — покрытие считает реальные строки, а не длину ответа.
+func TestMonthCoverageCountsDedup(t *testing.T) {
+	s, _ := newSourceStore(t)
+	ctx := context.Background()
+
+	// Источник выдаёт повтор id при аномалии формата: пара должна остаться
+	// одной, и цифра покрытия обязана совпасть с тем, что реально покажет
+	// страница, — иначе на ней будет написано «3 занятия» над списком из двух.
+	stored := mustImport(t, s, "494", 11, 2026,
+		lesson("dup", "20261102"), lesson("dup", "20261102"), lesson("uniq", "20261103"))
+	if stored != 2 {
+		t.Fatalf("повтор external_id лёг %d строками, ожидалось 2", stored)
+	}
+
+	months, err := s.MonthCoverage(ctx, testSource, "494")
+	if err != nil || len(months) != 1 {
+		t.Fatalf("покрытие: %+v (%v)", months, err)
+	}
+	if months[0].Lessons != stored {
+		t.Errorf("покрытие %+v не совпадает с числом вставок %d", months[0], stored)
+	}
+
+	// Перенос занятия в другой месяц: пакет уменьшается, и покрытие обязано
+	// показать новое число, а не то, что было при первом импорте.
+	stored = mustImport(t, s, "494", 11, 2026, lesson("dup", "20261102"))
+	months, err = s.MonthCoverage(ctx, testSource, "494")
+	if err != nil {
+		t.Fatalf("MonthCoverage: %v", err)
+	}
+	if stored != 1 || months[0].Lessons != 1 {
+		t.Errorf("после переноса: вставок %d, покрытие %+v", stored, months[0])
+	}
+}
+
+// TestScheduleCoverageMigrationBackfills — живая база получает покрытие из того, что уже лежит.
+//
+// Миграция добавляет таблицу к базе, в которой месяцы импортированы ещё до неё:
+// без backfill эти группы выглядели бы неимпортированными, и read-through
+// заново сходил бы в АПЭКС за каждые 588 групп.
+func TestScheduleCoverageMigrationBackfills(t *testing.T) {
+	db, err := database.Open(":memory:")
+	if err != nil {
+		t.Fatalf("открыть базу: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	if err := database.Migrate(db); err != nil {
+		t.Fatalf("базовая схема: %v", err)
+	}
+	if _, err := db.Exec(store.ScheduleSourceMigration); err != nil {
+		t.Fatalf("таблицы источника расписания: %v", err)
+	}
+
+	s := store.NewScheduleSourceStore(db)
+	ctx := context.Background()
+
+	// Строки пар вставляются SQL'ом, а не через ReplaceMonth: после таблицы
+	// покрытия этот метод пишет обе сразу, а здесь нужен ровно прежний мир —
+	// пары без всякого покрытия.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO schedule_source_lessons
+			(source, external_id, group_ext_id, month, year, day_key, imported_at)
+		VALUES (?, 'a1', '494', 10, 2026, 20261006, 1760000000),
+		       (?, 'a2', '494', 10, 2026, 20261007, 1760000500)
+	`, testSource, testSource); err != nil {
+		t.Fatalf("импорт до миграции покрытия: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM schedule_source_lessons WHERE external_id = 'a2'`); err != nil {
+		t.Fatalf("убрать пару: %v", err)
+	}
+
+	if _, err := db.Exec(store.ScheduleCoverageMigration); err != nil {
+		t.Fatalf("миграция покрытия: %v", err)
+	}
+
+	// Читается через MonthCoverage, а не голым запросом: именно этот метод
+	// решает, идти ли в источник, и backfill обязан быть виден ему.
+	backfilled, err := s.MonthCoverage(ctx, testSource, "494")
+	if err != nil {
+		t.Fatalf("MonthCoverage после backfill: %v", err)
+	}
+	if len(backfilled) != 1 {
+		t.Fatalf("строк покрытия после backfill: %d (%+v)", len(backfilled), backfilled)
+	}
+	if backfilled[0].Lessons != 1 || !backfilled[0].OK ||
+		backfilled[0].RefreshedAt == 0 || backfilled[0].AttemptedAt == 0 {
+		t.Errorf("backfill дал %+v", backfilled[0])
+	}
+
+	// Повторное применение не должно ни менять цифры, ни плодить строки.
+	if _, err := db.Exec(store.ScheduleCoverageMigration); err != nil {
+		t.Fatalf("повторное применение миграции покрытия: %v", err)
+	}
+	var count int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM schedule_source_months WHERE source = ?`, testSource,
+	).Scan(&count); err != nil {
+		t.Fatalf("после повтора: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("повтор миграции дал %d строк покрытия", count)
 	}
 }
 
@@ -617,6 +912,26 @@ func TestStatsCountsGroupsLessonsAndImportedGroups(t *testing.T) {
 	}
 	if stats.GroupsAt == 0 || stats.ImportedAt == 0 {
 		t.Fatalf("временные метки статистики: %+v", stats)
+	}
+	// Покрытие — две разные цифры: панель админа должна отличать «месяцев
+	// коснулись» от «месяцев, где ничего не вышло», иначе сбой источника
+	// выглядит как тишина.
+	if stats.MonthsCovered != 2 || stats.MonthsFailed != 0 {
+		t.Errorf("покрытие в статистике: %+v", stats)
+	}
+
+	if err := s.MarkMonthAttempt(ctx, testSource, "496", 12, 2026); err != nil {
+		t.Fatalf("MarkMonthAttempt: %v", err)
+	}
+	failed, err := s.Stats(ctx, testSource)
+	if err != nil {
+		t.Fatalf("Stats после сбоя: %v", err)
+	}
+	if failed.MonthsFailed != 1 || failed.MonthsCovered != 2 {
+		t.Errorf("сбойная попытка не отразилась в статистике: %+v", failed)
+	}
+	if failed.ImportedGroups != 2 {
+		t.Errorf("групп с расписанием стало %d — сбой посчитался данными", failed.ImportedGroups)
 	}
 }
 

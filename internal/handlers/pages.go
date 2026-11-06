@@ -74,6 +74,22 @@ func (h *Handlers) DashboardPage(w http.ResponseWriter, r *http.Request) {
 	serveWebFile(w, r, "dashboard.html")
 }
 
+// MapPage отдаёт карту кампуса только вошедшим.
+//
+// Модель доступа та же, что у профиля и кабинета: права на путь нет (оба слоя
+// отвечают тем же содержимым, что GET /api/events и GET /api/schedule/lessons,
+// уже открытые всякому вошедшему), есть только сессия. Гостю карта не нужна не
+// из запрета, а потому что показывать ему нечего: справочник мест и лента
+// событий под RequireAuth, и страница выдала бы пустой фон с подписью «нет
+// данных» (ADR-0041).
+func (h *Handlers) MapPage(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.pageUser(w, r); !ok {
+		return
+	}
+
+	serveWebFile(w, r, "map.html")
+}
+
 // pageUser — пользователь защищённой HTML-страницы, либо ответ уже отправлен.
 //
 // Отказ бывает двух разных видов, и прежний `!ok` склеивал их в redirect: при

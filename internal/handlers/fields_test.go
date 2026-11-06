@@ -31,6 +31,9 @@ func newFullEnv(t *testing.T) (*Handlers, *sql.DB) {
 	if err := database.Migrate(db); err != nil {
 		t.Fatalf("миграции: %v", err)
 	}
+	// События читаются вместе со столбцами карты (place_id, category) — без
+	// этой правки любой SELECT из EventStore упал бы на «no such column».
+	applyMapSchema(t, db)
 	t.Cleanup(func() { _ = db.Close() })
 
 	return New(Deps{

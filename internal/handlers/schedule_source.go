@@ -21,16 +21,22 @@ import (
 //
 //   - чтение (/api/schedule/groups, /api/schedule/lessons) — публичное, как и
 //     сама страница /schedule. Витрина показывает официальное расписание
-//     группам гостям, и персональные данные в этих ответах отсутствуют: только
+//     группам и гостям, и персональные данные в этих ответах отсутствуют: только
 //     предмет, время, аудитория, преподаватель. Право смотреть расписание группы
 //     не зависит от того, кто смотрит;
 //   - управление источником (/api/schedule/source/*) — право
-//     authz.ScheduleSourceManage, то есть администратор. Именно эти маршруты
-//     ходят к сайту вуза с токеном из окружения, и частоту обращений к чужому
-//     API должен контролировать один человек, а не каждый гость страницы.
+//     authz.ScheduleSourceManage, то есть администратор. Здесь импорт запускается
+//     человеком и частота обращений к чужому API — его решение.
 //
-// Ответы источника в базу пишутся разобранными (см. internal/store), поэтому
-// ни здесь, ни на странице никто не пересчитывает подгруппы и не вырезает HTML.
+// Что изменилось с ADR-0042 и что осталось неизменным. Публичное чтение больше
+// не обязано ждать админской кнопки: если месяца группы в базе нет,
+// /api/schedule/lessons приводит его сам (schedule_readthrough.go). Не изменилось
+// главное — браузер токена не видит. Исходящий запрос делает сервер, он же
+// дедуплицирует его по (группа, месяц), ограничивает параллельность и бюджет, а
+// наружу отдаёт копию из базы и поле source_state о том, свежая ли это копия или
+// архив. Ответы источника пишутся в базу разобранными (см. internal/store),
+// поэтому ни здесь, ни на странице никто не пересчитывает подгруппы и не вырезает
+// HTML.
 
 // maxScheduleImportMonths — сколько месяцев за один запрос можно импортировать.
 //
@@ -131,26 +137,61 @@ func (h *Handlers) ScheduleLessonsAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Покрытие читается до пар, и отказ здесь — 500, а не «пустой список»:
+	// по этому же снимку решается, ходить ли в АПЭКС. Сваливать ошибку базы в
+	// «расписания нет» значило бы нарушить ADR-0029 и начать слать запросы к
+	// источнику по ложной причине.
+	coverage, err := h.ScheduleSource.MonthCoverage(r.Context(), apeks.Source, group.ExternalID)
+	if err != nil {
+		internalError(w, r, "failed to read schedule coverage", err,
+			slog.String("group", group.ExternalID))
+		return
+	}
+
+	// Сквозное чтение (ADR-0042): месяц, о котором база ничего не знает,
+	// приводится из источника этим же запросом. Отказ источника сюда не обязан
+	// становиться ошибкой страницы — показывается то, что лежит, а о причине
+	// говорит source_state.
+	outcome := h.scheduleEnsureMonths(r, *group, fromKey, toKey, coverage)
+	if outcome.fetched > 0 {
+		// Снимок устарел ровно на привезённые месяцы, и перечитывается только
+		// ради них: без этого подпись «обновлено» отстала бы от показанных пар.
+		refreshed, err := h.ScheduleSource.MonthCoverage(r.Context(), apeks.Source, group.ExternalID)
+		if err != nil {
+			requestLogger(r).Warn("расписание: покрытие после закачки не перечитано",
+				slog.String("group", group.ExternalID),
+				slog.Any("error", err))
+		} else {
+			coverage = refreshed
+		}
+	}
+
 	lessons, err := h.ScheduleSource.ListLessons(r.Context(), apeks.Source, group.ExternalID, fromKey, toKey)
 	if err != nil {
 		internalError(w, r, "failed to load schedule", err)
 		return
 	}
 
-	importedAt, err := h.ScheduleSource.LastImportAt(r.Context(), apeks.Source, group.ExternalID)
-	if err != nil {
-		requestLogger(r).Warn("расписание: время импорта не прочитано",
-			slog.String("group", group.ExternalID),
-			slog.Any("error", err))
-		importedAt = 0
+	months := scheduleImportedMonths(coverage)
+
+	updated := scheduleLastRefresh(coverage)
+	if outcome.lastFetched > updated {
+		updated = outcome.lastFetched
 	}
 
-	months, err := h.ScheduleSource.ImportedMonths(r.Context(), apeks.Source, group.ExternalID)
-	if err != nil {
-		requestLogger(r).Warn("расписание: список импортированных месяцев не прочитан",
-			slog.String("group", group.ExternalID),
-			slog.Any("error", err))
-		months = []store.MonthKey{}
+	// Что за корпус стоит в каждой строке аудитории (ADR-0045). Сбой
+	// справочника здесь не ошибка страницы: пары показаны правильно, просто без
+	// уточнения, что корпус 1 — это Главный. Но и молчать нельзя, поэтому
+	// причина уходит в лог, а не в пустоту.
+	roomBuildings := map[string]scheduleRoomBuilding{}
+	if h.Places != nil {
+		places, err := h.Places.List(r.Context(), false)
+		if err != nil {
+			requestLogger(r).Warn("расписание: справочник мест не прочитан",
+				slog.String("group", group.ExternalID), slog.Any("error", err))
+		} else {
+			roomBuildings = scheduleRoomBuildings(lessons, places)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -159,36 +200,79 @@ func (h *Handlers) ScheduleLessonsAPI(w http.ResponseWriter, r *http.Request) {
 		"group_id":        group.ExternalID,
 		"group_name":      group.Name,
 		"department":      group.Department,
+		"course":          group.Course,
 		"range":           map[string]int{"from": fromKey, "to": toKey},
-		"range_imported":  rangeImported(months, fromKey, toKey),
-		"updated_at":      importedAt,
+		"range_imported":  scheduleHasCopy(coverage, fromKey, toKey),
+		"updated_at":      updated,
 		"days":            groupLessonsByDay(lessons),
 		"imported_months": months,
-		"source_page_url": apeks.SourcePageURL,
+		"source_state":    outcome.sourceState(),
+		// Настроен ли источник. Одного source_state для строки состояния
+		// страницы не хватает: «нечего показать» бывает и когда токена нет
+		// вовсе, и когда вуз не ответил, а сказать гостю «сайт вуза молчит»,
+		// когда молчать ему нечем, — соврать.
+		"source_configured": h.Apeks != nil,
+		"source_page_url":   apeks.SourcePageURL,
+		// Строка аудитории → корпус: его номер и его имя из справочника.
+		// Отдельное поле, а не колонка в строке пары: пар за неделю больше, чем
+		// уникальных аудиторий, и одно и то же название кочевало бы по всему
+		// ответу. Пустой объект, а не null: страница читает поле до первой
+		// проверки, и `null` превратился бы в ошибку на сборке без справочника.
+		"room_buildings": roomBuildings,
 	})
 }
 
-// rangeImported — лежит ли в базе хотя бы один месяц, пересекающийся с
-// запрошенным периодом.
+// scheduleRoomBuilding — чем подписать строку аудитории.
 //
-// Полю нужен именно период, а не месяц: страница показывает неделю
-// (ADR-0040), а неделя 27 октября — 2 ноября задевает два месяца сразу.
-// «Октябрь импортирован» ещё не значит, что про эту неделю что-то известно, а
-// «ноябрь не импортирован» не значит, что она пуста — без этого поля честный
-// текст «ещё не импортировано» на границе месяца пришлось бы выбирать наугад.
+// Номер корпуса в ответе лежит не для красоты: по нему страница карты находит
+// маркер того корпуса, куда надо перелететь, и именно по нему пары собираются
+// в слои (schedule_map.go). Имя же — ровно то, что человек написал в
+// справочнике: когда его нет, подписи нет, а переход остаётся возможным.
+type scheduleRoomBuilding struct {
+	Building string `json:"building"`
+	Name     string `json:"name,omitempty"`
+}
+
+// scheduleRoomBuildings — какие аудитории этого периода называют корпус, у
+// которого есть строка в справочнике.
 //
-// День без даты (day_key 99999999) в покрытие не попадает по построению: он
-// больше любого реального конца периода, и строка «пары без точной даты» не
-// делает месяц импортированным.
-func rangeImported(months []store.MonthKey, fromKey, toKey int) bool {
-	for _, month := range months {
-		first := month.Year*10000 + month.Month*100 + 1
-		last := month.Year*10000 + month.Month*100 + daysInMonth(month.Year, time.Month(month.Month))
-		if first <= toKey && last >= fromKey {
-			return true
+// Разбор строки аудитории делает ровно тот же код, что и слой карты
+// (apeks.BuildingsFromRoom): если бы подпись в расписании считала корпус своим
+// правилом, две страницы одного и того же занятия разошлись бы на глазах, и
+// карта стала бы отвечать за одно, а расписание — за другое.
+//
+// Ключом остаётся исходная строка источника, без нормализации: страница ищет
+// по той строке, которую ей показали в поле room, и любое «улучшение» ключа на
+// одной стороне превратилось бы в молчаливую потерю подписи на другой.
+//
+// Пары с нулём или двумя корпусами остаются без подписи — ровно как на карте,
+// где они уходят в «не показано». Это не упущение: угадать корпус для «201»
+// значило бы подписать занятие там, где его могло не быть.
+func scheduleRoomBuildings(lessons []store.SourceLesson, places []store.Place) map[string]scheduleRoomBuilding {
+	directory := placesByBuilding(places)
+	names := make(map[string]scheduleRoomBuilding, 8)
+
+	for _, lesson := range lessons {
+		if _, seen := names[lesson.Room]; seen {
+			continue
+		}
+
+		buildings := apeks.BuildingsFromRoom(lesson.Room)
+		if len(buildings) != 1 {
+			continue
+		}
+
+		place := directory[buildings[0]]
+		if place == nil {
+			continue
+		}
+		names[lesson.Room] = scheduleRoomBuilding{
+			Building: buildings[0],
+			Name:     strings.TrimSpace(place.Name),
 		}
 	}
-	return false
+
+	return names
 }
 
 // groupLessonsByDay собирает плоский список пар по дням.
@@ -436,7 +520,7 @@ func (h *Handlers) ScheduleImportAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	imported := make([]store.MonthKey, 0, len(months))
+	imported := make([]store.MonthState, 0, len(months))
 
 	for _, slot := range months {
 		stored, err := h.importGroupMonth(r.Context(), *group, slot.Month, slot.Year)
@@ -462,11 +546,14 @@ func (h *Handlers) ScheduleImportAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		imported = append(imported, store.MonthKey{
-			Month:      slot.Month,
-			Year:       slot.Year,
-			Lessons:    stored,
-			ImportedAt: time.Now().Unix(),
+		at := time.Now().Unix()
+		imported = append(imported, store.MonthState{
+			Month:       slot.Month,
+			Year:        slot.Year,
+			Lessons:     stored,
+			OK:          true,
+			RefreshedAt: at,
+			AttemptedAt: at,
 		})
 
 		h.recordAudit(r, auditWrite{
@@ -542,13 +629,29 @@ type scheduleMonth struct {
 	Year  int `json:"year"`
 }
 
-// scheduleDayRange читает диапазон дней из запроса.
+// scheduleDayRange читает диапазон дней из запроса — тот же период, что
+// scheduleTimeRange, но в ключах источника (YYYYMMDD).
+func scheduleDayRange(r *http.Request) (int, int, error) {
+	start, end, err := scheduleTimeRange(r)
+	if err != nil {
+		return 0, 0, err
+	}
+	return dayKey(start), dayKey(end), nil
+}
+
+// scheduleTimeRange читает период запроса в unix-секундах [start, end]
+// включительно.
+//
+// Помощник один на оба слоя карты: парам нужны ключи дней, событиям —
+// unix-секунды (у них дата в такой форме и лежит), а человек задаёт период
+// одинаково, на каком бы слое его ни открыл. Два независимых разбора означали бы
+// два набора текстов отказа и две версии правила «что считается месяцем».
 //
 // Поддержаны два способа задать период: from/to в unix-секундах (тот же
 // контракт, что у ленты /api/schedule) и month/year (страница переключает
 // месяцы, и считать границы месяца на клиенте — ещё одно место, где бывает
 // ошибка с длиной февраля).
-func scheduleDayRange(r *http.Request) (int, int, error) {
+func scheduleTimeRange(r *http.Request) (int64, int64, error) {
 	query := r.URL.Query()
 
 	if rawMonth, rawYear := query.Get("month"), query.Get("year"); rawMonth != "" || rawYear != "" {
@@ -564,9 +667,9 @@ func scheduleDayRange(r *http.Request) (int, int, error) {
 			return 0, 0, errors.New("month and year are out of range")
 		}
 
-		first := year*10000 + month*100 + 1
-		last := year*10000 + month*100 + daysInMonth(year, time.Month(month))
-		return first, last, nil
+		first := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.Local)
+		last := time.Date(year, time.Month(month), daysInMonth(year, time.Month(month)), 23, 59, 59, 0, time.Local)
+		return first.Unix(), last.Unix(), nil
 	}
 
 	start, end := defaultWeekRange()
@@ -588,7 +691,7 @@ func scheduleDayRange(r *http.Request) (int, int, error) {
 		start, end = end, start
 	}
 
-	return dayKey(start), dayKey(end), nil
+	return start, end, nil
 }
 
 // dayKey — unix-секунда -> день источника в форме YYYYMMDD.

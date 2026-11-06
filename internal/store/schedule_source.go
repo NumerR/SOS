@@ -5,27 +5,34 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 )
 
 // Хранилище внешнего расписания (T4.1).
 //
-// Почему данные лежат в базе, а не отдаются браузеру прямым запросом в АПЭКС:
+// База — единственное, что видит страница: браузер не ходит в АПЭКС и токена
+// источника не существует ни в одном ответе. Обращение к источнику делает
+// сервер, и делает не «на каждую загрузку страницы», а по правилам покрытия
+// (см. internal/handlers/schedule_readthrough.go): привезённое сохраняется здесь
+// и переживает отказ сайта вуза.
+//
+// Почему копия обязана лежать в базе, а не собираться на лету из ответа источника:
 //
 //   - токен источника не может оказаться в браузере — это доступ к API вуза,
 //     а не к чужой учётной записи, и любой, кто откроет DevTools, получил бы
 //     его вместе со страницей;
-//   - бриф требует дедупликацию импортируемых данных, а дедуплицировать
-//     нечего, если каждая загрузка страницы — новый ответ источника;
+//   - дедупликация, которую требует бриф, возможна только относительно хранилища:
+//     у двух загрузок страницы, разнесённых на неделю, ответ источника уже
+//     разный, и сверять нечего;
 //   - источник живёт в сети вуза: без своей копии расписание платформы
-//     недоступно ровно тогда, когда недоступен сайт вуза.
+//     недоступно ровно тогда, когда недоступен сайт вуза — то есть в дни, когда
+//     его смотрят чаще всего.
 //
-// Что лежит: две таблицы — каталог групп и сами пары. Пары хранятся уже
-// разобраными (подгруппа посчитана, HTML из аудитории вырезан, номер пары
-// проставлен), потому что разбор — часть импорта: повторный разбор на каждой
-// загрузке страницы означал бы, что правила из internal/apeks живут в двух
+// Что лежит: три таблицы — каталог групп, сами пары и покрытие месяцев. Пары
+// хранятся уже разобраными (подгруппа посчитана, HTML из аудитории вырезан,
+// номер пары проставлен), потому что разбор — часть импорта: повторный разбор на
+// каждой загрузке страницы означал бы, что правила из internal/apeks живут в двух
 // местах.
 //
 // Ключ дедупликации — (source, group_ext_id, external_id), где external_id это
@@ -34,8 +41,8 @@ import (
 // полагаться на глобальную уникальность чужого id нельзя, поэтому импорт
 // устроен как замена месяца целиком, а не как «дописываем, чего нет»: строки
 // выбранного (группа, месяц, год) удаляются и ставятся заново одним
-// транзакционным шагом. Повторный импорт того же месяца не даёт ни дублей, ни
-// осиротевших пар после переноса занятия.
+// транзакционным шагом — вместе со строкой покрытия. Повторный импорт того же
+// месяца не даёт ни дублей, ни осиротевших пар после переноса занятия.
 
 // ScheduleSourceMigration — DDL таблиц внешнего расписания.
 //
@@ -85,6 +92,58 @@ CREATE TABLE IF NOT EXISTS schedule_source_lessons (
 CREATE INDEX IF NOT EXISTS idx_schedule_lessons_group_day ON schedule_source_lessons(source, group_ext_id, day_key, lesson_number);
 CREATE INDEX IF NOT EXISTS idx_schedule_lessons_batch ON schedule_source_lessons(source, group_ext_id, month, year);
 CREATE INDEX IF NOT EXISTS idx_schedule_groups_name ON schedule_source_groups(source, name);
+`
+
+// ScheduleMapIndexMigration — индекс, который нужен слою карты.
+//
+// Отдельной версией, а не строкой в DDL выше: runner сравнивает (module,
+// version) и уже применённую миграцию не повторяет, — новая строка внутри
+// 2026-10-24_schedule_source не появилась бы ни на одной живой базе.
+//
+// Причина сама: MapLessons спрашивает диапазоны дней по всем группам, а оба
+// имеющихся индекса начинаются с (source, group_ext_id) и для такого фильтра
+// не годятся — запрос читал бы таблицу целиком на каждую загрузку карты.
+const ScheduleMapIndexMigration = `
+CREATE INDEX IF NOT EXISTS idx_schedule_lessons_source_day ON schedule_source_lessons(source, day_key, lesson_number);
+`
+
+// ScheduleCoverageMigration — таблица покрытия месяцев.
+//
+// Зачем она отдельной таблицей, а не полем у пар: до неё вопрос «качали ли мы
+// этот месяц» отвечался косвенно — GROUP BY по строкам пар (ImportedMonths).
+// Ответ на него невозможен ровно в одном случае: месяц качали и пар в нём нет.
+// Каникулы, кончившийся семестр, группа без занятий в этом месяце — база выглядела
+// пустой, как группа, до которой никто не доходил, и страница отправляла админа
+// докачивать то, что уже докачано.
+//
+// Теперь факт «источник по этому месяцу спрашивали» живёт сам по себе, а строки
+// пар — сам по себе. Отсюда и колонка ok: неудачная попытка не должна
+// перевёрстываться в «месяц пуст», иначе страница соврёт про расписание, которого
+// не видела, а read-through потеряет смысл — по отметке «мы уже заходили, и ничего
+// нет» он перестал бы спрашивать источник даже тогда, когда тот ожил.
+//
+// PRIMARY KEY, а не UNIQUE: у таблицы нет второй candidate-клавиши, а чтение
+// «все месяцы одной группы» — это ровно префикс этого ключа, отдельный индекс для
+// него не нужен.
+const ScheduleCoverageMigration = `
+CREATE TABLE IF NOT EXISTS schedule_source_months (
+    source       TEXT    NOT NULL,
+    group_ext_id TEXT    NOT NULL,
+    month        INTEGER NOT NULL,
+    year         INTEGER NOT NULL,
+    lessons      INTEGER NOT NULL DEFAULT 0,
+    ok           INTEGER NOT NULL DEFAULT 1,
+    refreshed_at INTEGER NOT NULL DEFAULT 0,
+    attempted_at INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (source, group_ext_id, month, year)
+);
+
+INSERT INTO schedule_source_months
+    (source, group_ext_id, month, year, lessons, ok, refreshed_at, attempted_at)
+SELECT source, group_ext_id, month, year, COUNT(*), 1, MAX(imported_at), MAX(imported_at)
+FROM schedule_source_lessons
+GROUP BY source, group_ext_id, month, year
+ON CONFLICT (source, group_ext_id, month, year) DO NOTHING;
 `
 
 // Максимальные значения полей, приходящих из источника. Ограничение нужно не
@@ -373,15 +432,19 @@ func (s *ScheduleSourceStore) LastGroupSync(ctx context.Context, source string) 
 
 // ReplaceMonth — импорт месяца одной группы.
 //
-// Внутри одна транзакция: удаление старых строк пакета'ов и вставка новых.
-// Раздельные шаги оставили бы страницу без расписания на то время, пока
-// второй шаг не выполнен, — а при ошибке вставки так и вовсе до следующего
+// Внутри одна транзакция: удаление старых строк пакета, вставка новых и строка
+// покрытия. Раздельные шаги оставили бы страницу без расписания на то время,
+// пока второй шаг не выполнен, — а при ошибке вставки так и вовсе до следующего
 // импорта.
 //
 // Пары с одинаковым external_id внутри одного ответа считаются одной парой
 // (ON CONFLICT переписывает строку), а не двумя: источник выдаёт id
 // однозначно, и повтор — это уже аномалия формата, которую нельзя превращать в
 // дубль на странице.
+//
+// Возвращает число пар, которое реально легло в пакет, — то же самое, что
+// потом покажет покрытие. Пустой список пар — нормальный результат: месяц
+// импортирован, занятий в нём нет.
 func (s *ScheduleSourceStore) ReplaceMonth(ctx context.Context, source, groupExtID string, month, year int, lessons []SourceLesson) (int, error) {
 	if strings.TrimSpace(source) == "" || strings.TrimSpace(groupExtID) == "" {
 		return 0, errors.New("store: импорт без источника или без группы")
@@ -436,7 +499,6 @@ func (s *ScheduleSourceStore) ReplaceMonth(ctx context.Context, source, groupExt
 	defer stmt.Close()
 
 	now := time.Now().Unix()
-	stored := 0
 
 	for _, lesson := range lessons {
 		externalID := trim(lesson.ExternalID, maxScheduleNameLength)
@@ -470,14 +532,42 @@ func (s *ScheduleSourceStore) ReplaceMonth(ctx context.Context, source, groupExt
 		); err != nil {
 			return 0, fmt.Errorf("store: записать пару %s: %w", externalID, err)
 		}
-		stored++
+	}
+
+	// Покрытие пишется этим же шагом: пакет пар и отметка «месяц этого числа
+	// мы имеем» не существуют друг без друга. Раздельные транзакции дали бы
+	// окно, в котором пары уже лежат, а страница по покрытию всё ещё считает
+	// месяц неимпортированным — и наоборот, строка покрытия без пар означала бы
+	// «качали, пусто» там, где импорт не дошёл.
+	//
+	// Число пар берётся COUNT'ом из таблицы, а не из счётника вставок: повтор
+	// external_id внутри одного ответа — это одна строка после ON CONFLICT, и
+	// «9 пар» при 8 реальных было бы враньём в подписи на странице.
+	var inPacket int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM schedule_source_lessons WHERE source = ? AND group_ext_id = ? AND month = ? AND year = ?`,
+		source, groupExtID, month, year,
+	).Scan(&inPacket); err != nil {
+		return 0, fmt.Errorf("store: посчитать пары пакета %s/%02d.%d: %w", groupExtID, month, year, err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO schedule_source_months (source, group_ext_id, month, year, lessons, ok, refreshed_at, attempted_at)
+		VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+		ON CONFLICT (source, group_ext_id, month, year) DO UPDATE SET
+			lessons      = excluded.lessons,
+			ok           = 1,
+			refreshed_at = excluded.refreshed_at,
+			attempted_at = excluded.attempted_at
+	`, source, groupExtID, month, year, inPacket, now, now); err != nil {
+		return 0, fmt.Errorf("store: записать покрытие %s/%02d.%d: %w", groupExtID, month, year, err)
 	}
 
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("store: зафиксировать импорт: %w", err)
 	}
 
-	return stored, nil
+	return inPacket, nil
 }
 
 // ListLessons — пары группы в диапазоне дней [fromKey, toKey] включительно.
@@ -490,6 +580,44 @@ func (s *ScheduleSourceStore) ListLessons(ctx context.Context, source, groupExtI
 		return nil, fmt.Errorf("store: пустой диапазон дней %d..%d", fromKey, toKey)
 	}
 
+	return s.queryLessons(ctx,
+		`source = ? AND group_ext_id = ? AND day_key BETWEEN ? AND ?`,
+		source, groupExtID, fromKey, toKey,
+	)
+}
+
+// MapLessons — пары всех групп (или одной, если groupExtID пуст) в диапазоне
+// дней. Отдельный метод, а не ListLessons с пустой группой: у «группы не
+// указано» и «группы нет в каталоге» разные последствия, и молча превращать
+// одно в другое нельзя — первый же опечаточник вместо одной группы принёс бы
+// весь кампус.
+//
+// Сводка по корпусам считается в обработчике, а не в SQL: номер корпуса —
+// часть формата строки аудитории, и правило его чтения живёт в internal/apeks
+// (см. room.go). Вторая копия того правила в `substr(room, …)` разошлась бы с
+// первой молча.
+func (s *ScheduleSourceStore) MapLessons(ctx context.Context, source, groupExtID string, fromKey, toKey int) ([]SourceLesson, error) {
+	if toKey < fromKey {
+		return nil, fmt.Errorf("store: пустой диапазон дней %d..%d", fromKey, toKey)
+	}
+
+	if strings.TrimSpace(groupExtID) == "" {
+		return s.queryLessons(ctx, `source = ? AND day_key BETWEEN ? AND ?`, source, fromKey, toKey)
+	}
+
+	return s.queryLessons(ctx,
+		`source = ? AND group_ext_id = ? AND day_key BETWEEN ? AND ?`,
+		source, groupExtID, fromKey, toKey,
+	)
+}
+
+// queryLessons — один обход строк пар: список колонок и порядок разбора живут
+// здесь, фильтр выбирает вызывающий.
+//
+// Сортировка по дню, номеру пары, затем времени: карта показывает корпуса в
+// порядке обхода страницы, а popup — пары в порядке расписания, и то и другое
+// должно быть одинаковым при любом фильтре.
+func (s *ScheduleSourceStore) queryLessons(ctx context.Context, where string, args ...any) ([]SourceLesson, error) {
 	rows, err := s.db.QueryContext(
 		ctx,
 		`
@@ -497,13 +625,13 @@ func (s *ScheduleSourceStore) ListLessons(ctx context.Context, source, groupExtI
 		       lesson_number, time, start_time, end_time, group_name, subgroup,
 		       discipline, lesson_type, room, teacher, imported_at
 		FROM schedule_source_lessons
-		WHERE source = ? AND group_ext_id = ? AND day_key BETWEEN ? AND ?
+		WHERE `+where+`
 		ORDER BY day_key ASC, lesson_number ASC, time ASC, discipline ASC, room ASC
 		`,
-		source, groupExtID, fromKey, toKey,
+		args...,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("store: прочитать пары группы %s: %w", groupExtID, err)
+		return nil, fmt.Errorf("store: прочитать пары: %w", err)
 	}
 	defer rows.Close()
 
@@ -523,72 +651,90 @@ func (s *ScheduleSourceStore) ListLessons(ctx context.Context, source, groupExtI
 	return lessons, rows.Err()
 }
 
-// LastImportAt — время последней импортированной пары группы (0 — импорта не
-// было). Нужно подписью «обновлено» на странице: без него пустой список
-// неотличим от «данные старые».
-func (s *ScheduleSourceStore) LastImportAt(ctx context.Context, source, groupExtID string) (int64, error) {
-	var at sql.NullInt64
-
-	err := s.db.QueryRowContext(ctx,
-		`SELECT MAX(imported_at) FROM schedule_source_lessons WHERE source = ? AND group_ext_id = ?`,
-		source, groupExtID,
-	).Scan(&at)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return 0, fmt.Errorf("store: прочитать время импорта группы %s: %w", groupExtID, err)
-	}
-	if !at.Valid {
-		return 0, nil
-	}
-	return at.Int64, nil
+// MonthState — состояние одного месяца группы в базе.
+//
+// Одно «время импорта» прежнего прочтения заменено двумя: refreshed_at отвечает
+// на «когда легло то, что показано», attempted_at — на «когда последний раз
+// спрашивали». Разница между ними и есть отличие архива от свежего ответа, и
+// покрывать её одним полем нельзя: после неудачной проверки данные остаются
+// вчерашними, а попытка — сегодняшней.
+type MonthState struct {
+	Month       int   `json:"month"`
+	Year        int   `json:"year"`
+	Lessons     int   `json:"lessons"`
+	OK          bool  `json:"ok"`
+	RefreshedAt int64 `json:"refreshed_at"`
+	AttemptedAt int64 `json:"attempted_at"`
 }
 
-// ImportedMonths — какие месяцы уже лежат в базе для группы.
+// MonthCoverage — все известные состояния месяцев группы.
 //
-// По этому списку страница решает, показывать ли «импорта этого месяца нет»
-// вместо пустой недели: пусто в июле и «мы ещё не качали сентябрь» — разные
-// ситуации, и врать про первую из них незачем.
-func (s *ScheduleSourceStore) ImportedMonths(ctx context.Context, source, groupExtID string) ([]MonthKey, error) {
+// Возвращаются и неудачные попытки: по ним read-through решает, не ломились ли
+// в источник несколько минут назад, а страница — что пустая неделя это
+// непроверенный месяц, а не каникулы.
+//
+// Месяц без строки здесь — это «никогда не спрашивали», и отличить его от
+// «спрашивали и не вышло» можно только по наличию записи, поэтому список
+// полный, а не только успешные строки, как было до таблицы покрытия.
+func (s *ScheduleSourceStore) MonthCoverage(ctx context.Context, source, groupExtID string) ([]MonthState, error) {
 	rows, err := s.db.QueryContext(
 		ctx,
 		`
-		SELECT month, year, COUNT(*), MAX(imported_at)
-		FROM schedule_source_lessons
+		SELECT month, year, lessons, ok, refreshed_at, attempted_at
+		FROM schedule_source_months
 		WHERE source = ? AND group_ext_id = ?
-		GROUP BY month, year
 		ORDER BY year ASC, month ASC
 		`,
 		source, groupExtID,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("store: прочитать месяцы группы %s: %w", groupExtID, err)
+		return nil, fmt.Errorf("store: прочитать покрытие месяцев группы %s: %w", groupExtID, err)
 	}
 	defer rows.Close()
 
-	months := make([]MonthKey, 0, 4)
+	months := make([]MonthState, 0, 4)
 	for rows.Next() {
-		var m MonthKey
-		if err := rows.Scan(&m.Month, &m.Year, &m.Lessons, &m.ImportedAt); err != nil {
-			return nil, fmt.Errorf("store: разобрать строку месяца: %w", err)
+		var m MonthState
+		if err := rows.Scan(&m.Month, &m.Year, &m.Lessons, &m.OK, &m.RefreshedAt, &m.AttemptedAt); err != nil {
+			return nil, fmt.Errorf("store: разобрать строку покрытия: %w", err)
 		}
 		months = append(months, m)
 	}
 
-	sort.Slice(months, func(i, j int) bool {
-		if months[i].Year != months[j].Year {
-			return months[i].Year < months[j].Year
-		}
-		return months[i].Month < months[j].Month
-	})
-
 	return months, rows.Err()
 }
 
-// MonthKey — импортированный месяц группы с числом пар.
-type MonthKey struct {
-	Month      int   `json:"month"`
-	Year       int   `json:"year"`
-	Lessons    int   `json:"lessons"`
-	ImportedAt int64 `json:"imported_at"`
+// MarkMonthAttempt — отметка «месяц спрашивали, не получилось».
+//
+// Нужна с двух сторон: по attempted_at read-through понимает, что в источник
+// уже ломились несколько минут назад, и не бьёт по нему на каждой загрузке
+// страницы; а ok = 0 не даёт пустому ответу притвориться «занятий нет», когда на
+// деле ничего не удалось прочитать.
+//
+// Успешную строку метод не переписывает: если вчерашний импорт лежал и
+// сегодняшняя проверка не дошла, страница обязана показать вчерашнюю копию, а не
+// пустоту — именно этого требует «если расписание на сайте вуза перестанет
+// работать, оно должно сохраняться в собственной базе».
+func (s *ScheduleSourceStore) MarkMonthAttempt(ctx context.Context, source, groupExtID string, month, year int) error {
+	if strings.TrimSpace(source) == "" || strings.TrimSpace(groupExtID) == "" {
+		return errors.New("store: отметка попытки без источника или без группы")
+	}
+	if month < 1 || month > 12 || year < 2000 || year > 2100 {
+		return fmt.Errorf("store: отметка попытки за %02d.%d — дата вне диапазона", month, year)
+	}
+
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO schedule_source_months (source, group_ext_id, month, year, lessons, ok, refreshed_at, attempted_at)
+		VALUES (?, ?, ?, ?, 0, 0, 0, ?)
+		ON CONFLICT (source, group_ext_id, month, year) DO UPDATE SET
+			ok           = 0,
+			attempted_at = excluded.attempted_at
+	`, source, groupExtID, month, year, time.Now().Unix())
+	if err != nil {
+		return fmt.Errorf("store: отметить попытку %s/%02d.%d: %w", groupExtID, month, year, err)
+	}
+
+	return nil
 }
 
 // Stats — сколько данных источника лежит в базе. Ответ /api/schedule/source/status.
@@ -598,6 +744,8 @@ type SourceStats struct {
 	GroupsAt       int64 `json:"groups_synced_at"`
 	ImportedAt     int64 `json:"last_import_at"`
 	ImportedGroups int   `json:"groups_with_lessons"`
+	MonthsCovered  int   `json:"months_covered"`
+	MonthsFailed   int   `json:"months_failed"`
 }
 
 // Stats считает всё одним запросом на таблицу, а не по группам: панель админа
@@ -610,10 +758,13 @@ func (s *ScheduleSourceStore) Stats(ctx context.Context, source string) (*Source
 			(SELECT COUNT(*) FROM schedule_source_groups WHERE source = ?),
 			(SELECT COUNT(*) FROM schedule_source_lessons WHERE source = ?),
 			(SELECT COALESCE(MAX(updated_at), 0) FROM schedule_source_groups WHERE source = ?),
-			(SELECT COALESCE(MAX(imported_at), 0) FROM schedule_source_lessons WHERE source = ?),
-			(SELECT COUNT(DISTINCT group_ext_id) FROM schedule_source_lessons WHERE source = ?)
-	`, source, source, source, source, source).
-		Scan(&stats.Groups, &stats.Lessons, &stats.GroupsAt, &stats.ImportedAt, &stats.ImportedGroups)
+			(SELECT COALESCE(MAX(refreshed_at), 0) FROM schedule_source_months WHERE source = ? AND ok = 1),
+			(SELECT COUNT(DISTINCT group_ext_id) FROM schedule_source_months WHERE source = ? AND ok = 1),
+			(SELECT COUNT(*) FROM schedule_source_months WHERE source = ? AND ok = 1),
+			(SELECT COUNT(*) FROM schedule_source_months WHERE source = ? AND ok = 0)
+	`, source, source, source, source, source, source, source).
+		Scan(&stats.Groups, &stats.Lessons, &stats.GroupsAt, &stats.ImportedAt,
+			&stats.ImportedGroups, &stats.MonthsCovered, &stats.MonthsFailed)
 	if err != nil {
 		return nil, fmt.Errorf("store: собрать статистику источника: %w", err)
 	}

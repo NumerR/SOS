@@ -76,9 +76,14 @@ async function bootPage({ seed }) {
     if (seed) window.localStorage.setItem("sos.schedule.choice", JSON.stringify(seed));
 
     const calls = [];
+    // Строки запросов расписания: навигация по неделям обязана сверяться с тем,
+    // какой период запрошен, а не с числом запросов.
+    const periods = [];
     window.fetch = (input, init = {}) => {
         const url = String(input).startsWith("http") ? String(input) : BASE + String(input);
-        calls.push(new URL(url).pathname);
+        const parsed = new URL(url);
+        calls.push(parsed.pathname);
+        if (parsed.pathname === "/api/schedule/lessons") periods.push(parsed.search);
         return fetch(url, { method: (init.method || "GET").toUpperCase(), body: init.body });
     };
 
@@ -90,7 +95,7 @@ async function bootPage({ seed }) {
     // (приём из session-expiry.cjs): ручной диспатч запускает страницу дважды,
     // и каждый запрос источника уходит в двух экземплярах.
 
-    return { window, doc, calls };
+    return { window, doc, calls, periods };
 }
 
 async function until(page, predicate, tries = 60) {
@@ -131,14 +136,22 @@ function weekKeys(monday) {
 // localStorage: показанный период больше не запоминается. Стрелки вызываются
 // только после первого ответа расписания — до DOMContentLoaded кнопки ещё без
 // обработчиков.
+//
+// Сверяться надо с запрошенным периодом и с тем, что ответ отрисован, а не с
+// числом запросов: лист назад идёт подряд, ответы приезжают не по порядку, и
+// прогон, который ждёт лишь «появился новый запрос», ловит таблицу одной недели
+// под подписью другой.
 async function showWeek(page, date) {
-    const steps = Math.round((mondayOf(date) - mondayOf(new Date())) / (7 * 86400 * 1000));
-    const arrow = steps >= 0 ? "nextWeek" : "prevWeek";
-    for (let i = 0; i < Math.abs(steps); i++) {
-        const before = page.calls.filter((p) => p === "/api/schedule/lessons").length;
-        page.doc.getElementById(arrow).click();
-        await until(page, () => page.calls.filter((p) => p === "/api/schedule/lessons").length > before);
+    const wanted = Math.floor(mondayOf(date).getTime() / 1000);
+    const fromOf = () => Number(new URLSearchParams(page.periods[page.periods.length - 1] || "").get("from"));
+    for (let guard = 0; guard < 120; guard++) {
+        const shown = fromOf();
+        if (!Number.isFinite(shown)) { await wait(20); continue; }
+        if (shown === wanted) return until(page, () => !page.doc.querySelector("#timetable .spinner"), 150);
+        page.doc.getElementById(wanted < shown ? "prevWeek" : "nextWeek").click();
+        await until(page, () => fromOf() !== shown, 150);
     }
+    return false;
 }
 
 (async () => {
@@ -244,8 +257,17 @@ async function showWeek(page, date) {
     check("каталог заполнил подсказку выбора группы",
         page.doc.querySelectorAll("#groupOptions option").length > 0,
         String(page.doc.querySelectorAll("#groupOptions option").length));
-    check("метка «обновлено» показывает импортированную группу",
-        /Обновлено/.test(text(page.doc, "updatedNote")), text(page.doc, "updatedNote"));
+    // Подпись над таблицей обязана быть состоянием, а не датой. До ADR-0042 здесь
+    // стоял текст «Обновлено …», и он был верен ровно потому, что страница ничего
+    // сама не привозила: показанная копия всегда была чьим-то импортом. Теперь же
+    // неделя этого прогона задевает сентябрь, которого админ не качал, — и прежняя
+    // фраза соврала бы про срок копии. Проверяем, что строка названа состоянием из
+    // словаря страницы и привязана к показанной группе.
+    const note = text(page.doc, "updatedNote");
+    check("строка состояния названа состоянием копии, а не голой датой",
+        /свежее|привезено сейчас|архив · обновляем|архив|показать нечего|неполно/.test(note)
+            && note.includes("Б-ИСиТ-22"),
+        note);
     check("страница не обращается к источнику напрямую",
         page.calls.every((p) => !SOURCE_HOST.test(p)), page.calls.join(", "));
     check("панель источника спрятана от гостя",
@@ -257,6 +279,32 @@ async function showWeek(page, date) {
     await showWeek(empty, new Date(YEAR, 11, 15));
     const told = await until(empty, () => /пар нет|не импортировано/.test(text(empty.doc, "timetable")));
     check("пустая неделя различима", told, text(empty.doc, "timetable").slice(0, 120));
+
+    // ---------- 7. месяц, который страница привезла сама ----------
+    //
+    // До ADR-0042 «месяц пуст» и «месяц не качали» были одним ответом: список
+    // импортированных месяцев собирался GROUP BY по строкам пар, и месяца без пар
+    // в нём не существовало. Прогон выше смотрел декабрь — заглушка даёт пары
+    // только октябрю, — и именно этот месяц теперь проверяет новое: пустой, но
+    // заведомо спрошенный. Цикл ждёт, пока фоновая закачка страницы дойдёт:
+    // иначе проверка ловила бы состояние в полёте и краснела без причины.
+    let dec = null;
+    for (let i = 0; i < 60; i++) {
+        dec = await api(`/api/schedule/lessons?group=${GROUP}&month=12&year=${YEAR}`);
+        if (dec.status === 200 && dec.data.source_state === "fresh") break;
+        await wait(50);
+    }
+    const known = ((dec && dec.data.imported_months) || [])
+        .find((m) => m.month === 12 && m.year === YEAR);
+    check("пустой месяц отмечен в покрытии базы",
+        Boolean(known && known.ok && known.lessons === 0),
+        JSON.stringify(dec && dec.data.imported_months));
+    check("месяц без пар не выглядит неимпортированным",
+        Boolean(dec && dec.data.range_imported === true),
+        `range_imported ${dec && dec.data.range_imported}`);
+    check("повтор привезённого месяца не трогает источник",
+        Boolean(dec && dec.data.source_state === "fresh"),
+        `состояние ${dec && dec.data.source_state}`);
 
     const failed = results.filter((r) => !r.ok);
     console.log(`\n${results.length - failed.length}/${results.length} проверок пройдено`);

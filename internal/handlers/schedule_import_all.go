@@ -358,9 +358,16 @@ func (h *Handlers) runScheduleImport(job *scheduleImportJob, groups []store.Sour
 // (указатель), у массового — ListGroups (срез значений). Любая единая форма
 // заставила бы в одном из путей либо копировать структуру, либо разыменовывать
 // её на каждом шаге, а helper нужен ровно её external_id.
+//
+// Неудача помечается в покрытии здесь, а не у вызывающих: шагов импорта три
+// (одиночная кнопка, массовая задача, сквозное чтение страницы), и отметку
+// обязана писать каждая из них. Пропуск хотя бы в одном пути обернулся бы
+// бесконечным повтором к мёртвому источнику — пауза scheduleRetryDelay читается
+// именно из этой строки.
 func (h *Handlers) importGroupMonth(ctx context.Context, group store.SourceGroup, month, year int) (int, error) {
 	data, err := h.Apeks.GetMonth(ctx, group.ExternalID, month, year)
 	if err != nil {
+		h.markScheduleAttempt(ctx, group, month, year)
 		return 0, err
 	}
 
@@ -389,9 +396,33 @@ func (h *Handlers) importGroupMonth(ctx context.Context, group store.SourceGroup
 
 	stored, err := h.ScheduleSource.ReplaceMonth(ctx, apeks.Source, group.ExternalID, month, year, rows)
 	if err != nil {
+		h.markScheduleAttempt(ctx, group, month, year)
 		return 0, fmt.Errorf("%w: %w", errScheduleImportStore, err)
 	}
 	return stored, nil
+}
+
+// markScheduleAttempt — отметка «месяц этой группы мы трогали, и не вышло».
+//
+// Отвязка от контекста вызывающей (context.WithoutCancel) обязательна: у
+// сквозного чтения страница перестаёт ждать через scheduleReadBudget, а срок
+// массовой проходки истекает ровно тогда, когда источник висит, — и в обоих
+// случаях неотмеченная попытка означала бы новый удар по вузу на следующем
+// показе страницы вместо паузы.
+//
+// 5 с на запись одной строки — не щедрость, а потолок: эта отметка не должна
+// продлевать ответ страницы, который уже и так дождался отказа.
+func (h *Handlers) markScheduleAttempt(ctx context.Context, group store.SourceGroup, month, year int) {
+	markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+
+	if err := h.ScheduleSource.MarkMonthAttempt(markCtx, apeks.Source, group.ExternalID, month, year); err != nil {
+		slog.Warn("расписание: попытка импорта не отмечена в покрытии",
+			slog.String("group", group.ExternalID),
+			slog.String("month", fmt.Sprintf("%02d.%d", month, year)),
+			slog.Any("error", err),
+		)
+	}
 }
 
 // scheduleMonthSpan — подпись периода для аудита и лога: «11.2026+12.2026».

@@ -30,6 +30,7 @@ func TestOldHTMLAddressesRedirectToCleanRoutes(t *testing.T) {
 		{"/profile.html", "/profile"},
 		{"/admin.html", "/admin"},
 		{"/schedule.html", "/schedule"},
+		{"/map.html", "/map"},
 	} {
 		resp, err := client.Get(srv.URL + alias[0])
 		if err != nil {

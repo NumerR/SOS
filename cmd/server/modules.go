@@ -16,6 +16,7 @@ import (
 	"github.com/NumerR/SOS/internal/modules/audit"
 	"github.com/NumerR/SOS/internal/modules/courses"
 	"github.com/NumerR/SOS/internal/modules/events"
+	"github.com/NumerR/SOS/internal/modules/places"
 	"github.com/NumerR/SOS/internal/modules/resources"
 	"github.com/NumerR/SOS/internal/modules/schedule"
 	"github.com/NumerR/SOS/internal/platform"
@@ -33,6 +34,9 @@ func moduleList(h *handlers.Handlers) []platform.Module {
 		courses.New(h),
 		assignments.New(h),
 		resources.New(h),
+		// Места — перед событиями: правка схемы событий (place_id) ссылается на
+		// таблицу places, а миграции применяются в порядке этого списка.
+		places.New(h),
 		events.New(h),
 		schedule.New(h),
 		// Аудит — последним: его таблица ссылается на users из базовой схемы,
@@ -90,6 +94,7 @@ func newRouter(h *handlers.Handlers, db *sql.DB, modules []platform.Module) (htt
 	mux.HandleFunc("/profile", h.ProfilePage)
 	mux.HandleFunc("/admin", h.AdminPage)
 	mux.HandleFunc("/schedule", h.SchedulePage)
+	mux.HandleFunc("/map", h.MapPage)
 
 	// Старые адреса с .html уводятся на рабочий маршрут: файл web/schedule.html
 	// — шаблон страницы, а не её URL, и закладка «/schedule.html» без этих строк
@@ -103,6 +108,7 @@ func newRouter(h *handlers.Handlers, db *sql.DB, modules []platform.Module) (htt
 		{"/profile.html", "/profile"},
 		{"/admin.html", "/admin"},
 		{"/schedule.html", "/schedule"},
+		{"/map.html", "/map"},
 	} {
 		from, to := alias[0], alias[1]
 		mux.HandleFunc(from, func(w http.ResponseWriter, r *http.Request) {

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Карта кампуса · SOS</title>
+    <!-- leaflet.css — библиотека, лежит в репозитории (web/css/leaflet.css):
+         страница не должна зависеть от чужого CDN (бриф п.6). style.css идёт
+         вторым, чтобы наши правки перекрывали значения библиотеки. -->
+    <link rel="stylesheet" href="css/leaflet.css?v=20261106">
+    <link rel="stylesheet" href="css/style.css?v=20261106">
+    <script src="js/core/theme.js?v=20261106"></script>
+</head>
+<body data-layout="map" data-brand-sub="Карта · корпуса и события" data-footer-note="Places · buildings · lessons — where it happens">
+    <a class="skip-link" href="#main">К основному содержимому</a>
+    <header class="site-header"></header>
+
+    <main class="main" id="main" tabindex="-1">
+        <div class="container stack">
+            <h1 class="page-title">Карта кампуса</h1>
+            <p id="globalMessage" class="message hidden" role="status"></p>
+
+            <section class="section">
+                <div class="section-head">
+                    <h2 class="section-label"><span class="section-index">01</span> Карта</h2>
+                    <span class="section-rule"></span>
+                    <span class="section-note" id="tilesNote">подложка: загрузка…</span>
+                </div>
+
+                <div class="panel">
+                    <div class="map-controls">
+                        <div class="map-layers" role="group" aria-label="Слои карты">
+                            <label class="map-layer">
+                                <input type="checkbox" id="layerLessons" checked>
+                                <span class="map-key is-lessons" aria-hidden="true"></span>
+                                <span>Пары по корпусам</span>
+                            </label>
+                            <label class="map-layer">
+                                <input type="checkbox" id="layerEvents" checked>
+                                <span class="map-key is-events" aria-hidden="true"></span>
+                                <span>События университета</span>
+                            </label>
+                        </div>
+
+                        <div class="sched-week">
+                            <button id="mapPrevWeek" class="btn btn-icon" type="button" title="Предыдущая неделя" aria-label="Предыдущая неделя">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+                            </button>
+                            <span class="sched-week-label" id="mapWeekLabel">—</span>
+                            <button id="mapNextWeek" class="btn btn-icon" type="button" title="Следующая неделя" aria-label="Следующая неделя">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+                            </button>
+                        </div>
+
+                        <span class="spacer"></span>
+
+                        <button id="mapCurrentWeek" class="btn btn-secondary" type="button">Текущая неделя</button>
+                        <button id="mapRefresh" class="btn btn-icon" type="button" title="Обновить" aria-label="Обновить карту">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+                        </button>
+                    </div>
+
+                    <div class="map-frame">
+                        <div id="mapCanvas" class="map-canvas" role="region"
+                             aria-label="Карта кампуса: корпуса с парами и места с событиями"></div>
+                        <p id="mapNotice" class="map-notice hidden"></p>
+                    </div>
+
+                    <p id="mapStatus" class="map-status" role="status"></p>
+                </div>
+            </section>
+
+            <section class="section">
+                <div class="section-head">
+                    <h2 class="section-label"><span class="section-index">02</span> Что на карте</h2>
+                    <span class="section-rule"></span>
+                    <span class="section-note">то же содержимое списком</span>
+                </div>
+
+                <div class="panel">
+                    <h3 class="map-subtitle" id="mapLessonsTitle">Корпуса по парам</h3>
+                    <div id="mapLessonsList" class="map-list"></div>
+
+                    <h3 class="map-subtitle" id="mapEventsTitle">Места по событиям</h3>
+                    <div id="mapEventsList" class="map-list"></div>
+
+                    <p class="map-hint">
+                        Координаты мест задаёт человек с правом <code>places.manage</code>:
+                        место без координат остаётся в справочнике и в этом списке, но точкой
+                        на карте не становится.
+                    </p>
+                </div>
+            </section>
+
+            <section class="section">
+                <div class="section-head">
+                    <h2 class="section-label"><span class="section-index">03</span> Чего на карте нет</h2>
+                    <span class="section-rule"></span>
+                    <span class="section-note" id="unplacedTotal">—</span>
+                </div>
+
+                <div class="panel">
+                    <div id="mapUnplaced" class="map-unplaced"></div>
+                    <p class="map-hint">
+                        Слои отвечают на один и тот же период, поэтому пустой список здесь —
+                        это «всё в кадре», а не «карта не загрузилась».
+                    </p>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <footer class="site-footer"></footer>
+
+    <script src="js/config.js?v=20261106"></script>
+    <script src="js/core/api-client.js?v=20261106"></script>
+    <script src="js/core/format.js?v=20261106"></script>
+    <script src="js/core/layout.js?v=20261106"></script>
+    <script src="js/common.js?v=20261106"></script>
+    <script src="js/vendor/leaflet.js?v=20261106"></script>
+    <script src="js/map.js?v=20261106"></script>
+</body>
+</html>

@@ -78,6 +78,19 @@ const (
 	// будет выдано, чтобы T4.2 не реша это на месте.
 	EventSourceManage Permission = "event.source.manage"
 
+	// Справочник мест (карта).
+	//
+	// PlaceManage — право вести places: заводить место, привязывать его к
+	// корпусу, задавать координаты. Отдельно от event.create, потому что
+	// справочник обслуживает не только события: тот же корпус используется
+	// слоем пар расписания, и неверная точка портит два слоя сразу. Решение
+	// «преподаватель вправе двигать геометрию общего справочника» принимается
+	// здесь, а не по ходу дела в обработчике.
+	//
+	// Чтения это право не требует: список мест открыт всякому вошедшему,
+	// достаточно RequireAuth (см. docs/02 §3 — карта для авторизованных).
+	PlaceManage Permission = "place.manage"
+
 	// Расписание.
 	ScheduleView         Permission = "schedule.view"          // открыть ленту
 	ScheduleScopeCreated Permission = "schedule.scope.created" // видеть свои курсы
@@ -139,6 +152,10 @@ var registry = []Spec{
 	{ResourceCreate, "добавление материала", []Role{RoleTeacher, RoleAdmin}},
 	{EventCreate, "добавление события", []Role{RoleTeacher, RoleAdmin}},
 	{EventSourceManage, "управление внешним источником событий (T4.2)", []Role{RoleAdmin}},
+
+	// Справочник мест. Преподаватель здесь на том же основании, что и в
+	// event.create: он заполняет витрину, а места — часть этой витрины.
+	{PlaceManage, "ведение справочника мест для карты", []Role{RoleTeacher, RoleAdmin}},
 
 	// Расписание.
 	{ScheduleView, "просмотр ленты расписания", []Role{RoleStudent, RoleTeacher, RoleAdmin}},

@@ -98,11 +98,22 @@ type CreateResourceInput struct {
 }
 
 // Event — анонс/событие с датой (глобальный).
+//
+// PlaceID — ссылка на справочник мест; nil означает «событие ни к какому месту
+// не привязано». Указатель, а не 0: 0 — число, которое карта прочла бы как
+// «место выбрано, только странное», тогда как «не выбрано» — другое состояние и
+// называется оно по-другому (no_place).
+//
+// Category — рубрика, которую вводит человек; пустая строка значит «без
+// категории». Справочника рубрик нет намеренно: выдумывать их означало бы
+// показывать вузу список, которого он не составлял.
 type Event struct {
 	ID          int64  `json:"id"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	EventDate   int64  `json:"event_date"`
+	PlaceID     *int64 `json:"place_id"`
+	Category    string `json:"category"`
 	CreatedBy   int64  `json:"created_by"`
 	CreatedAt   int64  `json:"created_at"`
 }
@@ -112,6 +123,8 @@ type CreateEventInput struct {
 	Title       string
 	Description string
 	EventDate   int64
+	PlaceID     *int64
+	Category    string
 }
 
 // ScheduleFeedItem — элемент агрегирующей ленты.

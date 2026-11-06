@@ -17,11 +17,11 @@
 # ручного контроля портов.
 #
 # Запуск:
-#   bash tests/ui/run-live.sh                    # все девять сьютов
+#   bash tests/ui/run-live.sh                    # все десять сьютов
 #   bash tests/ui/run-live.sh admin-roles        # только названные
 #   PORT=8080 bash tests/ui/run-live.sh          # свой порт (по умолчанию свободный)
 #
-# Десятый сьют каталога (`schedule-source-python.cjs`) сюда не входит: ему нужен стек
+# Одиннадцатый сьют каталога (`schedule-source-python.cjs`) сюда не входит: ему нужен стек
 # с настроенным источником (APEKS_TOKEN + SCHEDULE_PARSER), а этот скрипт источник не
 # настраивает — запущенный здесь, он упадёт красным, ничего не проверяя. У него свой
 # харнесс: `bash tests/schedule-source-python.sh`.
@@ -147,7 +147,7 @@ SUITES=("$@")
 if [ ${#SUITES[@]} -eq 0 ]; then
   # Порядок тот же, что у `npm run test:all`: сначала офлайновые (не тратят
   # лимитер), потом живые.
-  SUITES=(accessibility header-collapse schedule-forms schedule-timetable profile-page assignments-modal admin-roles account-security session-expiry)
+  SUITES=(accessibility header-collapse schedule-forms schedule-timetable profile-page assignments-modal map-page admin-roles account-security session-expiry)
 fi
 
 TOTAL=0

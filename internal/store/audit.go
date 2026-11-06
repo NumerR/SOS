@@ -91,6 +91,16 @@ const (
 	// когда и по какой группе это делал.
 	AuditScheduleGroupsSync AuditAction = "schedule.groups_sync" // каталог групп обновлён из АПЭКС
 	AuditScheduleImport     AuditAction = "schedule.import"      // месяц расписания импортирован
+	// Справочник мест (карта). Два действия, а не одно «place.manage», потому
+	// что спрашивают из журнала разное: «кто придумал здесь корпус» и «кто
+	// сдвинул точку». Обе правки меняют то, что видно всем пользователям,
+	// поэтому след обязан остаться.
+	//
+	// Удаления места в текущем API нет, поэтому и действия для него нет:
+	// объявлять право или метку «на будущее» — способ получить строку журнала,
+	// которую никто никогда не напишет.
+	AuditPlaceCreate AuditAction = "place.create" // место заведено в справочник
+	AuditPlaceUpdate AuditAction = "place.update" // название, корпус, адрес или координаты изменены
 )
 
 // auditActions — все известные действия. Нужно фильтру чтения: опечатка в
@@ -105,6 +115,8 @@ var auditActions = []AuditAction{
 	AuditGrade,
 	AuditScheduleGroupsSync,
 	AuditScheduleImport,
+	AuditPlaceCreate,
+	AuditPlaceUpdate,
 }
 
 // ValidAuditAction — объявлено ли такое действие в системе.

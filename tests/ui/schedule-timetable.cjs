@@ -1,13 +1,19 @@
-// Приёмка T4.1: страница расписания на импортированных данных источника.
+// Приёмка T4.1: страница расписания на данных источника.
 //
 // Зачем отдельный тест: до T4.1 первый блок страницы был карточкой со ссылкой
 // на сайт вуза — встроить его нельзя (X-Frame-Options), и страница честно
 // говорила «открывайте снаружи». Теперь внутри платформы лежат разобранные
 // пары из АПЭКС-ВУЗа, и проверять надо не «ссылка есть», а поведение витрины:
 // что гость видит расписание (маршруты чтения публичные), что неделя листается,
-// что пустые состояния различимы («не импортировано» ≠ «пар нет»), что панель
-// импорта показана только админу и что запрос источника с браузера не делается
-// вообще — токена здесь нет и быть не может.
+// что пустые состояния различимы («пар нет» ≠ «не привезлось» ≠ «доступа к вузу
+// нет»), что панель импорта показана только админу и что запрос источника с
+// браузера не делается вообще — токена здесь нет и быть не может.
+//
+// После ADR-0042 к этому добавились два новых права страницы: навигация по
+// каталогу «институт → курс → группа» (ряды вкладок, как у виджета вуза) и
+// строка состояния источника под таблицей. Второе важнее первого: показывать
+// вчерашний архив надписью «обновлено сегодня» — значит врать человеку, а
+// именно это различие и несёт source_state.
 //
 // Тест полностью офлайновый: fetch подменяется роутером-заглушкой с фикстурами,
 // похожими на живой ответ /api/schedule/lessons. Сервер на :8080 не нужен.
@@ -47,14 +53,17 @@ function splitUrl(url) {
 
 // ---------- фикстуры: тот же набор полей, что отдаёт сервер ----------
 
+// Курс — строка источника («1 курс»), а не число: страница обязана подписывать
+// вкладку дословно и в том же порядке, что дал вуз.
 const GROUPS = {
     source: "apeks",
     source_name: "АПЭКС-ВУЗ",
     synced_at: 1761200000,
-    count: 2,
+    count: 3,
     groups: [
-        { external_id: "494", name: "Б-ИСиТ-22", department: "Институт информационных технологий", course: "2", updated_at: 1761200000 },
-        { external_id: "495", name: "ИСП-21", department: "Институт природных ресурсов", course: "3", updated_at: 1761200000 },
+        { external_id: "494", name: "Б-ИСиТ-22", department: "Институт информационных технологий", course: "2 курс", updated_at: 1761200000 },
+        { external_id: "495", name: "ИСП-21", department: "Институт природных ресурсов", course: "3 курс", updated_at: 1761200000 },
+        { external_id: "496", name: "Б-ИСиТ-21", department: "Институт информационных технологий", course: "1 курс", updated_at: 1761200000 },
     ],
     source_page_url: SOURCE_PAGE,
 };
@@ -87,6 +96,7 @@ function lessons(payload) {
         group_id: "494",
         group_name: "Б-ИСиТ-22",
         department: "Институт информационных технологий",
+        course: "2 курс",
         range: { from: 20261001, to: 20261031 },
         updated_at: 1761300000,
         days: [
@@ -108,7 +118,13 @@ function lessons(payload) {
         // range_imported — ответ сервера о том, лежит ли показанный период в
         // базе. По умолчанию «лежит»: пустота тогда означает «пар нет».
         range_imported: true,
-        imported_months: [{ month: 10, year: 2026, lessons: 4, imported_at: 1761300000 }],
+        // imported_months — покрытие из schedule_source_months: у месяца есть
+        // ok (довёл ли последний заход) и lessons (сколько пар легло). Список
+        // пустых месяцев страница в подсказку не берёт именно поэтому.
+        imported_months: [{ month: 10, year: 2026, lessons: 4, ok: true, refreshed_at: 1761300000, attempted_at: 1761300000 }],
+        // source_state (ADR-0042) — чем именно отвечает сервер: копия свежая.
+        source_state: "fresh",
+        source_configured: true,
         source_page_url: SOURCE_PAGE,
     }, payload || {});
 }
@@ -173,7 +189,7 @@ function defaultBody(key, role, hit) {
     if (key === "GET /api/schedule/lessons") return json(hit === 1 ? lessons() : lessons());
     if (key === "GET /api/schedule/source/status") return json(STATUS);
     if (key === "POST /api/schedule/source/groups") return json({ source: "apeks", fetched: 2, added: 2 });
-    if (key === "POST /api/schedule/source/lessons") return json({ source: "apeks", group_id: "494", group_name: "Б-ИСиТ-22", months: [{ month: 10, year: 2026, lessons: 3, imported_at: 1761300000 }], lessons: 3 });
+    if (key === "POST /api/schedule/source/lessons") return json({ source: "apeks", group_id: "494", group_name: "Б-ИСиТ-22", months: [{ month: 10, year: 2026, lessons: 3, ok: true, refreshed_at: 1761300000, attempted_at: 1761300000 }], lessons: 3 });
     // Массовая задача: по умолчанию её нет — иначе каждый boot с админом
     // запускал бы двухсекундный опрос и тянул сьют.
     if (key === "GET /api/schedule/source/import-all") return json({ source: "apeks", job: { running: false, months: [] } });
@@ -242,9 +258,13 @@ async function until(page, predicate, tries = 60) {
     // потому что тире читается как оборванная строка.
     check("пустая и «тире» подгруппа не печатаются", !/подгруппа\s*(—|-|$)/.test(text(guest.doc, "timetable")),
         text(guest.doc, "timetable").slice(0, 120));
-    check("метка «обновлено» есть", /Обновлено .*Б-ИСиТ-22/.test(text(guest.doc, "updatedNote")), text(guest.doc, "updatedNote"));
-    check("подсказка datalist заполнена каталогом", guest.doc.querySelectorAll("#groupOptions option").length === 2);
-    check("счётчик каталога по-русски", /В каталоге 2 группы/.test(text(guest.doc, "groupHelper")), text(guest.doc, "groupHelper"));
+    check("строка состояния называет группу и срок копии",
+        /Б-ИСиТ-22 · Показана свежая копия: обновлена/.test(text(guest.doc, "updatedNote")),
+        text(guest.doc, "updatedNote"));
+    check("свежие данные помечены пилюлей «свежее»",
+        get(guest.doc, "#updatedNote .sched-source-state.is-fresh") !== null, text(guest.doc, "updatedNote"));
+    check("подсказка datalist заполнена каталогом", guest.doc.querySelectorAll("#groupOptions option").length === 3);
+    check("счётчик каталога по-русски", /В каталоге 3 группы/.test(text(guest.doc, "groupHelper")), text(guest.doc, "groupHelper"));
     check("ссылка на первоисточник живёт в данных, а не в разметке", get(guest.doc, "#sourceLink").getAttribute("href") === SOURCE_PAGE);
     check("гостю показан баннер входа", !hidden(guest.doc, "guestNotice"));
     check("у гостя нет панели источника", hidden(guest.doc, "sourceManageSection")
@@ -306,7 +326,10 @@ async function until(page, predicate, tries = 60) {
     ];
     const statusFixture = lessons({
         days: statusDays,
-        imported_months: [{ month: new Date().getMonth() + 1, year: new Date().getFullYear(), lessons: 4, imported_at: 1761300000 }],
+        imported_months: [{
+            month: new Date().getMonth() + 1, year: new Date().getFullYear(),
+            lessons: 4, ok: true, refreshed_at: 1761300000, attempted_at: 1761300000,
+        }],
     });
 
     const statusPage = boot({
@@ -341,26 +364,151 @@ async function until(page, predicate, tries = 60) {
     check("у законченной пары нет таймера",
         doneBadge !== null && doneBadge.closest(".lesson-state").querySelector(".lesson-status-timer").textContent === "");
 
+    // ---------- 3b. имя корпуса рядом с аудиторией ----------
+    //
+    // Подпись приносит сервер (ADR-0045): страница не разбирает строку
+    // аудитории сама, иначе «карта показывает корпус, а расписание нет» стало
+    // бы расходжением двух копий одного правила. Проверяются здесь следствия
+    // этого поля — где подпись появляется, где сознательно молчит, и куда она
+    // ведёт. Границы недели берутся из запроса самой страницы, чтобы прогон не
+    // зависел от даты запуска.
+    const namedDays = [{
+        day_key: 20261006, date: "06.10.2026", weekday: "Вт",
+        lessons: [
+            lesson(1, "Базы данных", { room: "к. 1/710" }),
+            lesson(2, "Матанализ", { room: "к. 3/21" }),
+            lesson(3, "Физра", { room: "201" }),
+            lesson(4, "Корпус без имени", { room: "к. 8/5" }),
+            lesson(5, "Две аудитории", { room: "к. 1/710, к. 1/711" }),
+        ],
+    }];
+    const namedRooms = {
+        "к. 1/710": { building: "1", name: "Главный корпус" },
+        "к. 3/21": { building: "3", name: "Биофак" },
+        // Корпус заведён, но без имени: ссылку дать можно, подписывать словами
+        // — нет, пустое место в тексте строки читается как обрезанная фраза.
+        "к. 8/5": { building: "8" },
+        "к. 1/710, к. 1/711": { building: "1", name: "Главный корпус" },
+    };
+    const lessonCell = (page, room) => Array.from(page.doc.querySelectorAll("#timetable .lesson"))
+        .find((row) => row.textContent.includes(room));
+
+    const named = boot({
+        routes: { "GET /api/schedule/lessons": () => json(lessons({ days: namedDays, room_buildings: namedRooms })) },
+    });
+    await until(named, () => named.doc.querySelectorAll("#timetable .lesson-building").length > 0);
+    const shownPeriod = find(named.calls, "GET /api/schedule/lessons")[0];
+
+    check("имя корпуса стоит рядом с аудиторией, а не вместо неё",
+        /к\. 1\/710/.test(lessonCell(named, "к. 1/710").textContent)
+        && /Главный корпус/.test(lessonCell(named, "к. 1/710").textContent),
+        lessonCell(named, "к. 1/710").textContent.replace(/\s+/g, " "));
+    check("подписей ровно столько, сколько аудиторий с названным корпусом",
+        named.doc.querySelectorAll("#timetable .lesson-building").length === 3,
+        String(named.doc.querySelectorAll("#timetable .lesson-building").length));
+    check("аудитория, не назвавшая корпус, подписи не получила",
+        lessonCell(named, "201").querySelector(".lesson-building") === null,
+        lessonCell(named, "201").textContent.replace(/\s+/g, " "));
+    check("корпус без имени не подписан пустой строкой",
+        lessonCell(named, "к. 8/5").querySelector(".lesson-building") === null,
+        lessonCell(named, "к. 8/5").textContent.replace(/\s+/g, " "));
+    check("две аудитории одного корпуса подписаны один раз",
+        lessonCell(named, "к. 1/710, к. 1/711").querySelectorAll(".lesson-building").length === 1);
+    // Номер корпуса в подпись не попадает: человек просил название, а «Главный
+    // корпус (1)» рядом с «к. 1/710» значило бы «1» трижды в одной строке.
+    check("подпись называет корпус словом, а не номером",
+        named.doc.querySelector(".lesson-building").textContent === "Главный корпус",
+        named.doc.querySelector(".lesson-building").textContent);
+
+    const link = named.doc.querySelector("a.lesson-building");
+    check("вошедшему подпись — ссылка на карту этого корпуса", !!link
+        && /^\/map\?building=1&from=\d+&to=\d+$/.test(link.getAttribute("href")),
+        link ? link.getAttribute("href") : "ссылки нет");
+    check("ссылка ведёт на ту же неделю, что показана",
+        !!link && link.getAttribute("href").includes(`from=${shownPeriod.params.get("from")}`)
+        && link.getAttribute("href").includes(`to=${shownPeriod.params.get("to")}`),
+        `${link ? link.getAttribute("href") : "ссылки нет"} против ${shownPeriod.search}`);
+    check("ссылка называет, куда она ведёт",
+        !!link && link.getAttribute("title") === "Открыть карту и показать корпус «Главный корпус»",
+        link ? link.getAttribute("title") : "ссылки нет");
+    check("подпись стоит вплотную к своей аудитории, а не отдельной строкой",
+        !!link && link.previousElementSibling.textContent === "к. 1/710"
+        && link.parentElement === lessonCell(named, "к. 1/710").querySelector(".lesson-meta"),
+        link ? `${link.parentElement.className} · ${link.previousElementSibling.textContent}` : "ссылки нет");
+
+    // Гость видит то же имя, но без ссылки: /map требует входа, и ссылка
+    // привела бы его к форме входа вместо карты — обещание, которое страница
+    // не может выполнить.
+    const namedGuest = boot({
+        role: "guest",
+        seed: { group: "494", name: "Б-ИСиТ-22" },
+        routes: { "GET /api/schedule/lessons": () => json(lessons({ days: namedDays, room_buildings: namedRooms })) },
+    });
+    await until(namedGuest, () => namedGuest.doc.querySelectorAll("#timetable .lesson-building").length > 0);
+    check("гость видит имя корпуса", /Главный корпус/.test(text(namedGuest.doc, "timetable")));
+    check("но не ссылку на страницу, куда его нет",
+        namedGuest.doc.querySelectorAll("a.lesson-building").length === 0,
+        String(namedGuest.doc.querySelectorAll("a.lesson-building").length));
+
+    // Имя корпуса — строка человека из справочника мест, и она не имеет права
+    // стать разметкой: тот же хранящийся XSS, что чинился в T0.1.
+    const injected = boot({
+        routes: {
+            "GET /api/schedule/lessons": () => json(lessons({
+                days: [{ day_key: 20261006, date: "06.10.2026", weekday: "Вт",
+                    lessons: [lesson(1, "Базы данных", { room: "к. 1/710" })] }],
+                room_buildings: { "к. 1/710": { building: "1", name: "<img src=x onerror=alert(1)>" } },
+            })),
+        },
+    });
+    await until(injected, () => injected.doc.querySelectorAll("#timetable .lesson-building").length > 0);
+    check("разметка в имени корпуса осталась текстом",
+        injected.doc.querySelectorAll("#timetable img").length === 0
+        && /onerror/.test(injected.doc.querySelector(".lesson-building").textContent),
+        injected.doc.querySelector(".lesson-building").innerHTML);
+    check("и не попала в адрес ссылки",
+        /^\/map\?building=1&from=\d+&to=\d+$/.test(injected.doc.querySelector("a.lesson-building").getAttribute("href")),
+        injected.doc.querySelector("a.lesson-building").getAttribute("href"));
+
+    // Поля нет вовсе — сборка без справочника мест (сервер отвечает пустым
+    // объектом). Расписание от этого не имеет права изменяться.
+    const noNames = boot();
+    await until(noNames, () => noNames.doc.querySelectorAll("#timetable .lesson").length > 0);
+    check("без подписей расписание рисуется как раньше",
+        noNames.doc.querySelectorAll("#timetable .lesson-building").length === 0
+        && noNames.doc.querySelectorAll("#timetable .lesson").length === 4,
+        `${noNames.doc.querySelectorAll("#timetable .lesson-building").length} подписей, `
+        + `${noNames.doc.querySelectorAll("#timetable .lesson").length} пар`);
+
     // ---------- 4. пустые состояния ----------
     //
-    // «Не импортировано» и «импортировано, но пар нет» различает сервер
-    // (range_imported): неделя задевает два месяца, и по списку месяцев на
-    // странице вывод был бы неверен в обе стороны.
+    // «Пар нет» и «не привезлось» различает сервер (range_imported): неделя
+    // задевает два месяца, и по списку месяцев на странице вывод был бы неверен
+    // в обе стороны. Третье состояние — «доступа к вузу на сервере нет» —
+    // появилось после ADR-0042: это единственный случай, где человеку без
+    // панели правда нечем помочь, и именно поэтому он отделён от «вуз молчит».
     const notImported = boot({
         role: "guest",
         seed: { group: "494", name: "Б-ИСиТ-22" },
         routes: { "GET /api/schedule/lessons": () => json(lessons({
             days: [], updated_at: 0, range_imported: false, imported_months: [],
+            source_state: "unavailable",
         })) },
     });
-    await until(notImported, () => /не импортировано/i.test(text(notImported.doc, "timetable")));
-    check("неделя без импорта названа неимпортированной", /ещё не импортировано/i.test(text(notImported.doc, "timetable")),
+    await until(notImported, () => /не привезлось/i.test(text(notImported.doc, "timetable")));
+    check("неделя без копии названа непривезённой", /Расписание на эту неделю не привезлось/.test(text(notImported.doc, "timetable")),
         text(notImported.doc, "timetable"));
-    check("гостю назван тот, кто делает импорт", /администратор платформы/.test(text(notImported.doc, "timetable")),
+    check("гость сам может обновить неделю", /Попробуйте обновить/.test(text(notImported.doc, "timetable")),
+        text(notImported.doc, "timetable"));
+    // Прежняя фраза «это делает администратор платформы» после ADR-0042 врёт:
+    // недостающий месяц приводит сам запрос гостя.
+    check("гостю не обещан администратор", !/администратор платформы/.test(text(notImported.doc, "timetable")),
         text(notImported.doc, "timetable"));
     check("в пустой неделе нет карточек дней", notImported.doc.querySelectorAll("#timetable .sched-day").length === 0);
-    check("неимпортированная неделя не подписывается датой импорта", !/Обновлено/.test(text(notImported.doc, "updatedNote")),
-        text(notImported.doc, "updatedNote"));
+    check("пустая неделя помечена пилюлей «показать нечего»",
+        get(notImported.doc, "#updatedNote .sched-source-state.is-none") !== null, text(notImported.doc, "updatedNote"));
+    check("при отказе источника никто не называет дату копии",
+        !/Копия от|Обновлено/.test(text(notImported.doc, "updatedNote")), text(notImported.doc, "updatedNote"));
 
     const importedEmpty = boot({
         role: "admin",
@@ -373,6 +521,20 @@ async function until(page, predicate, tries = 60) {
     check("подсказка называет месяцы, уже лежащие в базе",
         /в базе уже октябрь 2026/.test(text(importedEmpty.doc, "timetable")), text(importedEmpty.doc, "timetable"));
 
+    // Месяц с нулём занятий — покрытие есть, расписания нет. «В базе уже
+    // октябрь» про него было бы правдой про покрытие и ложью про пары.
+    const onlyEmptyMonths = boot({
+        role: "guest",
+        seed: { group: "494", name: "Б-ИСиТ-22" },
+        routes: { "GET /api/schedule/lessons": () => json(lessons({
+            days: [],
+            imported_months: [{ month: 10, year: 2026, lessons: 0, ok: true, refreshed_at: 1761300000, attempted_at: 1761300000 }],
+        })) },
+    });
+    await until(onlyEmptyMonths, () => /пар нет/.test(text(onlyEmptyMonths.doc, "timetable")));
+    check("пустой месяц в подсказку не попадает", !/в базе уже/.test(text(onlyEmptyMonths.doc, "timetable")),
+        text(onlyEmptyMonths.doc, "timetable"));
+
     // Та же пустая неделя, но у администратора: подсказка обязана указать на
     // его собственную панель, а не советовать «попросите администратора».
     const adminNotImported = boot({
@@ -380,11 +542,28 @@ async function until(page, predicate, tries = 60) {
         seed: { group: "494", name: "Б-ИСиТ-22" },
         routes: { "GET /api/schedule/lessons": () => json(lessons({
             days: [], updated_at: 0, range_imported: false, imported_months: [],
+            source_state: "unavailable",
         })) },
     });
     await until(adminNotImported, () => /Источник расписания/.test(text(adminNotImported.doc, "timetable")));
     check("админу подсказана его панель, а не «попросите администратора»",
-        /Импортируйте её кнопками панели/.test(text(adminNotImported.doc, "timetable")), text(adminNotImported.doc, "timetable"));
+        /панель «Источник расписания»/.test(text(adminNotImported.doc, "timetable")), text(adminNotImported.doc, "timetable"));
+
+    // Пустота по причине «доступа нет на сервере» — единственная, где фраза про
+    // администратора остаётся правдой.
+    const noAccess = boot({
+        role: "guest",
+        seed: { group: "494", name: "Б-ИСиТ-22" },
+        routes: { "GET /api/schedule/lessons": () => json(lessons({
+            days: [], updated_at: 0, range_imported: false, imported_months: [],
+            source_state: "unavailable", source_configured: false,
+        })) },
+    });
+    await until(noAccess, () => /не попадало в базу/.test(text(noAccess.doc, "timetable")));
+    check("пустота без доступа к вузу названа настройкой сервера",
+        /Доступ к сайту вуза настраивает администратор/.test(text(noAccess.doc, "timetable")), text(noAccess.doc, "timetable"));
+    check("источник без токена не называет вуз молчаливым", !/не ответил/.test(text(noAccess.doc, "timetable")),
+        text(noAccess.doc, "timetable"));
 
     const emptyCatalog = boot({ role: "guest", routes: { "GET /api/schedule/groups": json({ groups: [], count: 0, synced_at: 0 }) } });
     await until(emptyCatalog, () => /Каталог групп пуст/.test(text(emptyCatalog.doc, "groupHelper")));
@@ -393,6 +572,279 @@ async function until(page, predicate, tries = 60) {
         emptyCatalog.calls.map((c) => c.key).join(", "));
     check("пустой каталог показывает выбор группы, а не спиннер", /Выберите группу/.test(text(emptyCatalog.doc, "timetable")));
 
+    // ---------- 4b. строка состояния источника ----------
+    //
+    // Read-through умеет показывать архив вместо свежих данных, и подпись под
+    // таблицей — единственное место, где об этом можно узнать. Поэтому здесь
+    // держится соответствие между source_state, цветом пилюли и словом в
+    // тексте: «обновлено 3 ноября в 14:20» над вчерашней копией при недоступном
+    // вузе было бы главным враньём страницы.
+    const stateCases = [
+        { state: "fresh", pill: "свежее", cls: "is-fresh", note: /Показана свежая копия: обновлена/ },
+        { state: "refreshed", pill: "привезено сейчас", cls: "is-fresh", note: /привезли с сайта вуза, пока вы ждали/ },
+        { state: "cached", pill: "архив · обновляем", cls: "is-archive", note: /обновляется в фоне\. Копия от/ },
+        { state: "stale", pill: "архив", cls: "is-archive", note: /Сайт вуза не ответил — показан архив\. Копия от/ },
+    ];
+    for (const testCase of stateCases) {
+        const page = boot({
+            role: "guest",
+            seed: { group: "494", name: "Б-ИСиТ-22" },
+            routes: { "GET /api/schedule/lessons": () => json(lessons({ source_state: testCase.state })) },
+        });
+        await until(page, () => text(page.doc, "updatedNote").includes(testCase.pill));
+        const pill = get(page.doc, "#updatedNote .sched-source-state");
+        check(`состояние ${testCase.state}: пилюля «${testCase.pill}»`,
+            pill !== null && pill.classList.contains(testCase.cls), text(page.doc, "updatedNote"));
+        check(`состояние ${testCase.state}: текст объясняет, что показано`,
+            testCase.note.test(text(page.doc, "updatedNote")), text(page.doc, "updatedNote"));
+    }
+
+    // «Показать нечего» при уже нарисованных парах — это неполная неделя, и
+    // серверное слово здесь не подходит: часть недели на экране всё-таки есть.
+    const partialWeek = boot({
+        role: "guest",
+        seed: { group: "494", name: "Б-ИСиТ-22" },
+        routes: { "GET /api/schedule/lessons": () => json(lessons({ source_state: "unavailable" })) },
+    });
+    await until(partialWeek, () => /неполно/.test(text(partialWeek.doc, "updatedNote")));
+    check("неполная неделя помечена «неполно», а не «показать нечего»",
+        get(partialWeek.doc, "#updatedNote .sched-source-state.is-archive") !== null
+        && !/показать нечего/.test(text(partialWeek.doc, "updatedNote")), text(partialWeek.doc, "updatedNote"));
+    check("при неполной неделе показанное не исчезло",
+        partialWeek.doc.querySelectorAll("#timetable .sched-day").length === 2,
+        String(partialWeek.doc.querySelectorAll("#timetable .sched-day").length));
+    check("неполная неделя называет пропущенную часть",
+        /показаны не все занятия/.test(text(partialWeek.doc, "updatedNote")), text(partialWeek.doc, "updatedNote"));
+
+    // ---------- 4c. вкладки каталога: институт → курс → группа ----------
+    //
+    // Требование владельца: расписание вуза устроено вкладками по институтам и
+    // курсам. Проверяем три вещи: что ряды строятся из каталога, что выбранная
+    // вкладка подсвечена и подписана для скринридера, и что выбор группы
+    // вкладкой — это тот же запрос, что выбор из поля ввода.
+    const tabs = boot({ role: "guest", seed: { group: "494", name: "Б-ИСиТ-22" } });
+    await until(tabs, () => get(tabs.doc, "#instituteChips .sched-chip") !== null);
+
+    check("ряды вкладок показаны", get(tabs.doc, "#groupNav") !== null
+        && !get(tabs.doc, "#groupNav").hasAttribute("hidden"));
+    const instituteChips = [...tabs.doc.querySelectorAll("#instituteChips .sched-chip")];
+    check("институтов ровно столько, сколько в каталоге", instituteChips.length === 2,
+        instituteChips.map((n) => n.dataset.key).join(" | "));
+    const selectedInstitute = instituteChips.filter((n) => n.getAttribute("aria-pressed") === "true");
+    check("подсвечен институт показанной группы",
+        selectedInstitute.length === 1 && /информационных/.test(selectedInstitute[0].textContent),
+        text(tabs.doc, "instituteChips"));
+    check("вкладка института несёт счёт групп", /2/.test(selectedInstitute[0].textContent),
+        selectedInstitute[0] ? selectedInstitute[0].textContent : "");
+
+    const courseChips = [...tabs.doc.querySelectorAll("#courseChips .sched-chip")];
+    check("курсы этого института отсортированы по номеру",
+        courseChips.map((n) => n.dataset.key).join(",") === "1 курс,2 курс",
+        courseChips.map((n) => n.dataset.key).join(","));
+    check("подпись курса дословная, как её дал вуз",
+        courseChips.every((n) => /курс/.test(n.textContent)), text(tabs.doc, "courseChips"));
+    check("выбран курс тот, у которого показанная группа",
+        [...tabs.doc.querySelectorAll("#courseChips .sched-chip")]
+            .filter((n) => n.getAttribute("aria-pressed") === "true").map((n) => n.dataset.key).join() === "2 курс",
+        text(tabs.doc, "courseChips"));
+    check("ряд групп ограничен выбранным курсом",
+        [...tabs.doc.querySelectorAll("#navGroupChips .sched-chip")].map((n) => n.textContent).join() === "Б-ИСиТ-22",
+        text(tabs.doc, "navGroupChips"));
+
+    const requestsBefore = find(tabs.calls, "GET /api/schedule/lessons").length;
+    courseChips[0].click();
+    await until(tabs, () => get(tabs.doc, "#navGroupChips .sched-chip") !== null
+        && tabs.doc.querySelectorAll("#navGroupChips .sched-chip").length === 1);
+    check("переход по вкладке курса ничего не запрашивает",
+        find(tabs.calls, "GET /api/schedule/lessons").length === requestsBefore,
+        String(find(tabs.calls, "GET /api/schedule/lessons").length));
+    check("ряд групп перестроился под курс",
+        tabs.doc.querySelector("#navGroupChips .sched-chip").textContent === "Б-ИСиТ-21",
+        text(tabs.doc, "navGroupChips"));
+
+    const groupChip = tabs.doc.querySelector("#navGroupChips .sched-chip");
+    groupChip.focus();
+    groupChip.click();
+    await until(tabs, () => find(tabs.calls, "GET /api/schedule/lessons").some((c) => c.params.get("group") === "496"));
+    // Ждём не запроса, а его обработки: подсветка вкладки двигается уже по
+    // ответу, и без этого проверка читала бы DOM раньше страницы.
+    await until(tabs, () => groupChip.classList.contains("is-selected"));
+    const viaTab = find(tabs.calls, "GET /api/schedule/lessons").pop();
+    check("вкладка группы отправляет её id", viaTab.params.get("group") === "496", viaTab.search);
+    check("поле ввода после вкладки показывает человеческое имя",
+        tabs.doc.getElementById("groupInput").value === "Б-ИСиТ-21", tabs.doc.getElementById("groupInput").value);
+    check("выбранная вкладка группы помечена и не выброшена перерисовкой",
+        groupChip.isConnected === true && groupChip.getAttribute("aria-current") === "true"
+        && groupChip.classList.contains("is-selected"), groupChip.className);
+    check("фокус остался на нажатой вкладке", tabs.doc.activeElement === groupChip,
+        tabs.doc.activeElement ? tabs.doc.activeElement.className : "фокуса нет");
+
+    // Свой ввод человека ряды обязаны догонять: иначе «выбранный институт»
+    // расходится с показанной неделей.
+    tabs.doc.getElementById("groupInput").value = "ИСП-21";
+    tabs.doc.getElementById("groupInput").dispatchEvent(new tabs.window.Event("change", { bubbles: true }));
+    await until(tabs, () => find(tabs.calls, "GET /api/schedule/lessons").some((c) => c.params.get("group") === "495"));
+    await until(tabs, () => [...tabs.doc.querySelectorAll("#instituteChips .sched-chip")]
+        .some((n) => n.getAttribute("aria-pressed") === "true" && /природных/.test(n.textContent)));
+    check("смена группы вводом передвигает ряд институтов",
+        [...tabs.doc.querySelectorAll("#instituteChips .sched-chip")]
+            .some((n) => n.getAttribute("aria-pressed") === "true" && /природных/.test(n.dataset.key)),
+        [...tabs.doc.querySelectorAll("#instituteChips .sched-chip")]
+            .map((n) => `${n.dataset.key}=${n.getAttribute("aria-pressed")}`).join(" | "));
+
+    // Каталог без институтов — не три пустые строки над таблицей, а ничего.
+    const noDepartments = boot({
+        role: "guest",
+        routes: { "GET /api/schedule/groups": json({ groups: [{ external_id: "494", name: "Б-ИСиТ-22" }], count: 1, synced_at: 0 }) },
+    });
+    await until(noDepartments, () => /Б-ИСиТ-22/.test(text(noDepartments.doc, "groupOptions"))
+        || find(noDepartments.calls, "GET /api/schedule/lessons").length > 0);
+    check("каталог без институтов ряды вкладок не рисует",
+        get(noDepartments.doc, "#groupNav").hasAttribute("hidden"), text(noDepartments.doc, "groupNav"));
+
+
+    // ---------- 4d. двойники одного имени ----------
+    //
+    // Каталог источника носит один и тот же код группы в строках двух курсов:
+    // у «Б-ПРЛ-21» есть id 36 (3 курс) и id 737 (2 курс), и живой АПЭКС по
+    // одному из них отдаёт пустой месяц, а по другому — настоящую таблицу.
+    // Проверяем оба права, которые владелец выбрал для этого случая: поле
+    // различает варианты подписью, а показ называет, чей id на экране. Молча
+    // брать первую строку каталога нельзя — половина каталога при этом
+    // показывает пустоту там, где у вуза расписание есть.
+    const TWIN = "Б-ПРЛ-21";
+    const TWIN_GROUPS = {
+        source: "apeks",
+        source_name: "АПЭКС-ВУЗ",
+        synced_at: 1761200000,
+        count: 3,
+        groups: [
+            { external_id: "36", name: TWIN, department: "Институт природных ресурсов", course: "3 курс", updated_at: 1761200000 },
+            { external_id: "737", name: TWIN, department: "Институт природных ресурсов", course: "2 курс", updated_at: 1761200000 },
+            { external_id: "494", name: "Б-ИСиТ-22", department: "Институт информационных технологий", course: "2 курс", updated_at: 1761200000 },
+        ],
+        source_page_url: SOURCE_PAGE,
+    };
+    const twinEmpty = (id) => lessons({ group_id: id, group_name: TWIN, days: [] });
+    const twinFull = lessons({
+        group_id: "737",
+        group_name: TWIN,
+        days: [{
+            day_key: 20261006, date: "06.10.2026", weekday: "Вт",
+            lessons: [lesson(1, "Пара живого двойника", { group_ext_id: "737", group_name: TWIN })],
+        }],
+    });
+    const twinRoutes = (answer) => ({
+        "GET /api/schedule/groups": json(TWIN_GROUPS),
+        "GET /api/schedule/lessons": ({ record }) => json(answer(record.params.get("group"))),
+    });
+    // Из этого каталога спрашивается только пара двойников: любой другой id
+    // отвечает обычная непустая фикстура, чтобы на него не приходилось смотреть.
+    const twinAnswer = (id) => (id === "737" ? twinFull : id === "36" ? twinEmpty("36") : lessons());
+    const twinCalls = (page, from = 0) => find(page.calls, "GET /api/schedule/lessons")
+        .slice(from).map((c) => c.params.get("group")).join(",");
+
+    const twin = boot({ role: "guest", seed: { name: TWIN }, routes: twinRoutes(twinAnswer) });
+    await until(twin, () => /Пара живого двойника/.test(text(twin.doc, "timetable")));
+
+    const captions = [...twin.doc.querySelectorAll("#groupOptions option")].map((o) => o.value);
+    check("подсказки поля различают двойников институтом и курсом",
+        captions.includes(`${TWIN} — Институт природных ресурсов, 2 курс`)
+        && captions.includes(`${TWIN} — Институт природных ресурсов, 3 курс`), captions.join(" | "));
+    check("имя без двойника подсказка не уточняет", captions.includes("Б-ИСиТ-22"), captions.join(" | "));
+
+    check("выбранное голое имя опрашивает соседа по пустому варианту",
+        twinCalls(twin) === "36,737", twinCalls(twin));
+    check("показана таблица того id, у которого данные есть",
+        /Пара живого двойника/.test(text(twin.doc, "timetable")), text(twin.doc, "timetable").slice(0, 90));
+    check("строка состояния называет показанный id и тот, что пуст",
+        /Показан вариант id 737 — у id 36 источник за этот период пуст/.test(text(twin.doc, "updatedNote")),
+        text(twin.doc, "updatedNote"));
+    check("показ подписан вариантом с экрана, а не первым из каталога",
+        text(twin.doc, "updatedNote").includes(`${TWIN} — Институт природных ресурсов, 2 курс`),
+        text(twin.doc, "updatedNote"));
+
+    const both = boot({ role: "guest", seed: { name: TWIN }, routes: twinRoutes((id) => twinEmpty(id)) });
+    await until(both, () => /Ни у одного из/.test(text(both.doc, "updatedNote")));
+    check("оба пустых варианта названы обоими, а не выдан один за другой",
+        /Ни у одного из 2 опрошенных вариантов/.test(text(both.doc, "updatedNote"))
+        && text(both.doc, "updatedNote").includes("(id 36, 737)"), text(both.doc, "updatedNote"));
+
+    // Пустота без отметки о прочитанном периоде (range_imported: false) — это
+    // «мы не спрашивали», а не «вуз молчал». Тот же разбор, что у пустоты
+    // таблицы, обязан быть и в строке про соседей: на сборке без токена хода к
+    // вузу нет вовсе, и свалить пустоту на источник значило бы соврать.
+    const notAsked = (id) => lessons({ group_id: id, group_name: TWIN, days: [], range_imported: false });
+    const blankSlate = boot({ role: "guest", seed: { name: TWIN }, routes: twinRoutes(notAsked) });
+    await until(blankSlate, () => /Ни у одного из/.test(text(blankSlate.doc, "updatedNote")));
+    check("неопрошенный период назван пустотой базы, а не молчанием источника",
+        /в базе за этот период ничего нет/.test(text(blankSlate.doc, "updatedNote"))
+        && !/источник за этот период/.test(text(blankSlate.doc, "updatedNote")),
+        text(blankSlate.doc, "updatedNote"));
+
+    // И при удачном переключении на живого соседа первому id сказано ровно то,
+    // что о нём известно: сосед дал таблицу, а у первого период не качали.
+    const mixedTwin = (id) => (id === "737" ? twinFull
+        : lessons({ group_id: id, group_name: TWIN, days: [], range_imported: false }));
+    const blankFirst = boot({ role: "guest", seed: { name: TWIN }, routes: twinRoutes(mixedTwin) });
+    await until(blankFirst, () => /Пара живого двойника/.test(text(blankFirst.doc, "timetable")));
+    check("живому соседу назван id, а неопрошенному первому — пустота базы",
+        /Показан вариант id 737 — у id 36 в базе за этот период ничего нет/.test(text(blankFirst.doc, "updatedNote")),
+        text(blankFirst.doc, "updatedNote"));
+
+    // Выбор подписи из подсказки — это ровно один id: сосед не опрашивается,
+    // даже когда выбранный вариант пустой. Иначе человек, который знает свой
+    // курс, получил бы чужую таблицу вместо честного «пар нет».
+    const chosenVariant = boot({ role: "guest", seed: { name: "Б-ИСиТ-22" }, routes: twinRoutes(twinAnswer) });
+    await until(chosenVariant, () => find(chosenVariant.calls, "GET /api/schedule/lessons").length >= 1);
+    const ask = (value) => {
+        chosenVariant.doc.getElementById("groupInput").value = value;
+        chosenVariant.doc.getElementById("groupInput")
+            .dispatchEvent(new chosenVariant.window.Event("change", { bubbles: true }));
+    };
+    let marker = find(chosenVariant.calls, "GET /api/schedule/lessons").length;
+    ask(`${TWIN} — Институт природных ресурсов, 2 курс`);
+    await until(chosenVariant, () => twinCalls(chosenVariant, marker) !== "");
+    await wait(60);
+    check("выбранный вариант запрошен своим id", twinCalls(chosenVariant, marker) === "737",
+        twinCalls(chosenVariant, marker));
+    check("у варианта с данными соседа не спрашивают",
+        !/Показан вариант/.test(text(chosenVariant.doc, "updatedNote")), text(chosenVariant.doc, "updatedNote"));
+
+    marker = find(chosenVariant.calls, "GET /api/schedule/lessons").length;
+    ask(`${TWIN} — Институт природных ресурсов, 3 курс`);
+    await until(chosenVariant, () => twinCalls(chosenVariant, marker) !== "");
+    await wait(60);
+    check("пустой вариант — один запрос, без опроса соседа", twinCalls(chosenVariant, marker) === "36",
+        twinCalls(chosenVariant, marker));
+    check("пустому варианту сказано «пар нет», а не чужая таблица",
+        !/Пара живого двойника/.test(text(chosenVariant.doc, "timetable"))
+        && !/Показан вариант/.test(text(chosenVariant.doc, "updatedNote")), text(chosenVariant.doc, "updatedNote"));
+
+    // Вкладка группы обязан вести ровно тот id, который под ней лежит: у двух
+    // вариантов одного имени ряды разные (разные курсы), и голое имя в поле
+    // выбрало бы первую строку каталога, а не нажатую вкладку.
+    const twinTab = boot({ role: "guest", seed: { group: "737", name: TWIN }, routes: twinRoutes(twinAnswer) });
+    await until(twinTab, () => twinTab.doc.querySelectorAll("#courseChips .sched-chip").length >= 2);
+    check("вкладка выбранного двойника подсвечена своим id",
+        [...twinTab.doc.querySelectorAll("#navGroupChips .sched-chip")]
+            .some((n) => n.dataset.key === "737" && n.getAttribute("aria-current") === "true"),
+        text(twinTab.doc, "navGroupChips"));
+    const course3 = [...twinTab.doc.querySelectorAll("#courseChips .sched-chip")].find((n) => n.dataset.key === "3 курс");
+    course3.click();
+    await until(twinTab, () => twinTab.doc.querySelector("#navGroupChips .sched-chip") !== null);
+    marker = find(twinTab.calls, "GET /api/schedule/lessons").length;
+    twinTab.doc.querySelector("#navGroupChips .sched-chip").click();
+    await until(twinTab, () => twinCalls(twinTab, marker) !== "");
+    await wait(60);
+    check("вкладка группы-двойника ведёт ровно свой id", twinCalls(twinTab, marker) === "36",
+        twinCalls(twinTab, marker));
+    check("поле ввода после вкладки показывает подпись варианта",
+        twinTab.doc.getElementById("groupInput").value === `${TWIN} — Институт природных ресурсов, 3 курс`,
+        twinTab.doc.getElementById("groupInput").value);
+
+
+    //
     // ---------- 5. навигация по неделям ----------
     //
     // Границы периода считает страница, и проверять их надо без привязки к дате
@@ -438,6 +890,56 @@ async function until(page, predicate, tries = 60) {
     check("«Текущая неделя» возвращает к сегодняшней", backToNow.from === first.from, JSON.stringify(backToNow));
     check("подпись вернулась к исходной", text(nav.doc, "weekLabel") === labelStart, text(nav.doc, "weekLabel"));
 
+    // ---------- 5b. опоздавший ответ не перерисовывает показанную неделю ----------
+    //
+    // Неделя листается кликами, а ответы приходят не в порядке запросов: если
+    // дорисовывать любой пришедший, подпись остаётся на одной неделе, а таблица
+    // под ней рисуется по другой — человек видит чужое расписание под своей
+    // подписью. Здесь опоздавший ответ той недели, которую уже сменили, обязан
+    // не оставить на странице ни одной своей пары.
+    let homeFrom = null;
+    const fresh = lessons({
+        days: [{ day_key: 20261006, date: "06.10.2026", weekday: "Вт", lessons: [lesson(1, "Свежая неделя")] }],
+    });
+    const late = lessons({
+        days: [{ day_key: 20261013, date: "13.10.2026", weekday: "Вт",
+            lessons: [lesson(1, "Опоздавшая неделя", { day_key: 20261013, date: "13.10.2026" })] }],
+    });
+    const raced = boot({
+        role: "guest",
+        seed: { group: "494", name: "Б-ИСиТ-22" },
+        routes: {
+            "GET /api/schedule/lessons": ({ record }) => {
+                // Первая загрузка задаёт «домашнюю» неделю: ответы на неё
+                // мгновенные, любая другая неделя приходит с задержкой — так
+                // опоздавший ответ гарантированно прилетает после свежего.
+                const from = Number(record.params.get("from"));
+                if (homeFrom === null) homeFrom = from;
+                if (from === homeFrom) return json(fresh);
+                return new Promise((resolve) => setTimeout(() => resolve(json(late)), 250));
+            },
+        },
+    });
+    await until(raced, () => /Свежая неделя/.test(text(raced.doc, "timetable")));
+    const homeLabel = text(raced.doc, "weekLabel");
+
+    raced.doc.getElementById("nextWeek").click();
+    await until(raced, () => find(raced.calls, "GET /api/schedule/lessons").length === 2);
+    raced.doc.getElementById("prevWeek").click();
+    await until(raced, () => /Свежая неделя/.test(text(raced.doc, "timetable")));
+    check("возврат к своей неделе нарисован до опоздавшего ответа",
+        text(raced.doc, "weekLabel") === homeLabel && /Свежая неделя/.test(text(raced.doc, "timetable")),
+        text(raced.doc, "weekLabel"));
+
+    // 400 мс больше задержки: к этому моменту ответ чужой недели точно получен.
+    // Инвариант один и тот же с обеих сторон таблицы: и подпись, и пары обязаны
+    // остаться своей недели.
+    await wait(400);
+    check("опоздавший ответ чужой недели отброшен",
+        !/Опоздавшая неделя/.test(text(raced.doc, "timetable")) && /Свежая неделя/.test(text(raced.doc, "timetable"))
+        && text(raced.doc, "weekLabel") === homeLabel,
+        `${text(raced.doc, "weekLabel")} | ${text(raced.doc, "timetable").slice(0, 100)}`);
+
     // смена группы: имя из каталога превращается в id (однозначный), а живой
     // ввод вне каталога уходит как есть — сервер умеет искать и по имени.
     nav.doc.getElementById("groupInput").value = "ИСП-21";
@@ -467,7 +969,7 @@ async function until(page, predicate, tries = 60) {
         seed: { group: "999", name: "НЕТ-ТАКОЙ-22", month: 10, year: 2026 },
         routes: { "GET /api/schedule/lessons": json({ error: { code: "not_found", message: "group not found in the group catalogue: sync it first", fields: { group: "group not found in the group catalogue: sync it first" } } }, 404) },
     });
-    await until(gone, () => /нет в импортированном каталоге/.test(text(gone.doc, "timetable")));
+    await until(gone, () => /нет в каталоге вуза/.test(text(gone.doc, "timetable")));
     check("несуществующая группа объяснена по-русски", /Нет такой группы|такой группы нет/i.test(text(gone.doc, "timetable")),
         text(gone.doc, "timetable"));
 

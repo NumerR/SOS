@@ -22,20 +22,33 @@ import (
 // нужны те же зависимости, но без HTTP-сервера, миграций модулей и сессий.
 // Разделение намеренное — второй список зависимостей в тесте неизбежно
 // отстал бы от первого.
+//
+// Список обязан совпадать с main.go целиком, включая хранилище источника
+// расписания: без него любой путь модуля отвечает 503, и «маршрут закрыт
+// авторизацией» становится неотличим от «зависимость не подключили».
 func newTestHandlers(db *sql.DB) (*handlers.Handlers, *store.UserStore) {
 	userStore := store.NewUserStore(db)
 	return handlers.New(handlers.Deps{
-		Users:       userStore,
-		Sessions:    store.NewSessionStore(db),
-		Courses:     store.NewCourseStore(db),
-		Enrollments: store.NewEnrollmentStore(db),
-		Assignments: store.NewAssignmentStore(db),
-		Submissions: store.NewSubmissionStore(db),
-		Schedule:    store.NewScheduleStore(db),
-		Resources:   store.NewResourceStore(db),
-		Events:      store.NewEventStore(db),
-		Audit:       store.NewAuditStore(db),
-		Limits:      handlers.NewLimiters(),
+		Users:          userStore,
+		Sessions:       store.NewSessionStore(db),
+		Courses:        store.NewCourseStore(db),
+		Enrollments:    store.NewEnrollmentStore(db),
+		Assignments:    store.NewAssignmentStore(db),
+		Submissions:    store.NewSubmissionStore(db),
+		Schedule:       store.NewScheduleStore(db),
+		ScheduleSource: store.NewScheduleSourceStore(db),
+		Resources:      store.NewResourceStore(db),
+		Events:         store.NewEventStore(db),
+		Places:         store.NewPlaceStore(db),
+		Audit:          store.NewAuditStore(db),
+		// Подложка карты задана фикстурой, а не mapTilesFromEnv(): тесты роутера
+		// обязаны показывать один и тот же ответ независимо от того, что
+		// экспортировано в оболочке запускающего.
+		MapTiles: handlers.MapTiles{
+			URL:         "https://tiles.test/{z}/{x}/{y}.png",
+			Attribution: "Тестовый кампус",
+		},
+		Limits: handlers.NewLimiters(),
 	}), userStore
 }
 

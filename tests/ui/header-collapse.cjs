@@ -109,9 +109,13 @@ const stuck = (env) => env.header.classList.contains("is-stuck");
 const controls = (header) => Array.from(header.querySelectorAll("a, button"))
     .map((el) => `${el.tagName.toLowerCase()}${el.id ? "#" + el.id : ""}|${el.getAttribute("aria-label") || ""}|${el.className}`);
 
+// 404.html здесь нет намеренно: у неё статическая шапка без layout.js, значит
+// и складывания быть не может. map.html входит: шапка у неё общий компонент,
+// а страница ниже — единственный случай, где прилипание проверяется на
+// полноэкранной раскладке.
 const PAGES = [
     "index.html", "login.html", "register.html", "dashboard.html",
-    "schedule.html", "profile.html", "admin.html",
+    "schedule.html", "profile.html", "admin.html", "map.html",
 ];
 
 const windows = [];

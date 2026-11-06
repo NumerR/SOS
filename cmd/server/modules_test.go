@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -174,6 +175,120 @@ func TestRouterFromModuleList(t *testing.T) {
 	//     умолчанию, даже когда модуль не заявил права.
 	if resp, body = get(srv, "/api/notes", anon); resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("аноним GET /api/notes: %d %s, ожидалось 401", resp.StatusCode, body)
+	}
+
+	// 15. Справочник мест (карта): чтение — всякому вошедшему, запись — только
+	//     праву place.manage и только с токеном. Разница между этими двумя
+	//     маршрутами ровно та, ради чего существует реестр прав, поэтому она
+	//     проверяется здесь, а не только в unit-тестах обработчика.
+	if resp, body = get(srv, "/api/places", anon); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("аноним GET /api/places: %d %s, ожидалось 401", resp.StatusCode, body)
+	}
+	// Пять корпусов сюда кладёт не чей-то POST, а сид миграцией
+	// 2026-11-06_places_campus, поэтому проверка на настоящем роутере означает
+	// заодно и то, что сид доехал до живого списка маршрутов и читается студентом
+	// без всякого права.
+	if resp, body = get(srv, "/api/places", student); resp.StatusCode != http.StatusOK ||
+		strings.Count(body, `"geo_state"`) != 5 {
+		t.Errorf("student GET /api/places: %d %q, ожидалось 200 и пять корпусов из сида", resp.StatusCode, body)
+	}
+
+	// Номера 1–5 заняты сидом, так что запись идёт под номером 7: с занятым
+	// номером она спотыкалась бы о UNIQUE по building и ветка права вообще не
+	// запускалась бы.
+	const placeBody = `{"name":"Корпус 7","building":"7","lat":52.123456,"lon":104.287654}`
+
+	resp, body = post(srv, "/api/places", placeBody, withoutCSRF(owner))
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("teacher POST /api/places без токена: %d %s, ожидалось 403", resp.StatusCode, body)
+	}
+
+	resp, body = post(srv, "/api/places", placeBody, student)
+	if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "only teachers can maintain the places directory") {
+		t.Errorf("student POST /api/places: %d %s, ожидалось 403 с текстом отказа права", resp.StatusCode, body)
+	}
+
+	resp, body = post(srv, "/api/places", placeBody, owner)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("teacher POST /api/places: %d %s", resp.StatusCode, body)
+	}
+
+	var createdPlace struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(body), &createdPlace); err != nil || createdPlace.ID == 0 {
+		t.Fatalf("не разобрать созданное место: %v (%s)", err, body)
+	}
+
+	// Созданное видно студенту: право нужно на запись, а не на чтение — иначе
+	// карта для автора расписания осталась бы пустой.
+	if resp, body = get(srv, "/api/places", student); resp.StatusCode != http.StatusOK ||
+		!strings.Contains(body, "Корпус 7") {
+		t.Errorf("student GET /api/places после записи: %d %s", resp.StatusCode, body)
+	}
+
+	updateBody := `{"id":` + strconv.FormatInt(createdPlace.ID, 10) + `,"name":"Корпус 7 Восточный"}`
+	if resp, body = post(srv, "/api/places/update", updateBody, student); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("student POST /api/places/update: %d %s, ожидалось 403", resp.StatusCode, body)
+	}
+	if resp, body = post(srv, "/api/places/update", updateBody, admin); resp.StatusCode != http.StatusOK {
+		t.Errorf("admin POST /api/places/update: %d %s, ожидалось 200", resp.StatusCode, body)
+	}
+
+	// 16. Слой карты расписания — не публичный путь. Каталог групп (/api/schedule/
+	//     groups) открыт и гостю, а карта строится по справочнику мест и
+	//     адресована вошедшему; разница держится только на декларации маршрута,
+	//     поэтому она проверяется здесь, на настоящем роутере.
+	if resp, body = get(srv, "/api/schedule/groups", anon); resp.StatusCode != http.StatusOK {
+		t.Errorf("аноним GET /api/schedule/groups: %d %s, ожидалось 200 (публичный путь)", resp.StatusCode, body)
+	}
+	if resp, body = get(srv, "/api/schedule/map", anon); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("аноним GET /api/schedule/map: %d %s, ожидалось 401", resp.StatusCode, body)
+	}
+	if resp, body = get(srv, "/api/schedule/map", student); resp.StatusCode != http.StatusOK ||
+		!strings.Contains(body, `"buildings":[]`) {
+		t.Errorf("student GET /api/schedule/map: %d %s, ожидалось 200 и пустую сводку", resp.StatusCode, body)
+	}
+
+	// 17. Второй слой карты — события. Право на маршруте не заявлено, как у
+	//     ленты /api/events: карта не показывает ни на йоту больше, чем список,
+	//     и студент обязан видеть те же инфоповоды, что видит преподаватель.
+	if resp, body = get(srv, "/api/events/map", anon); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("аноним GET /api/events/map: %d %s, ожидалось 401", resp.StatusCode, body)
+	}
+	if resp, body = get(srv, "/api/events/map", student); resp.StatusCode != http.StatusOK ||
+		!strings.Contains(body, `"places":[]`) {
+		t.Errorf("student GET /api/events/map: %d %s, ожидалось 200 и пустые маркеры", resp.StatusCode, body)
+	}
+
+	// Событие без даты: под маркером ему не встать, но из ответа слоя оно не
+	// исчезает — ровно то обещание, ради которого у слоя есть unplaced.
+	eventBody := `{"title":"Собрание в актовом","category":"учеба","place_id":` +
+		strconv.FormatInt(createdPlace.ID, 10) + `}`
+	if resp, body = post(srv, "/api/events", eventBody, owner); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("teacher POST /api/events с местом: %d %s", resp.StatusCode, body)
+	}
+	if resp, body = get(srv, "/api/events/map", student); resp.StatusCode != http.StatusOK ||
+		!strings.Contains(body, "Собрание в актовом") || !strings.Contains(body, `"no_date"`) {
+		t.Errorf("student GET /api/events/map после создания: %d %s", resp.StatusCode, body)
+	}
+
+	// Ссылка на место, которого в справочнике нет, отвергается на входе: иначе
+	// карта молча потеряла бы инфоповод, а человек не узнал бы причины.
+	badPlace := `{"title":"Выдуманный корпус","place_id":999999}`
+	if resp, body = post(srv, "/api/events", badPlace, owner); resp.StatusCode != http.StatusUnprocessableEntity ||
+		!strings.Contains(body, "no such place") {
+		t.Errorf("POST /api/events с местом 999999: %d %s, ожидалось 422 с текстом отказа", resp.StatusCode, body)
+	}
+
+	// 18. Конфиг подложки. Право не нужно, но вход нужен: адрес тайл-сервера —
+	//     внутренний, и гостю он не показан (страница /map тоже под RequireAuth).
+	if resp, body = get(srv, "/api/map/config", anon); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("аноним GET /api/map/config: %d %s, ожидалось 401", resp.StatusCode, body)
+	}
+	if resp, body = get(srv, "/api/map/config", student); resp.StatusCode != http.StatusOK ||
+		!strings.Contains(body, "tiles.test/{z}/{x}/{y}.png") {
+		t.Errorf("student GET /api/map/config: %d %s, ожидалось 200 и шаблон тайлов", resp.StatusCode, body)
 	}
 }
 

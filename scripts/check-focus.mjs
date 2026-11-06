@@ -140,6 +140,7 @@ const PAGES = [
   { path: "/net-404-eto-tot-zhe-404", auth: null, label: "страница 404" },
   { path: "/dashboard", auth: "student", label: "кабинет студента" },
   { path: "/schedule", auth: "student", label: "расписание" },
+  { path: "/map", auth: "student", label: "карта кампуса" },
   { path: "/profile", auth: "student", label: "профиль" },
   { path: "/admin", auth: "admin", label: "админ-панель" },
 ];

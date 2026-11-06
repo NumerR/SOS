@@ -121,6 +121,7 @@ func main() {
 	scheduleStore := store.NewScheduleStore(db)
 	resourceStore := store.NewResourceStore(db)
 	eventStore := store.NewEventStore(db)
+	placeStore := store.NewPlaceStore(db)
 	auditStore := store.NewAuditStore(db)
 	scheduleSourceStore := store.NewScheduleSourceStore(db)
 
@@ -141,6 +142,9 @@ func main() {
 	// (см. newScheduleSourceClient).
 	apeksClient, apeksProblem := newScheduleSourceClient()
 
+	// Подложка карты: адрес тайл-сервера задаёт только оператор.
+	tiles := mapTilesFromEnv()
+
 	h := handlers.New(handlers.Deps{
 		Users:                 userStore,
 		Sessions:              sessionStore,
@@ -151,6 +155,8 @@ func main() {
 		Schedule:              scheduleStore,
 		Resources:             resourceStore,
 		Events:                eventStore,
+		Places:                placeStore,
+		MapTiles:              tiles,
 		Audit:                 auditStore,
 		ScheduleSource:        scheduleSourceStore,
 		Apeks:                 apeksClient,
@@ -451,6 +457,44 @@ func envOr(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// mapTilesFromEnv читает конфигурацию подложки карты и пишет её состояние в лог
+// старта.
+//
+// Функция отделена от main по той же причине, что и newScheduleSourceClient:
+// чтение окружения становится вызываемым, и тест может задать MAP_TILES_URL
+// через t.Setenv и спросить результат. Строка `MapTiles: tiles` в сборке Deps
+// от этого не становится проверяемой — она, как и остальные поля инициализатора,
+// видна только при чтении main, — но опечатка в имени переменной окружения
+// красным прогоном ловится именно здесь.
+//
+// Негодная конфигурация — не причина не запускаться: карта остаётся рабочей без
+// тайлов, о чём она сама скажет через /api/map/config (бриф п.6 — интерфейс не
+// зашивает чужой сервис, поэтому отсутствие адреса здесь норма, а не авария).
+func mapTilesFromEnv() handlers.MapTiles {
+	tiles := handlers.MapTiles{
+		URL:         os.Getenv("MAP_TILES_URL"),
+		Attribution: os.Getenv("MAP_TILES_ATTRIBUTION"),
+	}
+
+	if variable, hint := tiles.Problem(); variable != "" {
+		slog.Warn("карта будет без подложки",
+			slog.String("variable", variable),
+			slog.String("hint", hint),
+		)
+
+		return tiles
+	}
+
+	// Полное значение в лог не пишется: в адресе тайл-сервера может стоять ключ
+	// провайдера (тот же запрет, что на токены в URL в ADR-0015).
+	slog.Info("подложка карты настроена",
+		slog.String("origin", tiles.Origin()),
+		slog.Bool("attribution", strings.TrimSpace(tiles.Attribution) != ""),
+	)
+
+	return tiles
 }
 
 // seedAdmin создаёт учётную запись администратора из переменных окружения.

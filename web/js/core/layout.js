@@ -37,6 +37,7 @@
         calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
         shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
         home: '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>',
+        pin: '<path d="M12 21s7-5.4 7-11a7 7 0 1 0-14 0c0 5.6 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/>',
         back: '<path d="M19 12H5M12 19l-7-7 7-7"/>',
         logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/>',
     };
@@ -81,8 +82,18 @@
             wrapper: "actions",
             items: [
                 { href: "schedule", label: "Расписание", icon: "calendar" },
+                { href: "map", label: "Карта", icon: "pin" },
                 { href: "profile", label: "Профиль" },
                 { href: "admin", label: "Админ", icon: "shield", id: "adminLink", hidden: true },
+                { user: true },
+                { action: "logout" },
+            ],
+        },
+        map: {
+            wrapper: "actions",
+            items: [
+                { href: "dashboard", label: "В кабинет", icon: "back" },
+                { href: "schedule", label: "Расписание", icon: "calendar" },
                 { user: true },
                 { action: "logout" },
             ],
@@ -92,6 +103,7 @@
             items: [
                 { href: "dashboard", label: "В кабинет", icon: "back" },
                 { href: "schedule", label: "Расписание", icon: "calendar" },
+                { href: "map", label: "Карта", icon: "pin" },
                 { user: true },
                 { action: "logout" },
             ],

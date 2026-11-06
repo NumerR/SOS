@@ -67,11 +67,17 @@ func newScheduleSourceEnv(t *testing.T) *scheduleSourceEnv {
 	}
 	// Таблицы аудита и источника создаёт сервер — миграциями модулей. Модули
 	// импортируют этот пакет, поэтому тест берёт текст DDL напрямую из store.
-	if _, err := db.Exec(store.AuditEventsMigration); err != nil {
-		t.Fatalf("таблица аудита: %v", err)
-	}
-	if _, err := db.Exec(store.ScheduleSourceMigration); err != nil {
-		t.Fatalf("таблицы источника: %v", err)
+	// Список должен совпадать с Migrations() модуля schedule: пропущенная
+	// миграция здесь — это «no such table» вместо проверяемой логики.
+	for i, ddl := range []string{
+		store.AuditEventsMigration,
+		store.ScheduleSourceMigration,
+		store.ScheduleMapIndexMigration,
+		store.ScheduleCoverageMigration,
+	} {
+		if _, err := db.Exec(ddl); err != nil {
+			t.Fatalf("миграция %d: %v", i, err)
+		}
 	}
 	t.Cleanup(func() { _ = db.Close() })
 

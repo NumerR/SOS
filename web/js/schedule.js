@@ -28,6 +28,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     const refreshTimetable = document.getElementById("refreshTimetable");
     const timetableContainer = document.getElementById("timetable");
     const updatedNote = document.getElementById("updatedNote");
+    const groupNav = document.getElementById("groupNav");
+    const instituteChips = document.getElementById("instituteChips");
+    const courseRow = document.getElementById("courseRow");
+    const courseChips = document.getElementById("courseChips");
+    const navGroupRow = document.getElementById("navGroupRow");
+    const navGroupChips = document.getElementById("navGroupChips");
     const sourceName = document.getElementById("sourceName");
     const sourceNameNote = document.getElementById("sourceNameNote");
     const sourceLink = document.getElementById("sourceLink");
@@ -57,11 +63,18 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // Даты — общий модуль core/format.js: раньше эти же пять функций были
     // написаны здесь заново (и «Без дедлайна»/«без точной даты» расходились в
-    // формулировках с дашбордом).
+    // формулировках с дашбордом). Словарь недели (startOfWeek, weekTitle,
+    // weekRange) уехал туда же на шаге карты: у /schedule и /map «эта неделя»
+    // обязана быть одним отрезком и подписываться одинаково.
     const toISODate = GS.toISODate;
     const dayStartUnix = GS.dayStartUnix;
     const dayEndUnix = GS.dayEndUnix;
     const formatDue = GS.formatDateTime;
+    const startOfWeek = GS.startOfWeek;
+    const addDays = GS.addDays;
+    const weekTitle = GS.weekTitle;
+    const weekRange = GS.weekRange;
+    const plural = GS.plural;
 
     const today = new Date();
     const weekLater = addDays(today, 7);
@@ -86,6 +99,16 @@ document.addEventListener("DOMContentLoaded", async () => {
         weekStart: startOfWeek(today),
         rangeImported: false,
         importedMonths: [],
+        // Какие аудитории показанной недели называют корпус: строка источника →
+        // {building, name}. Приходит отдельным полем ответа (сервер разбирает
+        // строку тем же правилом, что и карта), и держится здесь, а не в
+        // разметке, чтобы подпись не терялась при перерисовке таблицы.
+        roomBuildings: Object.create(null),
+        // Вкладки каталога: институт и курс выбранной группы. Держатся здесь,
+        // а не только в разметке, чтобы выбор переживал перерисовку таблицы и
+        // синхронизировался с тем, что человек вписал в поле сам.
+        department: "",
+        course: "",
     };
 
     // Каталог групп держим в переменной: он нужен и чтобы превратить имя из
@@ -107,6 +130,8 @@ document.addEventListener("DOMContentLoaded", async () => {
             localStorage.setItem(CHOICE_KEY, JSON.stringify({
                 group: timetable.group,
                 name: timetable.groupName,
+                department: timetable.department,
+                course: timetable.course,
             }));
         } catch (error) {
             // Приватный режим и переполненное хранилище — не причина ронять
@@ -194,26 +219,15 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // ---------- официальное расписание ----------
     //
-    // Источник (АПЭКС-ВУЗ) к странице не подключается: страница читает только
-    // импортированные строки через /api/schedule/*, а токен источника остаётся
-    // на сервере. Поэтому здесь нет ни одного состояния «введите токен», и
-    // гость видит то же расписание, что и студент.
+    // АПЭКС-ВУЗ к странице по-прежнему не подключается напрямую: страница зовёт
+    // /api/schedule/*, а решение «брать ли с сайта вуза этот месяц» принимает
+    // сервер (ADR-0042). Поэтому здесь нет ни одного состояния «введите токен»,
+    // гость видит то же расписание, что и студент, и при этом его же запрос
+    // может привести недостающий месяц — раньше для этого нужен был админ.
 
-    function plural(count, one, few, many) {
-        const mod10 = count % 10;
-        const mod100 = count % 100;
-        if (mod10 === 1 && mod100 !== 11) return one;
-        if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
-        return many;
-    }
-
-    // Понедельник недели, в которую попадает дата. Локальное время, не UTC:
-    // «эта неделя» считается по календарю человека, который смотрит страницу, и
-    // в 00:30 воскресенья по Гринвичу этот календарь ещё суббота.
-    function startOfWeek(date) {
-        const shift = (date.getDay() + 6) % 7;
-        return new Date(date.getFullYear(), date.getMonth(), date.getDate() - shift);
-    }
+    // startOfWeek, addDays, monthGenitive, weekTitle, weekRange и сам plural
+    // теперь в core/format.js — там, где их видит и страница карты (пояснение у
+    // блока подключений в начале файла).
 
     function monthTitle(month, year) {
         const date = new Date(year, month - 1, 1);
@@ -222,56 +236,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         return date.toLocaleDateString("ru-RU", { month: "long", year: "numeric" }).replace(/\s*г\.$/, "");
     }
 
-    // Родительный падеж месяца: «8 ноября» -> «ноября».
-    //
-    // Считается датой, а не словарём названий: {month: "long"} сам по себе
-    // даёт именительный («ноябрь»), и подписать «2–8 ноябрь» было бы грубой
-    // ошибкой в языке, которую видно на каждой второй неделе.
-    function monthGenitive(date) {
-        return date.toLocaleDateString("ru-RU", { day: "numeric", month: "long" }).replace(/^\d+\s+/, "");
-    }
-
-    // Прибавка дней через календарь, а не через миллисекунды: сутки бывают 23
-    // и 25 часа, и «+6*24 ч» через переход в летнее время дал бы воскресенье
-    // вместо субботы — конец недели уехал бы на день.
-    function addDays(date, days) {
-        return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
-    }
-
-    // Подпись недели: «2–8 ноября», «26 октября – 1 ноября»,
-    // «29 декабря 2026 – 4 января 2027».
-    //
-    // Три формы, а не одна: достаточно месяца, когда неделя внутри него, два
-    // — когда пересекает границу, и год — когда пересекает новогоднюю. «29
-    // декабря – 4 января» без года читается наугад («это же прошлая неделя?»),
-    // и именно на такой неделе человек планирует поездку.
-    function weekTitle(start) {
-        const end = addDays(start, 6);
-
-        if (start.getMonth() === end.getMonth()) {
-            return `${start.getDate()}–${end.getDate()} ${monthGenitive(end)}`;
-        }
-
-        const day = (date) => `${date.getDate()} ${monthGenitive(date)}`;
-        if (start.getFullYear() === end.getFullYear()) {
-            return `${day(start)} – ${day(end)}`;
-        }
-        return `${day(start)} ${start.getFullYear()} – ${day(end)} ${end.getFullYear()}`;
-    }
-
     function setWeekLabel() {
         if (weekLabel) weekLabel.textContent = weekTitle(timetable.weekStart);
-    }
-
-    // Период показа в unix-секундах: от полуночи понедельника до конца
-    // воскресенья. Границы считает общий с лентой модуль core/format.js —
-    // dayStartUnix/dayEndUnix, чтобы «эта неделя» в расписании и «эта неделя» в
-    // ленте дедлайнов были одним и тем же отрезком.
-    function weekRange(start) {
-        return {
-            from: dayStartUnix(toISODate(start)),
-            to: dayEndUnix(toISODate(addDays(start, 6))),
-        };
     }
 
     // Дата из toLocaleDateString кончается «г.», и своя точка поверх неё —
@@ -284,19 +250,33 @@ document.addEventListener("DOMContentLoaded", async () => {
     //
     // Три месяца максимум: список «в базе уже 14 месяцев» человек не читает, а
     // направление («вот сюда импорт уже приходил») из него видно и по трём.
+    //
+    // В список берутся только месяцы с занятиями: «в базе уже октябрь 2026»
+    // про месяц, где занятий ноль, было бы правдой про покрытие и ложью про
+    // расписание — а подсказка как раз про то, куда смотреть дальше.
     function monthList(months) {
         if (!Array.isArray(months) || !months.length) return "";
-        const titles = months.slice(0, 3).map((m) => monthTitle(m.month, m.year));
+        const filled = months.filter((m) => m && m.ok === true && m.lessons > 0);
+        if (!filled.length) return "";
+        const titles = filled.slice(0, 3).map((m) => monthTitle(m.month, m.year));
         return ` — в базе уже ${titles.join(", ")}`;
     }
 
-    // Пустая неделя без импорта обязана называть путь наружу, и путь зависит от
-    // роли: админу — кнопка своей панели, студенту — что он бессилен и к кому
-    // идти. Одна фраза на обеих ролях всегда врёт бы хотя бы одной из них.
-    function importHint(role) {
+    // Пустая неделя обязана называть путь наружу, и путь зависит от двух
+    // вещей: есть ли у страницы доступ к источнику и кто на неё смотрит.
+    //
+    // Прежняя фраза «это делает администратор платформы» после ADR-0042 врёт:
+    // недостающий месяц приводит запрос самого студента. Правдой она остаётся
+    // ровно в одном случае — когда доступа к вузу нет на сервере.
+    function emptyHint(role, configured) {
+        if (!configured) {
+            return canManageSource(role)
+                ? "Панель «Источник расписания» ниже называет, какой настройки не хватает."
+                : "Доступ к сайту вуза настраивает администратор платформы — без него в базу не приходит ничего.";
+        }
         return canManageSource(role)
-            ? "Импортируйте её кнопками панели «Источник расписания» ниже: «все группы» закрывает каталог за один прогон."
-            : "Расписание этой группы ещё не скачано с сайта вуза — это делает администратор платформы.";
+            ? "Попробуйте обновить неделю. Если вуз молчит, закрывает пробел панель «Источник расписания» ниже: «все группы» — за один прогон."
+            : "Попробуйте обновить неделю — страница обратится к сайту вуза снова. Если не выйдет, загляните позже: вуз отвечает не всегда.";
     }
 
     function renderTimetableEmpty(text, hint) {
@@ -439,11 +419,60 @@ document.addEventListener("DOMContentLoaded", async () => {
         lessonTicker = setInterval(refreshLessonStates, 1000);
     }
 
+    // Ответ сервера → таблица подписей по строкам аудитории. Пустая таблица при
+    // отсутствующем поле: сборка без справочника мест отвечает расписанием без
+    // подписей, и «поля нет» для неё не ошибка, а ровно тот же самый случай.
+    //
+    // Таблица без прототипа: ключом в ней служит строка аудитория из чужого
+    // API, а поиск по полю вроде «__proto__» на обычном объекте прочитал бы не
+    // подпись, а служебное свойство.
+    function roomBuildingMap(raw) {
+        if (!raw || typeof raw !== "object") return Object.create(null);
+
+        const out = Object.create(null);
+        for (const [room, item] of Object.entries(raw)) {
+            if (!item || typeof item !== "object") continue;
+            const building = String(item.building || "").trim();
+            if (!building) continue;
+            out[room] = { building, name: String(item.name || "").trim() };
+        }
+        return out;
+    }
+
+    // Строка аудитории и — если источник назвал ровно один корпус, а в
+    // справочнике у него есть имя, — это имя рядом.
+    //
+    // Имя приносит сервер полем room_buildings, а не выводится здесь: правило
+    // «к. 1/710 — это корпус 1» живёт в Go в одном экземпляре и им же карта
+    // собирает пары по корпусам (ADR-0045). Вторая копия правила на странице
+    // разошлась бы с первой при первой же правке источника.
+    //
+    // Вошедшему имя даётся ссылкой на карту с этим корпусом и на той же неделе.
+    // Гостю — просто текст: страница карты требует входа, и ссылка вместо карты
+    // привела бы его к форме входа.
+    function renderRoom(lesson) {
+        const room = `<span>${GS.escapeHtml(lesson.room)}</span>`;
+        const known = timetable.roomBuildings[lesson.room];
+        const name = known && known.name ? String(known.name).trim() : "";
+        if (!name) return room;
+
+        if (!user || !known.building) {
+            return `${room}<span class="lesson-building">${GS.escapeHtml(name)}</span>`;
+        }
+
+        const period = weekRange(timetable.weekStart);
+        const href = `/map?building=${encodeURIComponent(String(known.building))}`
+            + `&from=${period.from}&to=${period.to}`;
+        const tip = `Открыть карту и показать корпус «${name}»`;
+        return `${room}<a class="lesson-building" href="${GS.escapeHtml(href)}" title="${GS.escapeHtml(tip)}">`
+            + `${GS.escapeHtml(name)}</a>`;
+    }
+
     function renderLesson(lesson) {
         const parts = [];
         if (lesson.time) parts.push(`<span class="lesson-time">${GS.escapeHtml(lesson.time)}</span>`);
         if (lesson.lesson_type) parts.push(`<span class="lesson-type">${GS.escapeHtml(lesson.lesson_type)}</span>`);
-        if (lesson.room) parts.push(`<span>${GS.escapeHtml(lesson.room)}</span>`);
+        if (lesson.room) parts.push(renderRoom(lesson));
         if (lesson.teacher) parts.push(`<span>${GS.escapeHtml(lesson.teacher)}</span>`);
         const subgroup = String(lesson.subgroup || "").trim();
         const sub = NO_SUBGROUP.has(subgroup) ? "" : subgroup;
@@ -540,37 +569,313 @@ document.addEventListener("DOMContentLoaded", async () => {
         return `${raw.slice(6, 8)}.${raw.slice(4, 6)}.${raw.slice(0, 4)}`;
     }
 
-    // Подпись под таблицей. Отдельная функция: состояние «обновлено тогда-то»
-    // и состояние «данных нет» обязаны объясняться одной строкой на одном и том
-    // же месте, а не спорить друг с другом текстами из разных веток.
-    function setNote(text) {
-        if (updatedNote) updatedNote.textContent = text || "";
+    // Подпись под таблицей: пилюля состояния источника + срок копии. Отдельная
+    // функция на всё: состояние «обновлено тогда-то», состояние «показан
+    // архив» и состояние «данных нет» обязаны объясняться одной строкой на одном
+    // и том же месте, а не спорить текстами из разных веток.
+    function setNote(state, text) {
+        if (!updatedNote) return;
+        if (!state && !text) {
+            updatedNote.textContent = "";
+            return;
+        }
+        const pill = state
+            ? `<span class="sched-source-state ${state.cls}">${GS.escapeHtml(state.label)}</span>`
+            : "";
+        updatedNote.innerHTML = pill + " " + GS.escapeHtml(text);
     }
 
-    function updatedText(unix) {
-        if (!unix) return "Расписание этой группы ещё не импортировано из источника.";
+    // Три цвета пилюли заданы в CSS по проверенным парам (ADR-0019), и выбор
+    // между ними — единственный способ не соврать: «обновлено 3 ноября в 14:20»
+    // над вчерашней копией при недоступном сайте вуза звучит правдой.
+    const SOURCE_STATES = {
+        fresh: { label: "свежее", cls: "is-fresh" },
+        refreshed: { label: "привезено сейчас", cls: "is-fresh" },
+        cached: { label: "архив · обновляем", cls: "is-archive" },
+        stale: { label: "архив", cls: "is-archive" },
+        unavailable: { label: "показать нечего", cls: "is-none" },
+        // Значение выбирает страница, а не сервер: про неделю, где часть
+        // месяцев не привезлась, источник говорит «показать нечего», а над
+        // вторником с двумя парами такая фраза была бы неправдой.
+        partial: { label: "неполно", cls: "is-archive" },
+    };
 
+    function stamp(unix) {
+        if (!unix) return "";
         const time = new Date(unix * 1000).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-        const who = timetable.groupName || (groupInput ? groupInput.value.trim() : "");
-        return `Обновлено ${GS.formatDate(unix)} в ${time}${who ? ` · ${who}` : ""}`;
+        return `${GS.formatDate(unix)} в ${time}`;
+    }
+
+    // source_state (ADR-0042) — пять ответов сервера: копия свежая, недостающее
+    // привезли сейчас, показан архив и обновляем фоном, показан архив и
+    // обновить не удалось, показать нечего. Разводка «не настроен / не ответил»
+    // берётся из source_configured: сказать гостю «сайт вуза молчит», когда
+    // ходить ему нечем, — соврать.
+    function sourceStatus(data, hasLessons) {
+        const at = stamp(data.updated_at);
+        const when = at ? ` Копия от ${at}.` : "";
+
+        switch (String(data.source_state || "")) {
+            case "fresh":
+                return {
+                    state: SOURCE_STATES.fresh,
+                    text: at ? `Показана свежая копия: обновлена ${at}.` : "Показана копия из базы — она ещё не устарела.",
+                };
+            case "refreshed":
+                return { state: SOURCE_STATES.refreshed, text: "Недостающее привезли с сайта вуза, пока вы ждали этот запрос." };
+            case "cached":
+                return { state: SOURCE_STATES.cached, text: `Сайт вуза обновляется в фоне.${when}` };
+            case "stale":
+                return { state: SOURCE_STATES.stale, text: `Сайт вуза не ответил — показан архив.${when}` };
+            case "unavailable":
+                if (hasLessons) {
+                    return {
+                        state: SOURCE_STATES.partial,
+                        text: "Часть периода привезти не удалось — на этой неделе показаны не все занятия.",
+                    };
+                }
+                return data.source_configured === true
+                    ? { state: SOURCE_STATES.unavailable, text: "Сайт вуза не ответил, а в базе по этой группе и неделе пока ничего нет. Попробуйте обновить." }
+                    : { state: SOURCE_STATES.unavailable, text: "Доступа к сайту вуза на сервере нет — показать можно только то, что уже в базе." };
+            default:
+                // Поля нет: ответ со старым контрактом. Про срок копии сказать
+                // можно, про свежесть — уже нельзя, и утверждать первое вместо
+                // второго было бы тем самым враньём, ради которого поле и вводили.
+                return {
+                    state: null,
+                    text: at ? `Обновлено ${at}.` : "Расписание этой группы ещё не попадало в базу.",
+                };
+        }
+    }
+
+    // ---------- имена групп и их двойники ----------
+    //
+    // Каталог источника хранит один и тот же код группы в строках двух курсов:
+    // у «Б-ПРЛ-21» есть id 36 (3 курс) и id 737 (2 курс), и живой АПЭКС по
+    // одному из них отдаёт пустой месяц, а по другому — настоящую таблицу.
+    // Поэтому поле обязано различать варианты, а показ — называть, чей именно
+    // id выбран. Молча брать первое совпадение нельзя: половина каталога при
+    // этом показывает пустоту там, где у вуза расписание есть.
+    function duplicatedNames(groups) {
+        const counts = new Map();
+        for (const group of groups) {
+            const name = catalogValue(group, "name").toLowerCase();
+            if (name) counts.set(name, (counts.get(name) || 0) + 1);
+        }
+        return counts;
+    }
+
+    // Подпись варианта: просто имя, а для двойника — ещё институт и курс.
+    // Формат один и для подсказок, и для разбора ввода, иначе подсказка
+    // перестала бы находится в поле после выбора.
+    function groupCaption(group, counts) {
+        const name = catalogValue(group, "name");
+        if (!name) return "";
+        if (!counts || (counts.get(name.toLowerCase()) || 0) < 2) return name;
+        const detail = [catalogValue(group, "department"), catalogValue(group, "course")]
+            .filter(Boolean).join(", ");
+        return detail ? `${name} — ${detail}` : name;
     }
 
     // Текст для группы: имя всегда человеческое, id — только в каталоге.
     function fillGroupOptions(groups) {
         if (!groupOptions) return;
+        const counts = duplicatedNames(groups);
         groupOptions.innerHTML = groups
-            .map((g) => `<option value="${GS.escapeHtml(g.name)}"></option>`)
+            .map((g) => `<option value="${GS.escapeHtml(groupCaption(g, counts))}"></option>`)
             .join("");
     }
 
-    // Ввод совпадает с каталогом (в любом регистре и с лишними пробелами) —
-    // отправляем id: он однозначен, а имя из каталога однажды может
-    // повториться у двух институтов, и сервер честно откажет 422.
-    function resolveGroupRef(input, groups) {
-        const needle = String(input || "").trim().toLowerCase();
-        if (!needle) return "";
-        const exact = groups.find((g) => String(g.name).trim().toLowerCase() === needle);
-        return exact ? exact.external_id : String(input).trim();
+    // Совпадения с вводом: точное имя (их может быть несколько — это двойники),
+    // а если человек выбрал подпись варианта из подсказки, разбирается форма
+    // «имя — институт, курс».
+    //
+    // Ввод, на который в каталоге нет ни одного имени, возвращается пустым
+    // списком: вызывающий передаёт его на сервер как есть, и уже сервер решает,
+    // это id группы, чужое имя или 404.
+    function groupMatches(input, groups) {
+        const raw = String(input || "").trim();
+        if (!raw) return [];
+        const [namePart, detailPart] = raw.split(" — ");
+        const name = String(namePart || "").trim().toLowerCase();
+        if (!name) return [];
+        const byName = groups.filter((g) => catalogValue(g, "name").toLowerCase() === name);
+        if (detailPart === undefined) return byName;
+        const counts = duplicatedNames(groups);
+        return byName.filter((g) => groupCaption(g, counts).toLowerCase() === raw.toLowerCase());
+    }
+
+    // ---------- вкладки каталога: институт → курс → группа ----------
+    //
+    // Виджет rasp-stud.html устроен как ряды вкладок «институт, курс, группа», и
+    // оба поля для этого у каталога есть: источник отдаёт дерево
+    // «институт -> курс -> группа», и мы сохраняем его плоскими колонками
+    // department и course.
+    //
+    // Без этих рядов человек ищет свою группу перебором: в datalist 588 строк,
+    // а институт и курс в названии («Б-ИСиТ-22») разбирает только тот, кто эти
+    // аббревиатуры знает.
+    //
+    // Курс показывается тем текстом, который дал вуз («1 курс», но в других
+    // срезах дерева это бывает и «2026 год выпуска»): страница не имеет права
+    // переименовывать источник, поэтому сортировка числовая, а подпись —
+    // дословная.
+    function catalogValue(group, field) {
+        return String(group[field] || "").trim();
+    }
+
+    function courseRank(course) {
+        const rank = parseInt(course, 10);
+        return Number.isFinite(rank) ? rank : 999;
+    }
+
+    // Группы, у которых поле заполнено: ряд вкладов строится только по ним, и
+    // пустой институт не должен превращаться в вкладку без имени.
+    function tally(groups, field) {
+        const counts = new Map();
+        for (const group of groups) {
+            const value = catalogValue(group, field);
+            if (!value) continue;
+            counts.set(value, (counts.get(value) || 0) + 1);
+        }
+        return [...counts.entries()]
+            .map(([key, count]) => ({ key, label: key, count }))
+            .sort((a, b) => a.label.localeCompare(b.label, "ru-Cyrl"));
+    }
+
+    // Счётчик справа от вкладки — «сколько групп под этим институтом». Для
+    // ряда групп считать нечего (каждая вкладка и есть одна группа), и
+    // напечатать там ноль значило бы добавить ряд, который вводит в заблуждение.
+    function renderChips(container, items, selectedKey, onPick, ariaAttr) {
+        container.innerHTML = items.map((item) => {
+            const selected = item.key === selectedKey;
+            const count = Number.isFinite(item.count) && item.count > 0
+                ? `<span class="sched-chip-count">${item.count}</span>`
+                : "";
+            return `<button type="button" class="sched-chip${selected ? " is-selected" : ""}" `
+                + `${ariaAttr}="${selected ? "true" : "false"}" data-key="${GS.escapeHtml(item.key)}">`
+                + `<span>${GS.escapeHtml(item.label)}</span>`
+                + count
+                + "</button>";
+        }).join("");
+
+        container.querySelectorAll(".sched-chip").forEach((node) => {
+            node.addEventListener("click", () => onPick(node.dataset.key));
+        });
+    }
+
+    // Переставить выделение, не перерисовывая ряд: перерисовка сбросила бы
+    // фокус с кнопки, на которой человек только что нажал Enter, и клавиатурный
+    // путь «пробежаться по группам» оборвался бы на первом же выборе.
+    function markSelectedChips(container, key, ariaAttr) {
+        if (!container) return;
+        container.querySelectorAll(".sched-chip").forEach((node) => {
+            const selected = node.dataset.key === String(key);
+            node.classList.toggle("is-selected", selected);
+            node.setAttribute(ariaAttr, selected ? "true" : "false");
+        });
+    }
+
+    // Один проход по каталогу на всякое изменение выбора: 588 групп — это
+    // микросекунды, а два состояния (институт + курс) иначе пришлось бы
+    // синхронизировать вручную и рано или поздно рассинхронизировала бы
+    // перерисовка после смены выборки.
+    function renderGroupNav(list) {
+        if (!groupNav || !instituteChips || !courseChips || !navGroupChips) return;
+        const catalogueGroups = Array.isArray(list) ? list : catalogue;
+
+        const institutes = tally(catalogueGroups, "department");
+        if (!institutes.length) {
+            // Каталог без институтов: ряды показали бы три пустые строки
+            // вместо навигации, а поле ввода работает в любом случае.
+            groupNav.hidden = true;
+            return;
+        }
+        groupNav.hidden = false;
+
+        if (!institutes.some((i) => i.key === timetable.department)) {
+            timetable.department = institutes[0].key;
+        }
+        renderChips(instituteChips, institutes, timetable.department, (key) => {
+            timetable.department = key;
+            timetable.course = "";
+            renderGroupNav();
+            saveChoice();
+        }, "aria-pressed");
+
+        const inInstitute = catalogueGroups.filter((g) => catalogValue(g, "department") === timetable.department);
+        const courses = tally(inInstitute, "course")
+            .sort((a, b) => courseRank(a.key) - courseRank(b.key) || a.key.localeCompare(b.key, "ru-Cyrl"));
+        if (!courses.length) {
+            courseRow.hidden = true;
+        } else {
+            courseRow.hidden = false;
+            if (!courses.some((c) => c.key === timetable.course)) {
+                timetable.course = courses[0].key;
+            }
+            renderChips(courseChips, courses, timetable.course, (key) => {
+                timetable.course = key;
+                renderGroupNav();
+                saveChoice();
+            }, "aria-pressed");
+        }
+
+        const visible = courses.length
+            ? inInstitute.filter((g) => catalogValue(g, "course") === timetable.course)
+            : inInstitute;
+        const groups = visible
+            .map((g) => ({ key: catalogValue(g, "external_id") || catalogValue(g, "name"), label: catalogValue(g, "name") }))
+            .sort((a, b) => a.label.localeCompare(b.label, "ru-Cyrl"));
+
+        if (!groups.length) {
+            navGroupRow.hidden = true;
+            navGroupChips.innerHTML = "";
+            return;
+        }
+        navGroupRow.hidden = false;
+        renderChips(navGroupChips, groups, timetable.group, pickGroupFromNav, "aria-current");
+    }
+
+    // Клик по вкладке группы — тот же путь, что и выбор из datalist: поле ввода
+    // обязана показывать человеческое имя, а в запрос идти должен id.
+    //
+    // В поле пишется подпись варианта, а не голое имя: у половины каталога одно
+    // имя носят две строки с разными id, и голое имя при загрузке выбрало бы
+    // первую из них — не ту, на которую человек нажал.
+    function pickGroupFromNav(externalID) {
+        const found = catalogue.find((g) => String(g.external_id) === String(externalID));
+        if (!found) return;
+        if (groupInput) groupInput.value = groupCaption(found, duplicatedNames(catalogue));
+        timetable.group = String(found.external_id);
+        timetable.groupName = String(found.name || "");
+        loadTimetable();
+    }
+
+    // Вкладки догоняют то, что человек вписал сам: иначе набор рядов
+    // расходился бы с показанной неделей, и «выбранный институт» врал бы.
+    //
+    // Отдельная проверка на «сменился ли институт» нужна потому, что ряд
+    // перерисовывать дорого для фокуса, а подсветку выбранной группы надо
+    // двигать на каждом показе — иначе клик по своей вкладке оставила бы
+    // выделение на прежней.
+    function syncNavWithGroup() {
+        if (!catalogue.length) return;
+        const typed = (groupInput ? groupInput.value : "").trim().toLowerCase();
+        const name = (timetable.groupName || typed).toLowerCase();
+        const found = catalogue.find((g) => String(g.external_id) === String(timetable.group))
+            || catalogue.find((g) => catalogValue(g, "name").toLowerCase() === name);
+        if (!found) return;
+
+        const department = catalogValue(found, "department");
+        if (!department) return;
+        const course = catalogValue(found, "course");
+        if (department !== timetable.department || course !== timetable.course) {
+            timetable.department = department;
+            timetable.course = course;
+            renderGroupNav();
+            saveChoice();
+        }
+        markSelectedChips(navGroupChips, timetable.group, "aria-current");
     }
 
     async function loadGroups() {
@@ -590,80 +895,189 @@ document.addEventListener("DOMContentLoaded", async () => {
                     : `Каталог групп пуст${synced}`;
             }
 
+            // Ряды вкладок строятся из того же ответа, что и подсказки поля:
+            // один источник данных, и каталог после синхронизации админа
+            // перестраивает навигацию сам, без отдельного вызова.
+            renderGroupNav(groups);
             return groups;
         } catch (error) {
             if (groupHelper) groupHelper.textContent = error.message || "Не удалось загрузить каталог групп";
+            renderGroupNav([]);
             return [];
         }
     }
+
+    // Номер последнего запрошенного листа. Ответы приходят не в порядке
+    // запросов, и ответ на неделю, которую человек уже сменил, обязан быть
+    // выброшен: без этого подпись над таблицей показывает одну неделю, а
+    // таблица под ней нарисована по другой.
+    let timetableLoadSeq = 0;
+
+    // Неделя одной группы одним запросом. Отдельно потому, что выбор варианта
+    // группы при пустом источнике делает таких запроса несколько подряд, и
+    // каждый обязан проверять, не устарел ли он, пока ждал ответа.
+    function fetchWeek(ref, period) {
+        return GS.fetchJSON(`/api/schedule/lessons?group=${encodeURIComponent(ref)}`
+            + `&from=${period.from}&to=${period.to}`, { on401: "throw" });
+    }
+
+    function weekHasLessons(data) {
+        return Array.isArray(data && data.days) && data.days.length > 0;
+    }
+
+    // Сколько двойников одного имени успеем спросить, кроме выбранного. Потолок
+    // нужен: без него редкое имя из семи строк каталога означало бы семь
+    // последовательных запросов к источнику, и страница грузилась бы дольше, чем
+    // стоит вся её таблица.
+    const TWIN_ATTEMPTS = 2;
 
     async function loadTimetable(groups) {
         if (!timetableContainer) return;
 
         setWeekLabel();
         if (Array.isArray(groups)) catalogue = groups;
-        const ref = resolveGroupRef(groupInput ? groupInput.value : timetable.group, catalogue);
+        const typed = groupInput ? groupInput.value : timetable.group;
+        const matches = groupMatches(typed, catalogue);
+        const ref = matches.length ? catalogValue(matches[0], "external_id") : String(typed || "").trim();
         if (!ref) {
             renderTimetableEmpty("Выберите группу", "Начните вводить название — страница подсказывает группы из каталога.");
             return;
         }
 
-        timetable.group = ref;
-        if (groupInput && catalogue.length) {
-            const found = catalogue.find((g) => g.external_id === ref);
-            if (found) timetable.groupName = found.name;
-        }
+        let chosen = ref;
+        let shown = matches[0] || null;
+        timetable.group = chosen;
+        if (shown) timetable.groupName = catalogValue(shown, "name");
 
         timetableContainer.innerHTML = `<div class="empty-state plain"><span class="spinner"></span><span class="empty-hint">Загрузка расписания…</span></div>`;
 
         const period = weekRange(timetable.weekStart);
-        const query = `/api/schedule/lessons?group=${encodeURIComponent(timetable.group)}`
-            + `&from=${period.from}&to=${period.to}`;
+        const seq = ++timetableLoadSeq;
 
         try {
-            const data = await GS.fetchJSON(query, { on401: "throw" });
+            let data = await fetchWeek(chosen, period);
+            if (seq !== timetableLoadSeq) return;
+
+            // Пусто у выбранного id, а рядом в каталоге такой же код с другим
+            // id: спрашиваем соседей и, если у соседа таблица есть, показываем
+            // её, назвав вариант, который реально на экране.
+            //
+            // Список пустых пополняется только по реально ответившим id: сосед,
+            // который не ответил вовсе, не «пустой», а недоступный, и ставить
+            // его в один ряд с пустыми означало бы соврать в строке состояния.
+            let switched = false;
+            const emptyIds = [chosen];
+            // Сколько опрошенных пустых периодов реально лежат в базе
+            // (range_imported), а сколько — просто не качались. Строка
+            // состояния обязана различать их так же, как пустота таблицы ниже:
+            // без отметки о прочитанном месяце «пусто» значит «мы не спрашивали»,
+            // и назвать такое молчанием вуза значило бы соврать (на сборке без
+            // токена хода к вузу нет вовсе).
+            const firstImported = data.range_imported === true;
+            let emptyImported = firstImported ? 1 : 0;
+            if (!weekHasLessons(data) && matches.length > 1) {
+                for (const alt of matches.slice(1, TWIN_ATTEMPTS + 1)) {
+                    const altId = catalogValue(alt, "external_id");
+                    if (!altId || altId === chosen) continue;
+                    let altData = null;
+                    try {
+                        altData = await fetchWeek(altId, period);
+                    } catch (error) {
+                        // Сосед не ответил — не повод терять показанное у
+                        // выбранного: у того свой ответ и своё состояние.
+                        altData = null;
+                    }
+                    if (seq !== timetableLoadSeq) return;
+                    if (weekHasLessons(altData)) {
+                        chosen = altId;
+                        shown = alt;
+                        data = altData;
+                        switched = true;
+                        break;
+                    }
+                    if (altData) {
+                        emptyIds.push(altId);
+                        if (altData.range_imported === true) emptyImported += 1;
+                    }
+                }
+            }
+
+            timetable.group = chosen;
             timetable.importedMonths = Array.isArray(data.imported_months) ? data.imported_months : [];
             timetable.rangeImported = data.range_imported === true;
+            // Подписи корпусов всегда берутся из показанного ответа: у соседа,
+            // которого страница подставила вместо молчавшего варианта, свои
+            // аудитории, и чужая таблица подписала бы их чужими корпусами.
+            timetable.roomBuildings = roomBuildingMap(data.room_buildings);
             if (data.group_name) timetable.groupName = data.group_name;
 
             const days = Array.isArray(data.days) ? data.days : [];
 
             if (!days.length) {
-                // Два разных «пусто»: период ещё не импортирован (данных нет в
-                // базе) и импортирован, но пар в нём нет. Сваливать их в одну
-                // фразу нельзя: в первом случае нужен импорт, во втором — искать
-                // дальше по календарю.
+                // Два разных «пусто»: копия периода есть, но пар в нём нет, и
+                // копии нет — её не удалось привести. Сваливать их в одну фразу
+                // нельзя: в первом случае нужно листать календарь, во втором —
+                // понимать, почему запрос в вуз не дошёл.
                 //
                 // Поле «импортирован ли период» читается из ответа сервера
                 // (range_imported), а не выводится из списка месяцев на
                 // странице: неделя легко задевает два месяца, и по одному из
                 // них вывод был бы неверен в обе стороны.
-                renderTimetableEmpty(
-                    timetable.rangeImported ? "На этой неделе пар нет" : "Расписание на эту неделю ещё не импортировано",
-                    timetable.rangeImported
-                        ? `Посмотрите другую неделю${monthList(timetable.importedMonths)}.`
-                        : importHint(user && user.role),
-                );
+                if (timetable.rangeImported) {
+                    renderTimetableEmpty(
+                        "На этой неделе пар нет",
+                        `Посмотрите другую неделю${monthList(timetable.importedMonths)}.`,
+                    );
+                } else {
+                    const configured = data.source_configured === true;
+                    renderTimetableEmpty(
+                        configured ? "Расписание на эту неделю не привезлось" : "Расписание на эту неделю ещё не попадало в базу",
+                        emptyHint(user && user.role, configured),
+                    );
+                }
             } else {
                 renderTimetable(days);
             }
 
-            setNote(updatedText(data.updated_at));
+            const status = sourceStatus(data, days.length > 0);
+            const counts = duplicatedNames(catalogue);
+            const who = switched
+                ? groupCaption(shown, counts)
+                : (timetable.groupName || (groupInput ? groupInput.value.trim() : ""));
+            // Про соседей сказано ровно то, что о них известно: «источник пуст»
+            // только если период читали, и «в базе ничего нет», если его не
+            // качали. На сборке без токена второго пути нет вовсе, и фраза про
+            // молчавший вуз была бы там прямым враньём.
+            const twinNote = switched
+                ? ` Показан вариант id ${chosen} — у id ${ref} ${firstImported
+                    ? "источник за этот период пуст"
+                    : "в базе за этот период ничего нет"}.`
+                : (emptyIds.length > 1
+                    ? ` Ни у одного из ${emptyIds.length} опрошенных вариантов этого имени (id ${emptyIds.join(", ")}) ${emptyImported === emptyIds.length
+                        ? "источник за этот период ничего не дал"
+                        : "в базе за этот период ничего нет"}.`
+                    : "");
+            setNote(status.state, `${who ? `${who} · ` : ""}${status.text}${twinNote}`);
+            syncNavWithGroup();
             saveChoice();
         } catch (error) {
+            // Сбой устаревшего запроса рисовать нечем: человек к этому времени
+            // уже видит другую неделю, и её же ответ может прийти позже.
+            if (seq !== timetableLoadSeq) return;
             timetable.importedMonths = [];
             timetable.rangeImported = false;
             renderTimetableEmpty(
                 error.status === 404
-                    ? "Такой группы нет в импортированном каталоге"
+                    ? "Такой группы нет в каталоге вуза"
                     : error.message || "Не удалось загрузить расписание",
                 error.status === 404
-                    ? "Синхронизируйте каталог групп — возможно, её добавили в вузе позже."
+                    ? "Начните вводить название заново — подсказки поля берут его из каталога. Если группу добавили в вузе недавно, каталог обновляет администратор."
                     : "Попробуйте обновить страницу через минуту.",
             );
-            // Пустая строка вместо «обновлено тогда-то»: при сбое загрузки мы не
-            // знаем, актуальны ли данные, и утверждать это нельзя.
-            setNote("");
+            // Пустая строка вместо состояния источника: при сбое загрузки мы не
+            // знаем ни что показано, ни насколько это актуально, и утверждать
+            // про «свежее» или «архив» было бы враньём в обе стороны.
+            setNote(null, "");
         }
     }
 
@@ -1074,13 +1488,18 @@ document.addEventListener("DOMContentLoaded", async () => {
     // группу» на полностью импортированном каталоге выглядит пустой, хотя
     // данных достаточно для показа. Это только выбор для отрисовки: он ни на
     // что не подписывает и меняется вводом человека.
+    //
+    // Подпись варианта вместо голого имени — та же причина, что у вкладки:
+    // запомненный id должен возвращаться именно своим id, а не первым из двух,
+    // кто носит это имя.
     function startGroupName(remembered, groups) {
+        const counts = duplicatedNames(groups);
         if (remembered && remembered.group) {
             const byId = groups.find((g) => g.external_id === remembered.group);
-            if (byId) return String(byId.name);
+            if (byId) return groupCaption(byId, counts);
         }
         if (remembered && remembered.name) return String(remembered.name);
-        return groups.length ? String(groups[0].name) : "";
+        return groups.length ? groupCaption(groups[0], counts) : "";
     }
 
     setWeekLabel();
@@ -1100,9 +1519,20 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (user) showAuthedMode();
     else showGuestMode();
 
+    // Институт и курс из сохранённого выбора: ряды вкладок стартуют с них, а не
+    // с первого института каталога — иначе возврат к своей группе каждый раз
+    // начинался бы чужим институтом. Неделя при этом не запоминается (пояснение
+    // у CHOICE_KEY), и syncNavWithGroup поправит ряды, если сохранённая группа
+    // относится к другому институту.
+    const remembered = readChoice();
+    if (remembered) {
+        timetable.department = String(remembered.department || "");
+        timetable.course = String(remembered.course || "");
+    }
+
     catalogue = await loadGroups();
     if (groupInput && !groupInput.value.trim()) {
-        groupInput.value = startGroupName(readChoice(), catalogue);
+        groupInput.value = startGroupName(remembered, catalogue);
     }
     await loadTimetable(catalogue);
 
